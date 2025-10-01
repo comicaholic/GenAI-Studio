@@ -532,212 +532,145 @@ export default function AnalyticsPage() {
               <div style={{ display: "grid", gap: 24 }}>
                     {/* System Metrics Cards */}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
-                      {/* CPU Usage */}
-                      <div style={{
-                        padding: 24,
-                        background: "#1e293b",
-                        border: "1px solid #334155",
-                        borderRadius: 16,
-                        position: "relative",
-                        overflow: "hidden"
-                      }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                          <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 16 }}>Application CPU Usage</h3>
-                          <div style={{ position: "relative", width: 60, height: 60 }}>
-                            <svg width="60" height="60" style={{ transform: "rotate(-90deg)" }}>
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="none"
-                                stroke="#334155"
-                                strokeWidth="6"
-                              />
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="none"
-                                stroke={colors.accent}
-                                strokeWidth="6"
-                                strokeDasharray={`${2 * Math.PI * 24}`}
-                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - (systemMetrics?.cpu?.percent || 0) / 100)}`}
-                                strokeLinecap="round"
-                              />
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="none"
-                                stroke={colors.primary}
-                                strokeWidth="4"
-                                strokeDasharray={`${2 * Math.PI * 24}`}
-                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - Math.min((systemMetrics?.cpu?.percent || 0) * 0.3, 100) / 100)}`}
-                                strokeLinecap="round"
-                              />
-                            </svg>
-                            <div style={{
-                              position: "absolute",
-                              top: "50%",
-                              left: "50%",
-                              transform: "translate(-50%, -50%)",
-                              fontSize: 12,
-                              color: "#94a3b8",
-                              fontWeight: "bold"
-                            }}>
-                              {(systemMetrics?.cpu?.percent || 0).toFixed(0)}%
-                            </div>
+                        {/* CPU Usage */}
+                        <div style={{
+                          padding: 24,
+                          background: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: 16,
+                          position: "relative",
+                          overflow: "hidden"
+                        }}>
+  
+                          </div>
+                          <div style={{ fontSize: 32, fontWeight: "bold", color: colors.accent, marginBottom: 8 }}>
+                            {Math.min((systemMetrics?.cpu?.percent || 0) * 0.3, 100).toFixed(1)}%
+                          </div>
+                          <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                            Application CPU usage
+                          </div>
+                          <div style={{ fontSize: 32, fontWeight: "bold", color: colors.accent, marginBottom: 0 }}>
+                            {Math.min((systemMetrics?.cpu?.percent || 0) * 0.3, 100).toFixed(1)}%
                           </div>
                         </div>
-                        <div style={{ fontSize: 32, fontWeight: "bold", color: colors.accent, marginBottom: 8 }}>
-                          {Math.min((systemMetrics?.cpu?.percent || 0) * 0.3, 100).toFixed(1)}%
-                        </div>
-                      
-                      </div>
 
                       {/* Memory Usage */}
-                      <div style={{
-                        padding: 24,
-                        background: "#1e293b",
-                        border: "1px solid #334155",
-                        borderRadius: 16,
-                        position: "relative",
-                        overflow: "hidden"
-                      }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                          <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 16 }}>Memory Usage</h3>
-                          <div style={{ position: "relative", width: 60, height: 60 }}>
-                            <svg width="60" height="60" style={{ transform: "rotate(-90deg)" }}>
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="none"
-                                stroke="#334155"
-                                strokeWidth="6"
-                              />
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="none"
-                                stroke={colors.primary}
-                                strokeWidth="6"
-                                strokeDasharray={`${2 * Math.PI * 24}`}
-                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - (systemMetrics?.memory?.percent || 0) / 100)}`}
-                                strokeLinecap="round"
-                              />
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="none"
-                                stroke={colors.secondary}
-                                strokeWidth="4"
-                                strokeDasharray={`${2 * Math.PI * 24}`}
-                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - Math.min((systemMetrics?.memory?.percent || 0) * 0.4, 100) / 100)}`}
-                                strokeLinecap="round"
-                              />
-                            </svg>
-                            <div style={{
-                              position: "absolute",
-                              top: "50%",
-                              left: "50%",
-                              transform: "translate(-50%, -50%)",
-                              fontSize: 12,
-                              color: "#94a3b8",
-                              fontWeight: "bold"
-                            }}>
-                              {(systemMetrics?.memory?.percent || 0).toFixed(0)}%
-                            </div>
-                          </div>
-                        </div>
-                        <div style={{ fontSize: 32, fontWeight: "bold", color: colors.primary, marginBottom: 8 }}>
-                          {Math.min((systemMetrics?.memory?.percent || 0) * 0.4, 100).toFixed(1)}%
-                        </div>
-                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                          Application memory usage
-                        </div>
-                        <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
-                          {systemMetrics?.memory ? `${systemMetrics.memory.used_gb.toFixed(1)} / ${systemMetrics.memory.total_gb.toFixed(1)} GB` : ""}
-                        </div>
-                      </div>
+                       <div style={{
+                         padding: 24,
+                         background: "#1e293b",
+                         border: "1px solid #334155",
+                         borderRadius: 16,
+                         position: "relative",
+                         overflow: "hidden"
+                       }}>
 
-                      {/* GPU Usage */}
-                      <div style={{
-                        padding: 24,
-                        background: "#1e293b",
-                        border: "1px solid #334155",
-                        borderRadius: 16,
-                        position: "relative",
-                        overflow: "hidden"
-                      }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                          <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 16 }}>GPU Usage</h3>
-                          <div style={{ position: "relative", width: 60, height: 60 }}>
-                            <svg width="60" height="60" style={{ transform: "rotate(-90deg)" }}>
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="none"
-                                stroke="#334155"
-                                strokeWidth="6"
-                              />
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="none"
-                                stroke={colors.purple}
-                                strokeWidth="6"
-                                strokeDasharray={`${2 * Math.PI * 24}`}
-                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - 45 / 100)}`}
-                                strokeLinecap="round"
-                              />
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="none"
-                                stroke={colors.secondary}
-                                strokeWidth="4"
-                                strokeDasharray={`${2 * Math.PI * 24}`}
-                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - 15 / 100)}`}
-                                strokeLinecap="round"
-                              />
-                            </svg>
-                            <div style={{
-                              position: "absolute",
-                              top: "50%",
-                              left: "50%",
-                              transform: "translate(-50%, -50%)",
-                              fontSize: 12,
-                              color: "#94a3b8",
-                              fontWeight: "bold"
-                            }}>
+                           </div>
+                         </div>
+-                        <div style={{ fontSize: 32, fontWeight: "bold", color: colors.primary, marginBottom: 8 }}>
+-                          {Math.min((systemMetrics?.memory?.percent || 0) * 0.4, 100).toFixed(1)}%
+-                        </div>
+-                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
+-                          Application memory usage
+-                        </div>
+-                        <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+-                          {systemMetrics?.memory ? `${systemMetrics.memory.used_gb.toFixed(1)} / ${systemMetrics.memory.total_gb.toFixed(1)} GB` : ""}
+-                        </div>
++                        {(() => {
++                          const memPercent = systemMetrics?.memory?.percent ?? 0;
++                          const memoryGB = systemMetrics?.memory?.used_gb ?? 0;
++                          const totalMemGB = systemMetrics?.memory?.total_gb ?? 0;
++                          return (
++                            <div style={{ fontSize: 12, color: "#e2e8f0", display: "flex", gap: 8, alignItems: "baseline", marginTop: 8 }}>
++                              <span>{`${memoryGB.toFixed(1)} / ${totalMemGB.toFixed(1)} GB`}</span>
++                              <span style={{ color: "#94a3b8" }}>{memPercent.toFixed(1)}%</span>
++                            </div>
++                          );
++                        })()}
+                       </div>
+
++                      {/* GPU Usage */}
+                       <div style={{
+                         padding: 24,
+                         background: "#1e293b",
+                         border: "1px solid #334155",
+                         borderRadius: 16,
+                         position: "relative",
+                         overflow: "hidden"
+                       }}>
+                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                           <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 16 }}>GPU Usage</h3>
+                           <div style={{ position: "relative", width: 60, height: 60 }}>
+                             <svg width="60" height="60" style={{ transform: "rotate(-90deg)" }}>
+                               <circle
+                                 cx="30"
+                                 cy="30"
+                                 r="24"
+                                 fill="none"
+                                 stroke="#334155"
+                                 strokeWidth="6"
+                               />
+                               <circle
+                                 cx="30"
+                                 cy="30"
+                                 r="24"
+                                 fill="none"
+                                 stroke={colors.purple}
+                                 strokeWidth="6"
+-                                strokeDasharray={`${2 * Math.PI * 24}`}
+-                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - 45 / 100)}`}
++                                strokeDasharray={`${2 * Math.PI * 24}`}
++                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - Math.min((systemMetrics?.gpu?.percent || 0), 100) / 100)}`}
+                                 strokeLinecap="round"
+                               />
+                               <circle
+                                 cx="30"
+                                 cy="30"
+                                 r="24"
+                                 fill="none"
+                                 stroke={colors.secondary}
+                                 strokeWidth="4"
+                                 strokeDasharray={`${2 * Math.PI * 24}`}
+                                 strokeDashoffset={`${2 * Math.PI * 24 * (1 - 15 / 100)}`}
+                                 strokeDasharray={`${2 * Math.PI * 24}`}
+                                 strokeDashoffset={`${2 * Math.PI * 24 * (1 - Math.min((systemMetrics?.gpu?.percent || 0), 100) / 100)}`}
+                                 strokeLinecap="round"
+                               />
+                             </svg>
+                             <div style={{
+                               position: "absolute",
+                               top: "50%",
+                               left: "50%",
+                               transform: "translate(-50%, -50%)",
+                               fontSize: 12,
+                               color: "#94a3b8",
+                               fontWeight: "bold"
+                             }}>
                               45%
-                            </div>
-                          </div>
-                        </div>
+                              {Math.min(systemMetrics?.gpu?.percent || 0, 100).toFixed(0)}%
+                             </div>
+                           </div>
+                         </div>
                         <div style={{ fontSize: 32, fontWeight: "bold", color: colors.secondary, marginBottom: 8 }}>
                           15.0%
                         </div>
                         <div style={{ fontSize: 12, color: "#94a3b8" }}>
                           Application GPU usage
                         </div>
-                      </div>
-                    </div>
+                        <div style={{ fontSize: 32, fontWeight: "bold", color: colors.secondary, marginBottom: 0 }}>
+                          {Math.min(systemMetrics?.gpu?.percent || 0, 100).toFixed(1)}%
+                        </div>
+                       </div>
+                     </div>
 
                 {/* Application Usage Chart */}
-                <div style={{
-                  padding: 24,
-                  background: "#1e293b",
-                  border: "1px solid #334155",
-                  borderRadius: 16,
-                }}>
-                  <h2 style={{ margin: "0 0 20px 0", color: "#e2e8f0", fontSize: 20 }}>Application Resource Usage</h2>
-                  <ResponsiveContainer width="100%" height={400}>
+                 <div style={{
+                   padding: 24,
+                   background: "#1e293b",
+                   border: "1px solid #334155",
+                   borderRadius: 16,
+                 }}>
+                   <h2 style={{ margin: "0 0 20px 0", color: "#e2e8f0", fontSize: 20 }}>Application Resource Usage</h2>
+                   <ResponsiveContainer width="100%" height={400}>
                     <BarChart data={[
                       {
                         name: "CPU",
@@ -755,22 +688,41 @@ export default function AnalyticsPage() {
                         total: 100
                       }
                     ]}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} />
-                      <YAxis stroke="#94a3b8" fontSize={12} domain={[0, 100]} />
-                      <Tooltip 
-                        contentStyle={{
-                          backgroundColor: "#1e293b",
-                          border: "1px solid #334155",
-                          borderRadius: 8,
-                          color: "#e2e8f0"
-                        }}
-                      />
-                      <Legend />
-                      <Bar dataKey="application" fill={colors.accent} name="Application Usage %" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                    <BarChart
+                      data={[
+                        {
+                          name: "CPU",
+                          application: Math.min((systemMetrics?.cpu?.percent || 0) * 0.3, 100),
+                          total: 100
+                        },
+                        {
+                          name: "Memory",
+                          application: Math.min((systemMetrics?.memory?.percent || 0) * 0.4, 100),
+                          total: 100
+                        },
+                        {
+                          name: "GPU",
+                          application: Math.min(systemMetrics?.gpu?.percent || 0, 100), // dynamic GPU usage
+                          total: 100
+                        }
+                      ]}
+                    >
+                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                       <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} />
+                       <YAxis stroke="#94a3b8" fontSize={12} domain={[0, 100]} />
+                       <Tooltip 
+                         contentStyle={{
+                           backgroundColor: "#1e293b",
+                           border: "1px solid #334155",
+                           borderRadius: 8,
+                           color: "#e2e8f0"
+                         }}
+                       />
+                       <Legend />
+                       <Bar dataKey="application" fill={colors.accent} name="Application Usage %" />
+                     </BarChart>
+                   </ResponsiveContainer>
+                 </div>
 
                 {/* Performance Trends Chart */}
                 <div style={{
