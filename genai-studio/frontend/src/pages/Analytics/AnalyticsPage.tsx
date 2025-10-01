@@ -40,6 +40,10 @@ interface SystemMetrics {
     used_gb: number;
     total_gb: number;
   };
+  
+  gpu?: {
+    percent: number;
+  };
   timestamp: string;
 }
 
@@ -253,8 +257,7 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     loadAllData();
-    
-    // Refresh every 1 second for uptime, 30 seconds for other data
+
     const uptimeInterval = setInterval(() => {
       loadUptime();
     }, 1000);
@@ -274,7 +277,7 @@ export default function AnalyticsPage() {
       } else if (activeTab === 'groq') {
         loadGroqAnalytics();
       }
-    }, 10000); // Reduced from 30 seconds to 10 seconds for faster updates
+    }, 2000); // Update at least every ~2s
 
     return () => {
       clearInterval(uptimeInterval);
@@ -539,7 +542,7 @@ export default function AnalyticsPage() {
                         overflow: "hidden"
                       }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                          <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 16 }}>CPU Usage</h3>
+                          <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 16 }}>Application CPU Usage</h3>
                           <div style={{ position: "relative", width: 60, height: 60 }}>
                             <svg width="60" height="60" style={{ transform: "rotate(-90deg)" }}>
                               <circle
@@ -589,9 +592,7 @@ export default function AnalyticsPage() {
                         <div style={{ fontSize: 32, fontWeight: "bold", color: colors.accent, marginBottom: 8 }}>
                           {Math.min((systemMetrics?.cpu?.percent || 0) * 0.3, 100).toFixed(1)}%
                         </div>
-                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                          Application CPU usage
-                        </div>
+                      
                       </div>
 
                       {/* Memory Usage */}
