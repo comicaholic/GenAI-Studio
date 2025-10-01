@@ -1,0 +1,73 @@
+COMP801 – WEEK 2 – EXERCISES  
+ 
+OBJECTIVES  
+ Able to get user inputs 
+ Able to use basic control structures 
+o one-way selection (if)  
+o two-way selection (if….else) 
+ Able to use while and for loop 
+ 
+USEFUL FUNCTIONS:  
+ len (x)  : get the length of variable x 
+ input() : get inputs from user 
+ split() : to split a string into a list  
+ split(separator):  separator is optional and is used when the separator is not a 
+whitespace  
+ 
+ 
+QUESTIONS:  
+For each of the following questions, you have to write a python code, run it, and check your answer. 
+ 
+1) What is the result of  the following code ? And what are the different between line 
+(1) and (2)  
+print(“Please enter your first name: ") 
+firstName = input() length = len(firstName) print(firstName) print(“My first name is: ", firstName) (1)
+
+2  | COMP 801 – THE EXERCISE IS DEVELOPED BASED ON CSIT110/CSIT810  
+ 
+print("My first name is: " + firstName) (2) 
+print("My first name has",length,“characters.") 
+2) What is the output of the following code ? 
+fullName = “Ngoc LE" dob = “27/02/2023" nameList = fullName.split() dobList = dob.split(“/") print(“Words in my full name: ", nameList) print(“elements in my date of birth: ", dobList) print("My first name is:", nameArr[0]) print("My year of birth is:", dobArr[2]) 
+3) Write a program to get user details (full name, date of birth) and print out the 
+inputs as below (the text in red is dependent on the user inputs)  
+My full name is: Ngoc LE My date of birth is: 27-02-2023  My last name is: LE My month of birth is: 02 
+4) What is the result of the code below?  
+x = 5 if(x>0):     print(x, "is a positive number.")
+
+3  | COMP 801 – THE EXERCISE IS DEVELOPED BASED ON CSIT110/CSIT810  
+ 
+if(x<0): 
+    print(x, "is a negative number.") if (x==0):     print(x, "is zero.") 
+5) Write a program to ask a user to enter a number and check if the input number is 
+zero or negative or positive. Your code should produce a result similar with the 
+following example (the text in red is dependent on the user inputs).  
+Please enter a number: 34 
+34 is an even number 
+6) Write a program to print out the following results  using (the text in red is 
+dependent on the user inputs).  
+Please enter a number: 7 The list includes:  
+7 5 3 1 
+7) What is the result of the following code?  
+x = “4" 
+intVal = int(x) 
+for i in range (0, intVal):  print(i, end = “ ")
+
+4  | COMP 801 – THE EXERCISE IS DEVELOPED BASED ON CSIT110/CSIT810  
+ 
+8) Write a program to print out the following results (the text in red is dependent on 
+the user inputs).  
+Please enter a number: 5 
+Sum of integer numbers from 1 to 5 is 15 
+9) Write a program to print out the following results (the text in red is dependent on 
+the user inputs).  
+Please enter a number: 5 
+1 + 2 + 3 + 4 + 5 = 15 
+10) Write a program to print out the following results (the text in red is dependent on 
+the user inputs).  
+Please enter a number: 5 
+1 + 2 + 3 + 4 + 5 = 15 
+11) Write a program to print out integer numbers from 1 to 100 those are divisible by 
+3. 
+12) Write a program to print out the sum of even numbe rs from 1 to 100. 
+13) Write a program to print out integer numbers from 99 to 1 those are divisible by 7.

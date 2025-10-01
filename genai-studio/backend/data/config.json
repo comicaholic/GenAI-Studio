@@ -1,0 +1,7 @@
+{
+  "paths": {
+    "source_dir": "data/source",
+    "reference_dir": "data/reference",
+    "context_dir": "data/context"
+  }
+}

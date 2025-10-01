@@ -1,0 +1,92 @@
+[
+  {
+    "id": "groq_1759206789681",
+    "model": "allam-2-7b",
+    "timestamp": "2025-09-30T14:33:09.681393",
+    "tokens_used": 1426,
+    "cost_usd": 0.000713,
+    "request_duration_ms": 1515,
+    "success": true
+  },
+  {
+    "id": "groq_1759206812743",
+    "model": "llama-3.3-70b-versatile",
+    "timestamp": "2025-09-30T14:33:32.743382",
+    "tokens_used": 1362,
+    "cost_usd": 0.000681,
+    "request_duration_ms": 3247,
+    "success": true
+  },
+  {
+    "id": "groq_1759209800541",
+    "model": "meta-llama/llama-guard-4-12b",
+    "timestamp": "2025-09-30T15:23:20.541412",
+    "tokens_used": 1317,
+    "cost_usd": 0.0006585,
+    "request_duration_ms": 1230,
+    "success": true
+  },
+  {
+    "id": "groq_1759209836206",
+    "model": "openai/gpt-oss-20b",
+    "timestamp": "2025-09-30T15:23:56.206494",
+    "tokens_used": 1831,
+    "cost_usd": 0.0009155,
+    "request_duration_ms": 1912,
+    "success": true
+  },
+  {
+    "id": "groq_1759209839364",
+    "model": "openai/gpt-oss-20b",
+    "timestamp": "2025-09-30T15:23:59.364592",
+    "tokens_used": 1831,
+    "cost_usd": 0.0009155,
+    "request_duration_ms": 2002,
+    "success": true
+  },
+  {
+    "id": "groq_1759209973281",
+    "model": "openai/gpt-oss-20b",
+    "timestamp": "2025-09-30T15:26:13.281330",
+    "tokens_used": 1706,
+    "cost_usd": 0.0008529999999999999,
+    "request_duration_ms": 1842,
+    "success": true
+  },
+  {
+    "id": "groq_1759210077623",
+    "model": "openai/gpt-oss-120b",
+    "timestamp": "2025-09-30T15:27:57.623154",
+    "tokens_used": 1706,
+    "cost_usd": 0.0008529999999999999,
+    "request_duration_ms": 2390,
+    "success": true
+  },
+  {
+    "id": "groq_1759212101205",
+    "model": "openai/gpt-oss-120b",
+    "timestamp": "2025-09-30T16:01:41.205682",
+    "tokens_used": 1706,
+    "cost_usd": 0.0008529999999999999,
+    "request_duration_ms": 2623,
+    "success": true
+  },
+  {
+    "id": "groq_1759212511154",
+    "model": "whisper-large-v3",
+    "timestamp": "2025-09-30T16:08:31.154977",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 3521,
+    "success": false
+  },
+  {
+    "id": "groq_1759212607107",
+    "model": "openai/gpt-oss-120b",
+    "timestamp": "2025-09-30T16:10:07.107674",
+    "tokens_used": 1831,
+    "cost_usd": 0.0009155,
+    "request_duration_ms": 5221,
+    "success": true
+  }
+]
