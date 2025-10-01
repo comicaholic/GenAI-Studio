@@ -1,129 +1,177 @@
 @echo off
-setlocal ENABLEDELAYEDEXPANSION
-
-REM ===========================================
-REM  GenAI Studio - One Time Setup (Windows)
-REM ===========================================
-
-REM -- cd to repo root (folder of this script)
+setlocal ENABLEEXTENSIONS ENABLEDELAYEDEXPANSION
+chcp 65001 >nul
 cd /d "%~dp0"
 
-echo:
-echo === Checking prerequisites =====================================
+echo.
+echo ================================
+echo  GenAI Eval - One Time Setup
+echo ================================
+echo.
 
-REM --- Python check ---
+REM -------- Resolve repo root --------
+set "ROOT=%~dp0"
+pushd "%ROOT%"
+
+REM -------- Check Python --------
 where python >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] Python not found on PATH. Install Python 3.10+ and reopen terminal.
-  exit /b 1
+  echo [ERROR] Python not found on PATH. Install Python 3.10+ and re-run.
+  goto :end_fail_pause
 )
-for /f "tokens=2 delims= " %%v in ('python -V') do set "PYVER=%%v"
+for /f "tokens=2 delims= " %%v in ('python -V 2^>nul') do set "PYVER=%%v"
 echo [OK] Python %PYVER%
 
-REM --- Node.js check ---
+REM -------- Create venv if missing --------
+if exist ".venv\Scripts\python.exe" (
+  echo [OK] Virtual environment already exists: .venv
+) else (
+  echo [INFO] Creating virtual environment at .venv ...
+  python -m venv .venv
+  if errorlevel 1 (
+    echo [ERROR] Failed to create virtual environment.
+    goto :end_fail_pause
+  )
+  echo [OK] .venv created
+)
+
+REM -------- Upgrade pip/wheel --------
+echo [INFO] Upgrading pip/setuptools/wheel ...
+".venv\Scripts\python.exe" -m pip install -U pip setuptools wheel --prefer-binary
+if errorlevel 1 (
+  echo [ERROR] Failed to upgrade pip/setuptools/wheel.
+  goto :end_fail_pause
+)
+
+REM -------- Install backend requirements (root or backend/) --------
+set "REQFILE="
+if exist "backend\requirements.txt" set "REQFILE=backend\requirements.txt"
+if not defined REQFILE if exist "requirements.txt" set "REQFILE=requirements.txt"
+
+if defined REQFILE (
+  echo [INFO] Installing Python requirements from %REQFILE% ...
+  ".venv\Scripts\python.exe" -m pip install -r "%REQFILE%" --prefer-binary
+  if errorlevel 1 (
+    echo [ERROR] Backend requirements installation failed.
+    echo [HINT] If build errors mention PyMuPDF / pytesseract / llama-cpp-python, you may need MSVC Build Tools or pinned wheels.
+    goto :end_fail_pause
+  )
+  echo [OK] Backend dependencies installed
+) else (
+  echo [WARN] No requirements file found (skipping Python deps)
+)
+
+REM -------- Sanity: Uvicorn present? --------
+".venv\Scripts\python.exe" -c "import uvicorn, sys; sys.stdout.write(uvicorn.__version__)" >nul 2>&1
+if errorlevel 1 (
+  echo [WARN] Uvicorn not importable in venv; installing uvicorn[standard]...
+  ".venv\Scripts\python.exe" -m pip install "uvicorn[standard]" --prefer-binary
+  if errorlevel 1 (
+    echo [ERROR] Could not install uvicorn[standard].
+    goto :end_fail_pause
+  )
+) else (
+  echo [OK] Uvicorn detected
+)
+
+REM -------- Check Node / npm --------
 where node >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] Node.js not found on PATH. Install Node LTS (>=18) from https://nodejs.org/
-  exit /b 1
+  echo [ERROR] Node.js not found on PATH. Install Node 18+ and re-run.
+  goto :end_fail_pause
 )
-for /f %%v in ('node -v') do set "NODEVER=%%v"
+for /f %%v in ('node -v 2^>nul') do set "NODEVER=%%v"
 echo [OK] Node %NODEVER%
 
-echo:
-echo === Python virtual environment & deps ===========================
-
-REM Create venv if missing
-if not exist ".venv\Scripts\python.exe" (
-  echo [INFO] Creating .venv ...
-  py -m venv .venv 2>nul || python -m venv .venv
-)
-
-REM Upgrade pip & install backend requirements
-set "VENV_PY=.venv\Scripts\python.exe"
-"%VENV_PY%" -m pip install --upgrade pip setuptools wheel
-
-REM Prefer backend\requirements.txt; fallback to repo root requirements.txt
-set "REQ=backend\requirements.txt"
-if not exist "%REQ%" (
-  if exist "requirements.txt" (
-    set "REQ=requirements.txt"
-  ) else (
-    echo [WARN] Could not locate requirements.txt (checked backend\ and root). Skipping backend install.
-    goto :after_backend
-  )
-)
-
-echo [INFO] Installing backend dependencies from %REQ% ...
-"%VENV_PY%" -m pip install -r "%REQ%"
+where npm >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] pip install failed. See messages above.
-  exit /b 1
+  echo [ERROR] npm not found on PATH. Install Node.js with npm.
+  goto :end_fail_pause
 )
 
-:after_backend
-echo:
-echo === Frontend dependencies & Vite =================================
-
-pushd frontend
-
-REM Detect package manager
-set "PM=npm"
-if exist "pnpm-lock.yaml" set "PM=pnpm"
-if exist "yarn.lock" set "PM=yarn"
-
-echo [INFO] Using package manager: %PM%
-
-if /I "%PM%"=="pnpm" (
-  call corepack enable 1>nul 2>nul
-  pnpm -v >nul 2>&1 || (echo [ERROR] pnpm not available via Corepack. Install pnpm or use npm/yarn. & exit /b 1)
-  pnpm install
-) else if /I "%PM%"=="yarn" (
-  call corepack enable 1>nul 2>nul
-  yarn -v >nul 2>&1 || (echo [ERROR] yarn not available via Corepack. Install yarn or use npm/pnpm. & exit /b 1)
-  yarn install
-) else (
+REM -------- Install frontend deps --------
+if exist "frontend\package.json" (
+  echo [INFO] Installing frontend dependencies ...
+  pushd frontend
   if exist package-lock.json (
-    npm ci
+    call npm ci
   ) else (
-    npm install
+    call npm install
   )
+  if errorlevel 1 (
+    popd
+    echo [ERROR] npm install failed. Ensure Node 18+ is installed.
+    goto :end_fail_pause
+  )
+  REM optional: verify vite available via npx
+  call npx --yes vite --version >nul 2>&1
+  if errorlevel 1 (
+    echo [WARN] Vite CLI not found globally; using local dev script will still work.
+  ) else (
+    for /f %%v in ('npx vite --version 2^>nul') do set "VITEVER=%%v"
+    echo [OK] Vite %%VITEVER%%
+  )
+  popd
+  echo [OK] Frontend dependencies installed
+) else (
+  echo [WARN] frontend\package.json not found (skipping frontend)
 )
 
-REM Ensure Vite + React SWC plugin exist (fixes "'vite' is not recognized")
-if not exist "node_modules\.bin\vite.cmd" (
-  echo [INFO] Installing Vite + @vitejs/plugin-react-swc locally...
-  if /I "%PM%"=="pnpm" (
-    pnpm add -D vite @vitejs/plugin-react-swc
-  ) else if /I "%PM%"=="yarn" (
-    yarn add -D vite @vitejs/plugin-react-swc
+REM -------- ENV templates --------
+if not exist ".env" (
+  if exist ".env.example" (
+    copy /Y ".env.example" ".env" >nul
+    echo [OK] Created .env from .env.example (root)
   ) else (
-    npm install -D vite @vitejs/plugin-react-swc
+    echo [WARN] .env.example missing at root
   )
+) else (
+  echo [OK] .env already exists (root)
 )
 
-REM Ensure dev script exists (non-fatal if already present)
-REM NOTE: If you already have scripts, this step is just a reminder.
-REM Make sure package.json contains:  "dev": "vite --port 5173"
-echo [INFO] Verify your package.json has a 'dev' script like: "dev": "vite --port 5173"
+if not exist "backend\.env" (
+  if exist "backend\.env.example" (
+    copy /Y "backend\.env.example" "backend\.env" >nul
+    echo [OK] Created backend\.env from backend\.env.example
+  ) else (
+    echo [WARN] backend\.env.example missing
+  )
+) else (
+  echo [OK] backend\.env already exists
+)
 
-REM Quick Vite sanity check
-npx vite --version || (echo [ERROR] Vite sanity check failed. & exit /b 1)
+REM -------- Data directories --------
+echo [INFO] Ensuring data folders exist ...
+mkdir "data\presets\ocr"    >nul 2>&1
+mkdir "data\presets\prompt" >nul 2>&1
+mkdir "data\presets\chat"   >nul 2>&1
+mkdir "data\uploads"        >nul 2>&1
+mkdir "data\reports"        >nul 2>&1
+mkdir "data\models"         >nul 2>&1
+mkdir "data\cache"          >nul 2>&1
+echo [OK] Data folders ready
 
+echo.
+echo ================================
+echo  Setup complete! 🎉
+echo ================================
+echo.
+echo Next:
+echo   1) Start the app with run.bat
+echo   2) If Vite fails to bind on Windows, try: npm run dev -- --host --port 5173
+echo   3) Backend health: http://localhost:8000/api/health
+echo   4) Frontend:       http://localhost:5173
+echo.
+goto :end_ok
+
+:end_fail_pause
+echo.
+echo Setup failed. See messages above for details.
+echo (Window stays open so you can read errors.)
+echo.
+pause
+exit /b 1
+
+:end_ok
 popd
-
-echo:
-echo === Final verification (dry run) =================================
-echo [INFO] Checking uvicorn import in venv...
-"%VENV_PY%" -c "import uvicorn; import fastapi; print('Uvicorn OK')"
-
-echo [INFO] Setup complete.
-echo You can now start both servers with run.bat (opens two terminals).
-echo:
-echo   1) Backend: %CD%\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000 --app-dir backend
-echo   2) Frontend: cd frontend && npm run dev -- --port 5173
-echo:
-echo Or just double-click run.bat from Explorer.
-echo:
-
-endlocal
 exit /b 0
