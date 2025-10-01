@@ -1,7 +1,8 @@
-# GenAI Eval (React + FastAPI)
+# GenAI Studio (React + FastAPI)
 
 ## Quick start (Windows)
-1) Run `setup.ps1` (right-click → Run with PowerShell).  
+1) Run `one_time_setup.bat` (right-click → Run with PowerShell).
+    - or use docker with the docker-compose.yml 
 2) Run `run.bat` to start backend (8000) and frontend (5173).
 
 ## One-time requirements
