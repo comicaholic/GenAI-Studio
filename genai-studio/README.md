@@ -1,9 +1,19 @@
 # GenAI Studio (React + FastAPI)
 
 ## Quick start (Windows)
-1) Run `one_time_setup.bat` (right-click → Run with PowerShell).
-    - or use docker with the docker-compose.yml 
-2) Run `run.bat` to start backend (8000) and frontend (5173).
+
+
+### Option 1 — Docker
+Double-click `run_docker.bat`
+- Backend: http://localhost:8000
+- Frontend: http://localhost:5173
+
+### Option 2 — Anaconda/Miniconda
+1) Double-click `one_time_setup_conda.bat` (first time only)
+2) Double-click `run_conda.bat`
+   - or `run_conda.bat backend` / `run_conda.bat frontend`
+
+
 
 ## One-time requirements
 - Python 3.10+

@@ -1,177 +1,78 @@
 @echo off
-setlocal ENABLEEXTENSIONS ENABLEDELAYEDEXPANSION
-chcp 65001 >nul
-cd /d "%~dp0"
+setlocal enabledelayedexpansion
+
+set "REPO=%~dp0"
+pushd "%REPO%"
+
+echo === Detecting Anaconda/Miniconda ===
+set "CONDA_CMD="
+
+where conda >nul 2>&1 && set "CONDA_CMD=conda"
+if not defined CONDA_CMD (
+  for %%P in (
+    "%UserProfile%\anaconda3\Scripts\conda.exe"
+    "%UserProfile%\anaconda3\condabin\conda.bat"
+    "%UserProfile%\miniconda3\Scripts\conda.exe"
+    "%UserProfile%\miniconda3\condabin\conda.bat"
+    "%ProgramData%\Anaconda3\Scripts\conda.exe"
+    "%ProgramData%\Miniconda3\Scripts\conda.exe"
+  ) do (
+    if exist %%~fP set "CONDA_CMD=%%~fP"
+  )
+)
+
+if not defined CONDA_CMD (
+  echo ERROR: Could not find conda. Install Anaconda or Miniconda, then re-run.
+  goto :end
+)
+
+echo Using: %CONDA_CMD%
+set "ENV=genai-studio"
 
 echo.
-echo ================================
-echo  GenAI Eval - One Time Setup
-echo ================================
-echo.
-
-REM -------- Resolve repo root --------
-set "ROOT=%~dp0"
-pushd "%ROOT%"
-
-REM -------- Check Python --------
-where python >nul 2>&1
+echo === Creating/Updating Python 3.11 env ===
+"%CONDA_CMD%" create -y -n %ENV% python=3.11 -c conda-forge
 if errorlevel 1 (
-  echo [ERROR] Python not found on PATH. Install Python 3.10+ and re-run.
-  goto :end_fail_pause
-)
-for /f "tokens=2 delims= " %%v in ('python -V 2^>nul') do set "PYVER=%%v"
-echo [OK] Python %PYVER%
-
-REM -------- Create venv if missing --------
-if exist ".venv\Scripts\python.exe" (
-  echo [OK] Virtual environment already exists: .venv
-) else (
-  echo [INFO] Creating virtual environment at .venv ...
-  python -m venv .venv
-  if errorlevel 1 (
-    echo [ERROR] Failed to create virtual environment.
-    goto :end_fail_pause
-  )
-  echo [OK] .venv created
+  echo Failed to create/update the conda env.
+  goto :end
 )
 
-REM -------- Upgrade pip/wheel --------
-echo [INFO] Upgrading pip/setuptools/wheel ...
-".venv\Scripts\python.exe" -m pip install -U pip setuptools wheel --prefer-binary
+echo.
+echo === Installing backend requirements (excluding llama-cpp-python) ===
+if not exist "%REPO%\backend\requirements.txt" (
+  echo ERROR: "%REPO%\backend\requirements.txt" not found.
+  goto :end
+)
+set "REQ_NOLLAMA=%TEMP%\req_nollama_%RANDOM%.txt"
+type "%REPO%\backend\requirements.txt" | findstr /r /v "^llama-cpp-python" > "%REQ_NOLLAMA%"
+
+"%CONDA_CMD%" run -n %ENV% python -m pip install --upgrade pip
+"%CONDA_CMD%" run -n %ENV% python -m pip install -r "%REQ_NOLLAMA%"
+del "%REQ_NOLLAMA%" >nul 2>&1
+
+echo.
+echo === Installing llama-cpp-python (CPU wheel; no compile) ===
+set "LLAMA_WHL_IDX=https://abetlen.github.io/llama-cpp-python/whl/cpu"
+"%CONDA_CMD%" run -n %ENV% python -m pip install --prefer-binary --only-binary=llama-cpp-python --extra-index-url %LLAMA_WHL_IDX% llama-cpp-python==0.2.90
 if errorlevel 1 (
-  echo [ERROR] Failed to upgrade pip/setuptools/wheel.
-  goto :end_fail_pause
+  echo ERROR: Failed to install llama-cpp-python wheel.
+  echo If you need GPU later, switch to the CUDA wheel index documented upstream.
+  goto :end
 )
-
-REM -------- Install backend requirements (root or backend/) --------
-set "REQFILE="
-if exist "backend\requirements.txt" set "REQFILE=backend\requirements.txt"
-if not defined REQFILE if exist "requirements.txt" set "REQFILE=requirements.txt"
-
-if defined REQFILE (
-  echo [INFO] Installing Python requirements from %REQFILE% ...
-  ".venv\Scripts\python.exe" -m pip install -r "%REQFILE%" --prefer-binary
-  if errorlevel 1 (
-    echo [ERROR] Backend requirements installation failed.
-    echo [HINT] If build errors mention PyMuPDF / pytesseract / llama-cpp-python, you may need MSVC Build Tools or pinned wheels.
-    goto :end_fail_pause
-  )
-  echo [OK] Backend dependencies installed
-) else (
-  echo [WARN] No requirements file found (skipping Python deps)
-)
-
-REM -------- Sanity: Uvicorn present? --------
-".venv\Scripts\python.exe" -c "import uvicorn, sys; sys.stdout.write(uvicorn.__version__)" >nul 2>&1
-if errorlevel 1 (
-  echo [WARN] Uvicorn not importable in venv; installing uvicorn[standard]...
-  ".venv\Scripts\python.exe" -m pip install "uvicorn[standard]" --prefer-binary
-  if errorlevel 1 (
-    echo [ERROR] Could not install uvicorn[standard].
-    goto :end_fail_pause
-  )
-) else (
-  echo [OK] Uvicorn detected
-)
-
-REM -------- Check Node / npm --------
-where node >nul 2>&1
-if errorlevel 1 (
-  echo [ERROR] Node.js not found on PATH. Install Node 18+ and re-run.
-  goto :end_fail_pause
-)
-for /f %%v in ('node -v 2^>nul') do set "NODEVER=%%v"
-echo [OK] Node %NODEVER%
-
-where npm >nul 2>&1
-if errorlevel 1 (
-  echo [ERROR] npm not found on PATH. Install Node.js with npm.
-  goto :end_fail_pause
-)
-
-REM -------- Install frontend deps --------
-if exist "frontend\package.json" (
-  echo [INFO] Installing frontend dependencies ...
-  pushd frontend
-  if exist package-lock.json (
-    call npm ci
-  ) else (
-    call npm install
-  )
-  if errorlevel 1 (
-    popd
-    echo [ERROR] npm install failed. Ensure Node 18+ is installed.
-    goto :end_fail_pause
-  )
-  REM optional: verify vite available via npx
-  call npx --yes vite --version >nul 2>&1
-  if errorlevel 1 (
-    echo [WARN] Vite CLI not found globally; using local dev script will still work.
-  ) else (
-    for /f %%v in ('npx vite --version 2^>nul') do set "VITEVER=%%v"
-    echo [OK] Vite %%VITEVER%%
-  )
-  popd
-  echo [OK] Frontend dependencies installed
-) else (
-  echo [WARN] frontend\package.json not found (skipping frontend)
-)
-
-REM -------- ENV templates --------
-if not exist ".env" (
-  if exist ".env.example" (
-    copy /Y ".env.example" ".env" >nul
-    echo [OK] Created .env from .env.example (root)
-  ) else (
-    echo [WARN] .env.example missing at root
-  )
-) else (
-  echo [OK] .env already exists (root)
-)
-
-if not exist "backend\.env" (
-  if exist "backend\.env.example" (
-    copy /Y "backend\.env.example" "backend\.env" >nul
-    echo [OK] Created backend\.env from backend\.env.example
-  ) else (
-    echo [WARN] backend\.env.example missing
-  )
-) else (
-  echo [OK] backend\.env already exists
-)
-
-REM -------- Data directories --------
-echo [INFO] Ensuring data folders exist ...
-mkdir "data\presets\ocr"    >nul 2>&1
-mkdir "data\presets\prompt" >nul 2>&1
-mkdir "data\presets\chat"   >nul 2>&1
-mkdir "data\uploads"        >nul 2>&1
-mkdir "data\reports"        >nul 2>&1
-mkdir "data\models"         >nul 2>&1
-mkdir "data\cache"          >nul 2>&1
-echo [OK] Data folders ready
 
 echo.
-echo ================================
-echo  Setup complete! 🎉
-echo ================================
-echo.
-echo Next:
-echo   1) Start the app with run.bat
-echo   2) If Vite fails to bind on Windows, try: npm run dev -- --host --port 5173
-echo   3) Backend health: http://localhost:8000/api/health
-echo   4) Frontend:       http://localhost:5173
-echo.
-goto :end_ok
-
-:end_fail_pause
-echo.
-echo Setup failed. See messages above for details.
-echo (Window stays open so you can read errors.)
-echo.
-pause
-exit /b 1
-
-:end_ok
+echo === Frontend setup ===
+pushd "%REPO%frontend"
+if not exist package.json npm init -y
+call npm install -D vite
+node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.scripts=j.scripts||{};if(!j.scripts.dev){j.scripts.dev='vite --port 5173'};fs.writeFileSync(p,JSON.stringify(j,null,2));console.log('dev script ready')"
 popd
-exit /b 0
+
+echo.
+echo === Setup complete! ===
+echo Run app with:  run_conda.bat
+echo Or separately: run_conda.bat backend   /   run_conda.bat frontend
+
+:end
+popd
+endlocal
