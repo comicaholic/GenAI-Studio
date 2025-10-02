@@ -4,8 +4,15 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: { '@': path.resolve(__dirname, 'src') },
+  resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
+  server: {
+    host: true,      // bind 0.0.0.0 in Docker
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://backend:8000', // Docker DNS
+        changeOrigin: true,
+      },
+    },
   },
-  server: { port: 5173, proxy: { '/api': 'http://localhost:8000' } }
 })

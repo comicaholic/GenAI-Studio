@@ -16,4 +16,5 @@ Pillow
 psutil
 gpustat
 GPUtil
-llama-cpp-python
+
+

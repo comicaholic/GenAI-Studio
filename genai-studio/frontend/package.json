@@ -2,7 +2,7 @@
   "name": "genai-eval",
   "private": true,
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5173",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "heal": "node scripts/repair-hardwraps.mjs",
@@ -26,6 +26,6 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.2.0",
     "typescript": "^5.3.0",
-    "vite": "^5.0.0"
+    "vite": "^5.4.20"
   }
 }

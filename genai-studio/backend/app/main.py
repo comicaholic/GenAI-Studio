@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # import routers
-from app.routers import (
+from .routers import (
     files,
     health,
     models,
