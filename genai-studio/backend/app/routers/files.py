@@ -76,7 +76,7 @@ async def load_file(kind: Literal["source", "reference", "context"], name: str):
         return FileResponse(str(path), filename=path.name)
 
     # reference/context → extract text on the server
-    from app.services.ocr.reference import extract_reference_text
+    from ..services.ocr.reference import extract_reference_text
 
     class _UploadLike:
         def __init__(self, p: Path):

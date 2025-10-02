@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from pathlib import Path
-from app.services.config import load_config, save_config, resolve_paths, _to_abs
+from ..services.config import load_config, save_config, resolve_paths, _to_abs
 import requests
 import os
 

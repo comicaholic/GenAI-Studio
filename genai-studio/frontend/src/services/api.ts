@@ -1,11 +1,12 @@
 // frontend/src/services/api.ts
 /// <reference types="vite/client" />
 
+
 const V = import.meta.env as any;
 
 export const API_BASE: string =
   (V?.VITE_API_BASE as string) ??
-  (V?.DEV ? '/api' : 'http://localhost:8000/api');
+  (V?.DEV ? '/api' : `${window.location.protocol}//${window.location.hostname}:8000/api`);
 
 type Json = Record<string, any> | undefined;
 type ResponseType = 'json' | 'blob' | 'text';

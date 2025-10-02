@@ -1,4 +1,4 @@
-# frontend/Dockerfile
+# frontend/DockerFile.dockerfile
 
 # Stage 1: build
 FROM node:20 AS build
@@ -6,7 +6,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci || npm install
 COPY . .
-# If you use env vars in Vite, set VITE_* here or via docker-compose
+
+# >>> allow injecting VITE_* at build time
+ARG VITE_API_BASE
+ENV VITE_API_BASE=${VITE_API_BASE}
+
 RUN npm run build
 
 # Stage 2: serve static build
