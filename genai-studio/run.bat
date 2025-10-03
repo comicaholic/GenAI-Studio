@@ -28,5 +28,13 @@ echo.
 echo Launched:
 echo   Backend  -> http://localhost:8000/api/health
 echo   Frontend -> http://localhost:5173
+rem --- Wait for backend health, then open browser tabs ---
+powershell -NoProfile -Command "try { for ($i=0; $i -lt 60; $i++) { $r = Invoke-WebRequest -UseBasicParsing http://localhost:8000/api/health -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 }; Start-Sleep -Seconds 1 }; exit 1 } catch { exit 1 }"
+if %errorlevel%==0 (
+  start "" "http://localhost:5173"
+  start "" "http://localhost:8000/api/health"
+) else (
+  echo Backend didn't become healthy in time; not opening browser.
+)
 echo.
 endlocal

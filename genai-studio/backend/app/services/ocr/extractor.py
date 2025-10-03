@@ -2,11 +2,13 @@ from pathlib import Path
 from typing import List
 import fitz  # PyMuPDF
 import io
-try: # Import pytesseract lazily to avoid startup DLL issues
-    import pytesseract
-    from PIL import Image
-except Exception as e:
-    raise RuntimeError(f"Tesseract OCR is not available: {e}")
+import os
+import pytesseract
+from PIL import Image
+pytesseract.pytesseract.tesseract_cmd = os.getenv(
+    "TESSERACT_CMD", pytesseract.pytesseract.tesseract_cmd
+)
+
 
 def _ocr_page_pix(pix) -> str:
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
@@ -52,6 +54,10 @@ async def extract_text_from_file(file) -> tuple[str, list[str]]:
             pages.append(text)
         pdf.close()
     elif filename.endswith((".png", ".jpg", ".jpeg")):
+        img = Image.open(io.BytesIO(content))
+        text = pytesseract.image_to_string(img)
+        pages.append(text)
+    elif filename.endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff")):
         img = Image.open(io.BytesIO(content))
         text = pytesseract.image_to_string(img)
         pages.append(text)

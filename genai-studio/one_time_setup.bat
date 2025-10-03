@@ -21,4 +21,5 @@ popd
 
 echo Setup complete.
 pause
+cmd /k ".\run.bat"
 endlocal
