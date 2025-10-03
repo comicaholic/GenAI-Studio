@@ -21,7 +21,6 @@ start "backend:8000" /D "%ROOT%" cmd /k ^
 
 rem --- FRONTEND WINDOW ---
 start "frontend:5173" /D "%ROOT%frontend" cmd /k ^
-  npm install ^& ^
   npm run dev -- --host --port 5173
 
 echo.
@@ -36,5 +35,6 @@ if %errorlevel%==0 (
 ) else (
   echo Backend didn't become healthy in time; not opening browser.
 )
+start "" http://localhost:5173
 echo.
 endlocal

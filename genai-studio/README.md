@@ -1,25 +1,30 @@
 # GenAI Studio (React + FastAPI)
 
-## Quick start (Windows)
-
+## Quick start
 
 ### Option 1 — Docker
-Double-click `run_docker.bat`
-- Backend: http://localhost:8000
-- Frontend: http://localhost:5173
+- Double-click `run_docker.bat`
+- Backend will start at: [http://localhost:8000](http://localhost:8000)  
+- Frontend will start at: [http://localhost:5173](http://localhost:5173)  
+- The browser will open automatically.
 
-### Option 2 — Anaconda/Miniconda
-1) Double-click `one_time_setup_conda.bat` (first time only)
-2) Double-click `run_conda.bat`
-   - or `run_conda.bat backend` / `run_conda.bat frontend`
+### Option 2 — Conda (Windows)
+1. Run `one_time_setup.bat` (first time only)  
+   - Installs Python, Node, and dependencies.  
+   - Automatically launches the app after setup.
+2. Next time, just double-click `run.bat`.  
+   - Backend: [http://localhost:8000](http://localhost:8000)  
+   - Frontend: [http://localhost:5173](http://localhost:5173)  
+   - Browser will open automatically.
 
-
+---
 
 ## One-time requirements
 - Python 3.10+
 - Node 18+
-- (Optional) Tesseract OCR for image PDFs
+- (Optional) Tesseract OCR for PDFs with images
 
 ## Notes
-- Copy `.env.example` to `.env` (root and backend) and set `GROQ_API_KEY` for Groq.
+- Copy `.env.example` to `.env` (both root and backend folders).  
+- Set `GROQ_API_KEY` in `.env` to use Groq models.  
 - Local models directory: `./data/models`

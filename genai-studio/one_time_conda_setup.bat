@@ -19,7 +19,7 @@ pushd "%ROOT%frontend"
 if not exist node_modules (call npm ci || call npm install)
 popd
 
-echo Setup complete.
+echo Setup complete. Launching app...
+call run_conda.bat
 pause
-cmd /k ".\run.bat"
 endlocal
