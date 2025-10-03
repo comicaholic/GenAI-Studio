@@ -1,13 +1,17 @@
+import os
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-import os
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+BACKEND_DIR = Path(__file__).resolve().parents[1]  # backend/
+ENV_PATH = BACKEND_DIR / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
+
 
 # import routers
-from app.routers import (
+from .routers import (
     files,
     health,
     models,
@@ -25,13 +29,23 @@ from app.routers import (
 app = FastAPI(title="GenAI Studio")
 
 # CORS – tighten to dev origins if you like
+
+
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost",    
+    "http://127.0.0.1",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "*"],  # adjust later
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Mount routers (one prefix each)
 app.include_router(health.router,    prefix="/api",            tags=["health"])          # GET /api/health

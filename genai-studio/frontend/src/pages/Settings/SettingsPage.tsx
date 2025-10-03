@@ -4,6 +4,23 @@ import { api } from "@/services/api";
 import { useNotifications } from "@/components/Notification/Notification";
 import PresetEditor from "@/components/PresetEditor/PresetEditor";
 
+// Default settings to guarantee required nested objects exist
+const defaultSettings: Settings = {
+  ui: { theme: "dark", defaultLandingPage: "/", backgroundStateManagement: true },
+  paths: {
+    ocrSource: "./data/source",
+    ocrReference: "./data/reference",
+    promptSource: "./data/source",
+    promptReference: "./data/reference",
+    chatDownloadPath: "./data/downloads",
+  },
+  presets: { ocr: [], prompt: [], chat: [] },
+  groq: { apiKey: "", connected: false },
+  huggingface: { token: "", connected: false },
+};
+
+
+
 interface Settings {
   ui: {
     theme: "light" | "dark";
@@ -65,19 +82,8 @@ interface PresetData {
 
 export default function SettingsPage() {
   const { showSuccess, showError, showInfo } = useNotifications();
-  const [settings, setSettings] = useState<Settings>({
-    ui: { theme: "dark", defaultLandingPage: "/", backgroundStateManagement: true },
-    paths: {
-      ocrSource: "./data/source",
-      ocrReference: "./data/reference",
-      promptSource: "./data/source",
-      promptReference: "./data/reference",
-      chatDownloadPath: "./data/downloads",
-    },
-    presets: { ocr: [], prompt: [], chat: [] },
-    groq: { apiKey: "", connected: false },
-    huggingface: { token: "", connected: false },
-  });
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
+
 
   const [activeTab, setActiveTab] = useState("ui");
   const [isLoading, setIsLoading] = useState(true);
@@ -89,13 +95,16 @@ export default function SettingsPage() {
     setIsLoading(true);
     try {
       const response = await api.get("/settings");
-      setSettings(response.data);
+      // Merge backend response into defaults so no field is undefined
+      setSettings({ ...defaultSettings, ...response.data });
     } catch (error: any) {
       console.error("Failed to load settings:", error);
+      setSettings(defaultSettings); // fallback so UI never breaks
     } finally {
       setIsLoading(false);
     }
   };
+
 
   const saveSettings = async () => {
     try {
@@ -288,16 +297,21 @@ export default function SettingsPage() {
 
   const updateSetting = (path: string, value: any) => {
     setSettings(prev => {
-      const newSettings = { ...prev };
+      const newSettings: any = { ...prev };
       const keys = path.split('.');
-      let current = newSettings as any;
+      let current = newSettings;
       for (let i = 0; i < keys.length - 1; i++) {
-        current = current[keys[i]];
+        const k = keys[i];
+        if (current[k] == null || typeof current[k] !== "object") {
+          current[k] = {}; // ensure intermediate object exists
+        }
+        current = current[k];
       }
       current[keys[keys.length - 1]] = value;
-      return newSettings;
+      return newSettings as Settings;
     });
   };
+
 
   const deletePreset = async (type: keyof Settings['presets'], presetName: string) => {
     try {
@@ -322,6 +336,12 @@ export default function SettingsPage() {
     { id: "groq", label: "Groq API", icon: "🔐" },
     { id: "huggingface", label: "Hugging Face", icon: "🤗" },
   ];
+  
+  // Detect if File System Access is available
+  const canPickDirectory = typeof (window as any).showDirectoryPicker === "function";
+
+  // Cache handles in-memory for later reads (you can move this to context if needed)
+  const dirHandlesRef = React.useRef<Record<string, any>>({});
 
   if (isLoading) {
     return (
@@ -332,6 +352,41 @@ export default function SettingsPage() {
         </div>
       </div>
     );
+  }
+
+  
+
+  // Open a folder and store a friendly name + handle
+  async function browseForFolder(settingKey: keyof Settings["paths"]) {
+    try {
+      if (canPickDirectory) {
+        // Modern Chromium way
+        const handle = await (window as any).showDirectoryPicker({ mode: "read" });
+        dirHandlesRef.current[settingKey] = handle;
+        // Use a friendly label for display
+        updateSetting(`paths.${settingKey}`, handle.name || "Selected Folder");
+      } else {
+        // Fallback: webkitdirectory input
+        const input = document.createElement("input");
+        (input as any).webkitdirectory = true;
+        input.type = "file";
+        input.onchange = (ev: any) => {
+          const files: FileList = ev.target.files;
+          if (files && files.length) {
+            // Derive a label from the first file's relative path root
+            // (Not a true path; browsers won't give you absolute paths)
+            const first = files[0] as any;
+            const relPath = first.webkitRelativePath || first.name;
+            const topFolder = relPath.split("/")[0] || "Selected Folder";
+            dirHandlesRef.current[settingKey] = files; // store the list for later use
+            updateSetting(`paths.${settingKey}`, topFolder);
+          }
+        };
+        input.click();
+      }
+    } catch (err) {
+      console.error("Folder pick canceled or failed:", err);
+    }
   }
 
   return (
@@ -426,21 +481,41 @@ export default function SettingsPage() {
                     <h3 style={styles.subsectionTitle}>OCR Evaluation Page</h3>
                     <div style={styles.inputGroup}>
                       <label style={styles.inputLabel}>Source Input Folder</label>
-                      <input
-                        type="text"
-                        value={settings.paths.ocrSource}
-                        onChange={(e) => updateSetting('paths.ocrSource', e.target.value)}
-                        style={styles.input}
-                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          type="text"
+                          value={settings.paths.ocrSource}
+                          onChange={(e) => updateSetting('paths.ocrSource', e.target.value)}
+                          style={{ ...styles.input, flex: 1 }}
+                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
+                        />
+                        <button
+                          onClick={() => browseForFolder("ocrSource")}
+                          style={styles.browseBtn}
+                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
+                        >
+                          Browse…
+                        </button>
+                      </div>
                     </div>
                     <div style={styles.inputGroup}>
                       <label style={styles.inputLabel}>Reference Input Folder</label>
-                      <input
-                        type="text"
-                        value={settings.paths.ocrReference}
-                        onChange={(e) => updateSetting('paths.ocrReference', e.target.value)}
-                        style={styles.input}
-                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          type="text"
+                          value={settings.paths.ocrReference}
+                          onChange={(e) => updateSetting('paths.ocrReference', e.target.value)}
+                          style={{ ...styles.input, flex: 1 }}
+                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
+                        />
+                        <button
+                          onClick={() => browseForFolder("ocrReference")}
+                          style={styles.browseBtn}
+                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
+                        >
+                          Browse…
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -448,37 +523,63 @@ export default function SettingsPage() {
                     <h3 style={styles.subsectionTitle}>Prompt Evaluation Page</h3>
                     <div style={styles.inputGroup}>
                       <label style={styles.inputLabel}>Source Input Folder</label>
-                      <input
-                        type="text"
-                        value={settings.paths.promptSource}
-                        onChange={(e) => updateSetting('paths.promptSource', e.target.value)}
-                        style={styles.input}
-                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          type="text"
+                          value={settings.paths.promptSource}
+                          onChange={(e) => updateSetting('paths.promptSource', e.target.value)}
+                          style={{ ...styles.input, flex: 1 }}
+                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
+                        />
+                        <button
+                          onClick={() => browseForFolder("promptSource")}
+                          style={styles.browseBtn}
+                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
+                        >
+                          Browse…
+                        </button>
+                      </div>
                     </div>
                     <div style={styles.inputGroup}>
                       <label style={styles.inputLabel}>Reference Input Folder</label>
-                      <input
-                        type="text"
-                        value={settings.paths.promptReference}
-                        onChange={(e) => updateSetting('paths.promptReference', e.target.value)}
-                        style={styles.input}
-                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          type="text"
+                          value={settings.paths.promptReference}
+                          onChange={(e) => updateSetting('paths.promptReference', e.target.value)}
+                          style={{ ...styles.input, flex: 1 }}
+                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
+                        />
+                        <button
+                          onClick={() => browseForFolder("promptReference")}
+                          style={styles.browseBtn}
+                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
+                        >
+                          Browse…
+                        </button>
+                      </div>
                     </div>
                   </div>
 
                   <div style={styles.settingGroup}>
                     <h3 style={styles.subsectionTitle}>Chat Downloads</h3>
                     <div style={styles.inputGroup}>
-                      <label style={styles.inputLabel}>Download Path</label>
-                      <input
-                        type="text"
-                        value={settings.paths.chatDownloadPath}
-                        onChange={(e) => updateSetting('paths.chatDownloadPath', e.target.value)}
-                        style={styles.input}
-                        placeholder="./data/downloads"
-                      />
-                      <div style={styles.helpText}>
-                        Default folder for saving chat transcripts and exports
+                      <label style={styles.inputLabel}>Chats Folder</label>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          type="text"
+                          value={settings.paths.chatDownloadPath}
+                          onChange={(e) => updateSetting('paths.chatDownloadPath', e.target.value)}
+                          style={{ ...styles.input, flex: 1 }}
+                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
+                        />
+                        <button
+                          onClick={() => browseForFolder("chatDownloadPath")}
+                          style={styles.browseBtn}
+                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
+                        >
+                          Browse…
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -547,6 +648,51 @@ export default function SettingsPage() {
                   ))}
                 </div>
               )}
+              {/* Groq Tab */}
+              {activeTab === "groq" && (
+              <div style={{ display: "grid", gap: 24 }}>
+                <div style={{ padding: 24, background: "#1e293b", border: "1px solid #334155", borderRadius: 16 }}>
+                  <h2 style={{ margin: "0 0 16px 0", color: "#e2e8f0" }}>Groq API Settings</h2>
+                  
+                  <label style={{ display: "block", marginBottom: 8, color: "#e2e8f0" }}>API Key</label>
+                  <input
+                    type="password"
+                    value={settings.groq?.apiKey ?? ""}
+                    onChange={(e) => updateSetting("groq.apiKey", e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "8px",
+                      borderRadius: 6,
+                      border: "1px solid #334155",
+                      background: "#0f172a",
+                      color: "#e2e8f0",
+                    }}
+                  />
+
+                  <button
+                    onClick={() => {
+                      // quick connection test
+                      api.get("/models/list?include_groq=true").then(() => {
+                        alert("Groq API connected successfully!");
+                      }).catch(() => {
+                        alert("Failed to connect to Groq API. Check your key.");
+                      });
+                    }}
+                    style={{
+                      marginTop: 12,
+                      padding: "8px 16px",
+                      background: "#10b981",
+                      border: "none",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      color: "#fff"
+                    }}
+                  >
+                    Test Connection
+                  </button>
+                </div>
+              </div>
+            )}
 
               {/* Hugging Face Tab */}
               {activeTab === "huggingface" && (

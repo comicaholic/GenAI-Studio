@@ -21,7 +21,7 @@ def get_models():
     """
     Get available models for LLM inference.
     """
-    from app.services.models import get_groq_models
+    from ..services.models import get_groq_models
     warning, models = get_groq_models()
     return {"models": models, "warning": warning}
 
@@ -182,4 +182,3 @@ def chat(body: ChatIn):
         record_groq_usage(body.model_id, 0, 0.0, duration_ms, False)
         print(f"Unexpected error: {e}")
         raise HTTPException(502, f"Chat completion failed: {e}")
-

@@ -139,7 +139,7 @@ def get_groq_models():
 
 def scan_models_dir():
     from app.services.config import load_config
-    from app.services.model_classifier import classify_models
+    from ..services.model_classifier import classify_models
     
     root = Path((load_config() or {}).get("models_dir") or "").expanduser()
     res = []
@@ -169,4 +169,3 @@ def scan_models_dir():
             reg["local"].append(m)
     _save(reg)
     return reg["local"]
-

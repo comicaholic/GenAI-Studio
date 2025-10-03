@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.services.eval.metrics import compute_metrics
-from app.services.reports.pdf import build_pdf
+from ..services.reports.pdf import build_pdf
 from fastapi.responses import Response
 import csv
 import io

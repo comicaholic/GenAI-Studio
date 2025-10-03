@@ -1,7 +1,7 @@
 # backend/app/routers/ocr.py
 from fastapi import APIRouter, File, UploadFile, HTTPException
 from app.services.ocr.extractor import extract_text_from_file
-from app.services.ocr.reference import extract_reference_text
+from ..services.ocr.reference import extract_reference_text
 
 router = APIRouter(tags=["ocr"])
 

@@ -150,7 +150,7 @@ class AddLocalIn(BaseModel):
 
 @router.post("/add-local")
 def add_local(m: AddLocalIn):
-    from app.services.models import register_local_model
+    from ..services.models import register_local_model
     register_local_model(m.model_dump())
     return {"ok": True}
 

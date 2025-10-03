@@ -1,0 +1,20 @@
+[
+  {
+    "id": "groq_1759452628683",
+    "model": "allam-2-7b",
+    "timestamp": "2025-10-03T10:50:28.683020",
+    "tokens_used": 1604,
+    "cost_usd": 0.000802,
+    "request_duration_ms": 558,
+    "success": true
+  },
+  {
+    "id": "groq_1759452648839",
+    "model": "gemma2-9b-it",
+    "timestamp": "2025-10-03T10:50:48.839235",
+    "tokens_used": 1660,
+    "cost_usd": 0.00083,
+    "request_duration_ms": 1000,
+    "success": true
+  }
+]
