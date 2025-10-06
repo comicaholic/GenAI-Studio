@@ -1,7 +1,7 @@
 // src/pages/PromptEval/PromptEvalPage.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import LeftRail from '@/components/LeftRail/LeftRail';
-import ModelSelector from '@/components/TopBar/ModelSelector';
+
 import FileDrop from '@/components/FileDrop/FileDrop';
 import ExpandableTextarea from '@/components/ExpandableTextarea/ExpandableTextarea';
 import PromptPresetBox from '@/components/PresetPanel/PromptPresetBox';
@@ -565,6 +565,7 @@ export default function PromptEvalPage() {
           {/* Left Section */}
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button onClick={() => setLeftOpen(!leftOpen)}
+              className="btn h-8 min-w-[6px]"
               style={{
                 padding: "6px 10px",
                 border: "1px solid #334155",
@@ -573,8 +574,6 @@ export default function PromptEvalPage() {
                 borderRadius: 6,
                 cursor: "pointer",
                 fontSize: 12,
-                height: 32,
-                minWidth: 36,
                 display: 'grid',
                 placeItems: 'center'
               }}
@@ -585,14 +584,12 @@ export default function PromptEvalPage() {
             <strong style={{ fontSize: 15 }}>Prompt Evaluation</strong>
           </div>
 
-          {/* Center Section - Model Selector */}
-          <div style={{ display: "flex", justifyContent: "center" }}>
-            <ModelSelector />
-          </div>
-
+          
+          <div></div>
           {/* Right Section */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
             <button onClick={() => setRightOpen(!rightOpen)}
+              className="btn h-8 min-w-[6px]"
               style={{
                 padding: "6px 10px",
                 border: "1px solid #334155",
@@ -601,8 +598,6 @@ export default function PromptEvalPage() {
                 borderRadius: 6,
                 cursor: "pointer",
                 fontSize: 12,
-                height: 32,
-                minWidth: 36,
                 display: 'grid',
                 placeItems: 'center'
               }}

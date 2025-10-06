@@ -1,5 +1,6 @@
 // frontend/src/components/TopBar/ModelSelector.tsx
 import React from "react";
+import Switch from "@/components/ui/Switch";
 import axios from "axios";
 import { useModel } from "@/context/ModelContext";
 
@@ -144,6 +145,7 @@ export default function ModelSelector() {
           opacity: selected ? 1 : 0.3,
           cursor: selected ? "pointer" : "not-allowed",
         }}
+        className="rb-glare rb-press"
         disabled={!selected}
       >
         ⏏
@@ -158,6 +160,7 @@ export default function ModelSelector() {
             requestAnimationFrame(() => inputRef.current?.focus());
           }}
           style={styles.button}
+          className="rb-glare rb-press"
         >
           <span style={styles.buttonText}>{closedLabel}</span>
           <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
@@ -167,7 +170,7 @@ export default function ModelSelector() {
 
         {/* Popover */}
         {open && (
-          <div style={styles.popover}>
+          <div style={styles.popover} className="rb-bounce">
             <div style={styles.header}>
               <input
                 ref={inputRef}
@@ -176,14 +179,10 @@ export default function ModelSelector() {
                 onChange={e => setQuery(e.target.value)}
                 style={styles.search}
               />
-              <label style={styles.chkLabel}>
-                <input
-                  type="checkbox"
-                  checked={includeGroq}
-                  onChange={e => setIncludeGroq(e.target.checked)}
-                />
-                <span style={{ marginLeft: 6 }}>include Groq</span>
-              </label>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: "#cbd5e1" }}>Groq</span>
+                <Switch checked={includeGroq} onChange={setIncludeGroq} color="#10b981" />
+              </div>
             </div>
 
             {warning && <div style={styles.warning}>{warning}</div>}
@@ -209,6 +208,7 @@ export default function ModelSelector() {
                         setSelected(m); 
                         setOpen(false); 
                       }}
+                      className="rb-hover-lift rb-press"
                     >
                       <div style={styles.modelName}>{(m.label && m.label.trim()) ? m.label : prettifyModelId(m.id)}</div>
                       <div style={styles.modelId}>{m.id || ""}</div>
@@ -235,6 +235,7 @@ export default function ModelSelector() {
                         setSelected(m); 
                         setOpen(false); 
                       }}
+                      className="rb-hover-lift rb-press"
                     >
                       <div style={styles.modelName}>{(m.label && m.label.trim()) ? m.label : prettifyModelId(m.id)}</div>
                       <div style={styles.modelId}>{m.id || ""}</div>

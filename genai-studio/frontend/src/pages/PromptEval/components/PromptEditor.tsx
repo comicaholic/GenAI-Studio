@@ -85,13 +85,13 @@ export default function PromptEditor({ value, onChange }: PromptEditorProps) {
         </div>
       </div>
 
-      <textarea className="input text-sm min-h-32" value={localValue}
+      <textarea className="input text-sm min-h-40" value={localValue}
         onChange={handleChange}
         placeholder="Enter your prompt here..."
         style={{
           width: '100%',
-          minHeight: '120px',
-          maxHeight: '300px',
+          minHeight: '200px',
+          maxHeight: '480px',
           background: '#0f172a',
           border: '1px solid #334155',
           borderRadius: '8px',

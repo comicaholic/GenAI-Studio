@@ -1,12 +1,14 @@
 // src/pages/Chat/ChatPage.tsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
-import ModelSelector from "@/components/TopBar/ModelSelector";
+
 import FileDrop from "@/components/FileDrop/FileDrop";
 import PromptPresetBox from "@/components/PresetPanel/PromptPresetBox";
 import PresetManager from "@/components/PresetPanel/PresetManager";
 import ParamsPanel, { ModelParams } from "@/components/RightPanel/ParamsPanel";
 import { chatComplete } from "@/services/llm";
+import LoadingButton from "@/components/ui/LoadingButton";
+import Bounce from "@/components/ui/Bounce";
 import { useModel } from "@/context/ModelContext";
 import { chatPresetStore } from "@/stores/presetStore";
 import { useNotifications } from "@/components/Notification/Notification";
@@ -88,6 +90,10 @@ export default function ChatPage() {
 
   const currentSession = sessions.find((s) => s.id === currentSessionId) ?? null;
 
+  // UI state: per-item context menu and delete confirmation
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
   // scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -112,6 +118,34 @@ export default function ChatPage() {
   // rename session
   const renameSession = (id: string, title: string) => {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
+  };
+
+  // duplicate session
+  const duplicateSession = (id: string) => {
+    const orig = sessions.find((s) => s.id === id);
+    if (!orig) return;
+    const dupe: ChatSession = {
+      ...orig,
+      id: crypto.randomUUID(),
+      title: `${orig.title} (Copy)`,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+    };
+    setSessions((prev) => [dupe, ...prev]);
+  };
+
+  // export session as JSON (acts as "show in explorer" for web)
+  const exportSession = (id: string) => {
+    const s = sessions.find((x) => x.id === id);
+    if (!s) return;
+    const blob = new Blob([JSON.stringify(s, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${s.title.replace(/[^a-z0-9\-_]+/gi, "_") || "chat"}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
   };
 
   // delete session
@@ -194,14 +228,15 @@ export default function ChatPage() {
         text = raw;
       } else if (raw && typeof raw === "object") {
         // try common fields
-        text = raw.output ?? raw.text ?? raw.response ?? "";
-        const u = raw.usage ?? raw.metrics ?? raw.meta ?? {};
+        const obj: any = raw as any;
+        text = obj.output ?? obj.text ?? obj.response ?? "";
+        const u: any = obj.usage ?? obj.metrics ?? obj.meta ?? {};
         usage.promptTokens = u.promptTokens ?? u.prompt_tokens ?? u.promptTokens;
         usage.completionTokens = u.completionTokens ?? u.completion_tokens ?? u.completionTokens;
         usage.totalTokens = u.totalTokens ?? u.total_tokens ?? u.totalTokens;
-        usage.firstTokenMs = u.firstTokenMs ?? raw.firstTokenMs ?? raw.first_token_ms ?? u.first_token_ms;
-        usage.elapsedMs = u.elapsedMs ?? raw.elapsedMs ?? raw.elapsed_ms ?? u.elapsed_ms;
-        usage.stopReason = raw.stop_reason ?? u.stop_reason ?? u.stopReason ?? raw.stopReason;
+        usage.firstTokenMs = u.firstTokenMs ?? obj.firstTokenMs ?? obj.first_token_ms ?? u.first_token_ms;
+        usage.elapsedMs = u.elapsedMs ?? obj.elapsedMs ?? obj.elapsed_ms ?? u.elapsed_ms;
+        usage.stopReason = obj.stop_reason ?? u.stop_reason ?? u.stopReason ?? obj.stopReason;
       } else {
         text = String(raw);
       }
@@ -337,34 +372,56 @@ export default function ChatPage() {
               borderRadius: 8,
               cursor: "pointer",
               color: "#e2e8f0",
+              position: "relative",
             }}
           >
-            <div style={{ fontWeight: "700", marginBottom: 4 }}>{s.title}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ fontWeight: "700", marginBottom: 4 }}>{s.title}</div>
+              <button
+                onClick={(ev) => { ev.stopPropagation(); setMenuOpenId(menuOpenId === s.id ? null : s.id); }}
+                title="Actions"
+                style={{ background: "transparent", border: "1px solid #334155", color: "#94a3b8", borderRadius: 6, width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+              >
+                ⋮
+              </button>
+            </div>
             <div style={{ fontSize: 12, color: "#94a3b8" }}>
               {s.messages.length} messages • {new Date(s.createdAt).toLocaleDateString()}
             </div>
 
-            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-              <button
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  const newTitle = prompt("Rename chat", s.title) || s.title;
-                  renameSession(s.id, newTitle);
-                }}
-                style={{ fontSize: 12, background: "transparent", border: "1px solid #334155", color: "#e2e8f0", padding: "4px 8px", borderRadius: 6 }}
+            {/* Context menu */}
+            {menuOpenId === s.id && (
+              <div
+                onClick={(ev) => ev.stopPropagation()}
+                style={{ position: "absolute", right: 8, top: 36, background: "#0b1220", border: "1px solid #334155", borderRadius: 8, minWidth: 160, zIndex: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
               >
-                Rename
-              </button>
-              <button
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  if (confirm("Delete chat?")) deleteSession(s.id);
-                }}
-                style={{ fontSize: 12, background: "transparent", border: "1px solid #7f1d1d", color: "#ef4444", padding: "4px 8px", borderRadius: 6 }}
-              >
-                Delete
-              </button>
-            </div>
+                <button
+                  onClick={() => { const t = prompt("Rename chat", s.title) || s.title; renameSession(s.id, t); setMenuOpenId(null); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", color: "#e2e8f0", cursor: "pointer" }}
+                >
+                  Rename
+                </button>
+                <button
+                  onClick={() => { duplicateSession(s.id); setMenuOpenId(null); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", color: "#e2e8f0", cursor: "pointer" }}
+                >
+                  Duplicate
+                </button>
+                <button
+                  onClick={() => { exportSession(s.id); setMenuOpenId(null); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", color: "#e2e8f0", cursor: "pointer" }}
+                >
+                  Show in File Explorer
+                </button>
+                <div style={{ height: 1, background: "#334155", margin: "4px 0" }} />
+                <button
+                  onClick={() => { setDeleteConfirmId(s.id); setMenuOpenId(null); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", color: "#ef4444", cursor: "pointer" }}
+                >
+                  Delete…
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -417,10 +474,10 @@ export default function ChatPage() {
     </div>
   );
 
-  const topBar = <ModelSelector />;
+
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
+    <div style={{ display: "flex", height: "100dvh", maxWidth: 1440, margin: "0 auto" }}>
       <LeftRail />
       <div style={{ display: "flex", flexDirection: "column", flex: 1, marginLeft: 56 }}>
         {/* Top Bar */}
@@ -451,11 +508,11 @@ export default function ChatPage() {
             >
               {leftOpen ? "⟨" : "⟩"}
             </button>
-            <strong>Chat</strong>
+            <Bounce><strong>Chats</strong></Bounce>
           </div>
-
-          <div style={{ display: "flex", justifyContent: "center" }}>{topBar}</div>
-
+          
+          
+          <div></div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
             <button
               onClick={() => setRightOpen(!rightOpen)}
@@ -474,7 +531,7 @@ export default function ChatPage() {
           </div>
         </header>
 
-        <div style={{ display: "flex", flex: 1 }}>
+        <div style={{ display: "flex", flex: 1, position: "relative" }}>
           {/* Left */}
           {leftOpen && (
             <aside style={{ width: 300, borderRight: "1px solid #334155", padding: 12, overflow: "auto", background: "#1e293b", color: "#e2e8f0" }}>
@@ -483,8 +540,8 @@ export default function ChatPage() {
           )}
 
           {/* Main */}
-          <main style={{ flex: 1, display: "flex", flexDirection: "column", padding: 16, background: "#0f172a", color: "#e2e8f0" }}>
-            <div style={{ flex: 1, overflow: "auto", padding: 12, border: "1px solid #334155", borderRadius: 8 }}>
+          <main style={{ flex: 1, display: "flex", flexDirection: "column", padding: 16, background: "#0f172a", color: "#e2e8f0", minHeight: 0 }}>
+            <div style={{ flex: 1, overflow: "auto", padding: 12, border: "1px solid #334155", borderRadius: 8, minHeight: 0 }}>
               {(currentSession?.messages ?? []).map((m) => (
                 <div key={m.id} style={{ marginBottom: 16 }}>
                   <div
@@ -517,7 +574,7 @@ export default function ChatPage() {
                   </div>
                 </div>
               ))}
-              {isLoading && <div style={{ padding: 12, color: "#94a3b8" }}>Assistant is typing…</div>}
+              {isLoading && <div className="rb-pulse-bg" style={{ padding: 12, color: "#94a3b8" }}>Assistant is typing…</div>}
               <div ref={messagesEndRef} />
             </div>
 
@@ -559,20 +616,7 @@ export default function ChatPage() {
                   }}
                 />
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <button
-                    onClick={sendMessage}
-                    disabled={isLoading || (!messageInput.trim() && attachedFiles.length === 0)}
-                    style={{
-                      padding: "8px 12px",
-                      borderRadius: 8,
-                      border: "1px solid #334155",
-                      background: "#1e293b",
-                      color: "#e2e8f0",
-                      cursor: isLoading ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    {isLoading ? "Sending…" : "Send"}
-                  </button>
+                  <LoadingButton onClick={sendMessage} isLoading={isLoading} disabled={!messageInput.trim() && attachedFiles.length === 0}>Send</LoadingButton>
 
                   <button
                     onClick={() => {
@@ -600,6 +644,30 @@ export default function ChatPage() {
           )}
         </div>
       </div>
+
+      {/* Delete confirm modal */}
+      {deleteConfirmId && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}
+          onClick={() => setDeleteConfirmId(null)}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 360, background: "#0b1220", border: "1px solid #334155", borderRadius: 12, padding: 16, color: "#e2e8f0" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Delete chat?</div>
+            <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 16 }}>This action cannot be undone.</div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => setDeleteConfirmId(null)} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}>Cancel</button>
+              <button
+                onClick={() => { deleteSession(deleteConfirmId); setDeleteConfirmId(null); }}
+                style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #7f1d1d", background: "#1e293b", color: "#ef4444" }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

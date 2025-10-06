@@ -23,25 +23,31 @@ export default function HomePage() {
   const { setSelected } = useModel();
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    const load = async () => {
       try {
         setIsLoading(true);
         const [evaluationsData, chatsData] = await Promise.all([
           historyService.getEvaluations(),
           historyService.getChats(),
         ]);
+        if (cancelled) return;
         setEvaluations(evaluationsData ?? []);
         setChats(chatsData ?? []);
         setGroqConnected(Boolean(import.meta.env.VITE_GROQ_API_KEY));
       } catch (err) {
+        if (cancelled) return;
         console.error("Home: failed to load history", err);
         setEvaluations([]);
         setChats([]);
         setGroqConnected(false);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
-    })();
+    };
+    // Defer slightly to ensure router shell is ready
+    const t = setTimeout(load, 0);
+    return () => { cancelled = true; clearTimeout(t); };
   }, []);
 
   // pass rate: safe
@@ -315,8 +321,8 @@ export default function HomePage() {
                         <div style={{ color: "#94a3b8", fontSize: 12 }}>
                           Last run:{" "}
                           {item.itemType === "evaluation"
-                            ? item.updatedAt
-                              ? new Date(item.updatedAt).toLocaleString()
+                            ? (item as any).updatedAt
+                              ? new Date((item as any).updatedAt).toLocaleString()
                               : "—"
                             : (item as SavedChat).lastActivityAt
                             ? new Date((item as SavedChat).lastActivityAt).toLocaleString()
@@ -389,10 +395,10 @@ export default function HomePage() {
       {/* Modal (uses your component if present) */}
       {selectedItem && (
         <HistoryModal
-          item={selectedItem}
+          item={selectedItem as unknown as (SavedEvaluation | SavedChat)}
           onClose={() => setSelectedItem(null)}
-          onLoad={handleLoad}
-          onRun={handleRun}
+          onLoad={(i) => handleLoad(i as unknown as Item)}
+          onRun={(i) => handleRun(i as unknown as Item)}
         />
       )}
     </div>

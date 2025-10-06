@@ -17,8 +17,8 @@ export default function ExpandableTextarea({
   const controlled = value !== undefined;
   const current = controlled ? value! : local;
 
-  // height state (default 140px, up to 600px)
-  const [height, setHeight] = React.useState(140);
+  // height state (default 220px, up to 800px) — taller for sidebar use
+  const [height, setHeight] = React.useState(220);
   const [hover, setHover] = React.useState(false);
 
   return (
@@ -58,8 +58,8 @@ export default function ExpandableTextarea({
         <div style={{ marginTop: 6, textAlign: "center" }}>
           <input
             type="range"
-            min={100}
-            max={600}
+            min={160}
+            max={800}
             value={height}
             onChange={(e) => setHeight(Number(e.target.value))}
             style={{ width: "80%" }}

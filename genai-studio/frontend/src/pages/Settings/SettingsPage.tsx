@@ -306,6 +306,16 @@ export default function SettingsPage() {
     input.click();
   };
 
+  // Background theme setting (grid / noise / gradient)
+  const [bgTheme, setBgTheme] = useState<string>(() => localStorage.getItem("app:bgTheme") || "gradient");
+  useEffect(() => {
+    localStorage.setItem("app:bgTheme", bgTheme);
+    const root = document.querySelector("body");
+    if (!root) return;
+    root.classList.remove("bg-grid","bg-noise","bg-gradient");
+    root.classList.add(bgTheme === "grid" ? "bg-grid" : bgTheme === "noise" ? "bg-noise" : "bg-gradient");
+  }, [bgTheme]);
+
   /** layout */
   if (isLoading) {
     return (
@@ -423,6 +433,26 @@ export default function SettingsPage() {
                     <option value="dark">Dark</option>
                     <option value="light">Light</option>
                   </select>
+                </div>
+
+                <div style={group}>
+                  <label style={label}>Background</label>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {[
+                      { k: "gradient", label: "Gradient" },
+                      { k: "grid", label: "Grid" },
+                      { k: "noise", label: "Noise" },
+                    ].map((opt) => (
+                      <button
+                        key={opt.k}
+                        onClick={() => setBgTheme(opt.k)}
+                        className={`rb-glare rb-press ${bgTheme === opt.k ? "rb-pulse-bg" : ""}`}
+                        style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #334155", background: bgTheme === opt.k ? "#1e293b" : "#0f172a", color: "#e2e8f0" }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div style={group}>

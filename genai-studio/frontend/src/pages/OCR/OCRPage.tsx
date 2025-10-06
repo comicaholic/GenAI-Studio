@@ -1,7 +1,7 @@
 // src/pages/OCR/OCRPage.tsx
 import React, { useMemo, useState, useEffect } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
-import ModelSelector from "@/components/TopBar/ModelSelector";
+
 import FileDrop from "@/components/FileDrop/FileDrop";
 import ExpandableTextarea from "@/components/ExpandableTextarea/ExpandableTextarea";
 import PromptPresetBox from "@/components/PresetPanel/PromptPresetBox";
@@ -20,6 +20,7 @@ import { completeLLM } from "@/services/llm";
 import { useNotifications } from "@/components/Notification/Notification";
 import { useBackgroundState } from "@/stores/backgroundState";
 import { historyService } from "@/services/history";
+import LayoutShell from "@/components/LayoutShell/LayoutShell";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.2, max_tokens: 512, top_p: 1.0, top_k: 40 };
 
@@ -650,130 +651,62 @@ export default function OCRPage() {
   );
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
-      <LeftRail />
+    <LayoutShell title="OCR Evaluation" left={left} right={right}>
+      {busy && (
+        <div style={{
+          background: "#1e293b",
+          border: "1px solid #334155",
+          padding: 8,
+          borderRadius: 8,
+          color: "#e2e8f0",
+          marginBottom: 16,
+        }}>{busy}</div>
+      )}
 
-      <div style={{ display: "flex", flexDirection: "column", flex: 1, marginLeft: 56 }}>
-        {/* Top Bar */}
-        <header
-          style={{
-            height: 48,
-            borderBottom: "1px solid #334155",
-            display: "grid",
-            gridTemplateColumns: "1fr auto 1fr",
-            alignItems: "center",
-            padding: "0 16px",
-            background: "#0f172a",
-            color: "#e2e8f0",
-          }}
+      {viewMode === "form" && renderFormView()}
+      {viewMode === "side-by-side" && renderSideBySideView()}
+      {viewMode === "compare-two" && renderCompareTwoView()}
+
+      {scores && (
+        <section style={{ marginTop: 16 }}>
+          <h3 style={{ margin: "0 0 8px 0", color: "#e2e8f0" }}>Evaluation Results</h3>
+          <div style={{ display: "grid", gap: 8 }}>
+            {Object.entries(scores).map(([key, value]) => (
+              <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", background: "#1e293b", borderRadius: 4 }}>
+                <span style={{ color: "#e2e8f0" }}>{key}</span>
+                <span style={{ color: "#e2e8f0", fontFamily: "monospace" }}>{typeof value === "number" ? value.toFixed(4) : String(value)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        <button
+          className="btn h-10 min-w-[96px]"
+          onClick={onEvaluate}
+          style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}
         >
-          {/* Left Section */}
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <button
-              className="btn h-10 min-w-[96px]"
-              onClick={() => setLeftOpen(!leftOpen)}
-              style={{
-                padding: "6px 10px",
-                border: "1px solid #334155",
-                background: "#1e293b",
-                color: "#e2e8f0",
-                borderRadius: 6,
-                cursor: "pointer",
-                fontSize: 12,
-              }}
-            >
-              {leftOpen ? "⟨" : "⟩"}
-            </button>
-            <strong>OCR Evaluation</strong>
-          </div>
-
-          {/* Center Section - Model Selector */}
-          <div style={{ display: "flex", justifyContent: "center" }}>
-            <ModelSelector />
-          </div>
-
-          {/* Right Section */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
-            <button
-              className="btn h-10 min-w-[96px]"
-              onClick={() => setRightOpen(!rightOpen)}
-              style={{
-                padding: "6px 10px",
-                border: "1px solid #334155",
-                background: "#1e293b",
-                color: "#e2e8f0",
-                borderRadius: 6,
-                cursor: "pointer",
-                fontSize: 12,
-              }}
-            >
-              {rightOpen ? "⟩" : "⟨"}
-            </button>
-          </div>
-        </header>
-
-        <div style={{ display: "flex", flex: 1 }}>
-          {/* Left Sidebar */}
-          {leftOpen && (
-            <aside style={{ width: 300, borderRight: "1px solid #334155", padding: 12, overflow: "auto", background: "#1e293b", color: "#e2e8f0" }}>
-              {left}
-            </aside>
-          )}
-
-          {/* Main Content */}
-          <main className="container-page py-6 space-y-6" style={{ flex: 1, padding: 16, overflow: "auto", background: "#0f172a", color: "#e2e8f0" }}>
-            {busy && <div style={{ background: "#1e293b", border: "1px solid #334155", padding: 8, borderRadius: 8, color: "#e2e8f0", marginBottom: 16 }}>{busy}</div>}
-
-            {viewMode === "form" && renderFormView()}
-            {viewMode === "side-by-side" && renderSideBySideView()}
-            {viewMode === "compare-two" && renderCompareTwoView()}
-
-            {scores && (
-              <section style={{ marginTop: 16 }}>
-                <h3 style={{ margin: "0 0 8px 0", color: "#e2e8f0" }}>Evaluation Results</h3>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {Object.entries(scores).map(([key, value]) => (
-                    <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", background: "#1e293b", borderRadius: 4 }}>
-                      <span style={{ color: "#e2e8f0" }}>{key}</span>
-                      <span style={{ color: "#e2e8f0", fontFamily: "monospace" }}>{typeof value === "number" ? value.toFixed(4) : String(value)}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-              <button className="btn h-10 min-w-[96px]" onClick={onEvaluate} style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}>
-                Run Evaluation
-              </button>
-              <button
-                className="btn h-10 min-w-[96px]"
-                onClick={onDownloadCSV}
-                disabled={!scores}
-                style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}
-              >
-                Download CSV
-              </button>
-              <button
-                className="btn h-10 min-w-[96px]"
-                onClick={onDownloadPDF}
-                disabled={!scores}
-                style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}
-              >
-                Download PDF
-              </button>
-            </div>
-          </main>
-
-          {/* Right Sidebar */}
-          {rightOpen && (
-            <aside style={{ width: 340, borderLeft: "1px solid #334155", padding: 12, overflow: "auto", background: "#1e293b", color: "#e2e8f0" }}>
-              {right}
-            </aside>
-          )}
-        </div>
+          Run Evaluation
+        </button>
+        <button
+          className="btn h-10 min-w-[96px]"
+          onClick={onDownloadCSV}
+          disabled={!scores}
+          style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}
+        >
+          Download CSV
+        </button>
+        <button
+          className="btn h-10 min-w-[96px]"
+          onClick={onDownloadPDF}
+          disabled={!scores}
+          style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}
+        >
+          Download PDF
+        </button>
       </div>
-    </div>
+    </LayoutShell>
   );
 }
 

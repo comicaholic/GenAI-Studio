@@ -1,6 +1,6 @@
 import React, { PropsWithChildren, useState } from "react";
 import ModelSelector from "@/components/TopBar/ModelSelector";
-
+import LeftRail from "@/components/LeftRail/LeftRail";
 export default function AppShell({
   children, left, right,
 }: PropsWithChildren<{ left?: React.ReactNode; right?: React.ReactNode }>) {
@@ -40,7 +40,8 @@ export default function AppShell({
           </button>
           <strong>GenAI Studio</strong>
         </div>
-
+        <LeftRail />
+        
         {/* CENTER group — the selector stays centered */}
         <div style={{display:"flex", justifyContent:"center"}}>
           <ModelSelector />

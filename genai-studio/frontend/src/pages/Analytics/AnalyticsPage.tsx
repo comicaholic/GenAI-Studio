@@ -81,6 +81,12 @@ interface EvaluationMetrics {
   rouge_scores?: Array<{ project?: string; score?: number; timestamp?: string }>;
   bleu_scores?: Array<{ project?: string; score?: number; timestamp?: string }>;
   f1_scores?: Array<{ project?: string; score?: number; timestamp?: string }>;
+  exact_match_scores?: Array<{ project?: string; score?: number; timestamp?: string }>;
+  bertscore_scores?: Array<{ project?: string; score?: number; timestamp?: string }>;
+  perplexity_scores?: Array<{ project?: string; score?: number; timestamp?: string }>;
+  accuracy_scores?: Array<{ project?: string; score?: number; timestamp?: string }>;
+  precision_scores?: Array<{ project?: string; score?: number; timestamp?: string }>;
+  recall_scores?: Array<{ project?: string; score?: number; timestamp?: string }>;
   model_comparison?: Record<
     string,
     { evaluations?: number; avg_rouge?: number; avg_bleu?: number; avg_f1?: number; pass_rate?: number }
@@ -97,6 +103,7 @@ const colors = {
   cyan: "#06b6d4",
   green: "#22c55e",
   yellow: "#eab308",
+  pink: "#ec4899",
   slate: "#334155",
   bg: "#0f172a",
   panel: "#1e293b",
@@ -107,6 +114,8 @@ const colors = {
 const clampPct = (v?: number | null) => Math.max(0, Math.min(100, Number(v ?? 0)));
 
 const ringLen = (r: number) => 2 * Math.PI * r;
+// lightweight switch UI
+import Switch from "@/components/ui/Switch";
 
 /** Reusable circle compare (outer = system, inner = application). Center shows system%. */
 function CircleCompare({
@@ -121,20 +130,20 @@ function CircleCompare({
   innerColor: string;
 }) {
   const R_OUT = 24;
-  const R_IN = 18;
+  const R_IN = 20;
   const L_OUT = ringLen(R_OUT);
   const L_IN = ringLen(R_IN);
   const sys = clampPct(systemPct);
   const app = clampPct(appPct);
   return (
-    <div style={{ position: "relative", width: 64, height: 64 }}>
-      <svg width="64" height="64" style={{ transform: "rotate(-90deg)" }}>
+    <div style={{ position: "relative", width: 60, height: 60 }}>
+      <svg width="60" height="60" style={{ transform: "rotate(-90deg)" }}>
         {/* background ring */}
-        <circle cx="32" cy="32" r={R_OUT} fill="none" stroke={colors.slate} strokeWidth="6" />
+        <circle cx="30" cy="30" r={R_OUT} fill="none" stroke={colors.slate} strokeWidth="6" />
         {/* system ring (outer) */}
         <circle
-          cx="32"
-          cy="32"
+          cx="30"
+          cy="30"
           r={R_OUT}
           fill="none"
           stroke={outerColor}
@@ -145,8 +154,8 @@ function CircleCompare({
         />
         {/* application ring (inner) */}
         <circle
-          cx="32"
-          cy="32"
+          cx="30"
+          cy="30"
           r={R_IN}
           fill="none"
           stroke={innerColor}
@@ -215,6 +224,18 @@ export default function AnalyticsPage() {
   const [throughputMetrics, setThroughputMetrics] = useState<ThroughputMetrics | null>(null);
   const [evaluationMetrics, setEvaluationMetrics] = useState<EvaluationMetrics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // persistent toggles for evaluations graph
+  const [evalToggles, setEvalToggles] = useState<{ rouge:boolean; bleu:boolean; f1:boolean; em:boolean; bert:boolean; perplexity:boolean; accuracy:boolean; precision:boolean; recall:boolean }>(() => {
+    try {
+      const s = localStorage.getItem("app:analytics:evalToggles");
+      if (s) return JSON.parse(s);
+    } catch {}
+    return { rouge:true, bleu:true, f1:true, em:false, bert:false, perplexity:false, accuracy:false, precision:false, recall:false };
+  });
+  useEffect(() => { localStorage.setItem("app:analytics:evalToggles", JSON.stringify(evalToggles)); }, [evalToggles]);
+  // toggle for GPU trends
+  const [showGPU, setShowGPU] = useState<boolean>(() => localStorage.getItem("app:analytics:showGPU")!=="false");
+  useEffect(() => { localStorage.setItem("app:analytics:showGPU", String(showGPU)); }, [showGPU]);
 
   const loadUptime = useCallback(async () => {
     try {
@@ -291,7 +312,7 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     loadAll();
-    const uptimeInterval = setInterval(loadUptime, 10_000); // update uptime frequently but not every second
+    const uptimeInterval = setInterval(loadUptime, 1_000); // realtime-ish uptime
     const dataInterval = setInterval(() => {
       // targeted refresh depending on tab
       if (activeTab === "application" && activeSubTab === "system") {
@@ -306,7 +327,7 @@ export default function AnalyticsPage() {
       } else if (activeTab === "groq") {
         loadGroq();
       }
-    }, 10_000);
+    }, 2_000);
     return () => {
       clearInterval(uptimeInterval);
       clearInterval(dataInterval);
@@ -346,6 +367,38 @@ export default function AnalyticsPage() {
       error_rate_pct: (pt.error_rate ?? 0) * 100,
     })) ?? [];
 
+  /* ---------- Evaluation metrics (averages) ---------- */
+  const evalAverages = useMemo(() => {
+    const em = Array.isArray(evaluationMetrics?.exact_match_scores) && evaluationMetrics && evaluationMetrics.exact_match_scores.length
+      ? evaluationMetrics.exact_match_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.exact_match_scores.length
+      : 0;
+    const bleu = Array.isArray(evaluationMetrics?.bleu_scores) && evaluationMetrics && evaluationMetrics.bleu_scores.length
+      ? evaluationMetrics.bleu_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.bleu_scores.length
+      : 0;
+    const rouge = Array.isArray(evaluationMetrics?.rouge_scores) && evaluationMetrics && evaluationMetrics.rouge_scores.length
+      ? evaluationMetrics.rouge_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.rouge_scores.length
+      : 0;
+    const f1 = Array.isArray(evaluationMetrics?.f1_scores) && evaluationMetrics && evaluationMetrics.f1_scores.length
+      ? evaluationMetrics.f1_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.f1_scores.length
+      : 0;
+    const bert = Array.isArray(evaluationMetrics?.bertscore_scores) && evaluationMetrics && evaluationMetrics.bertscore_scores.length
+      ? evaluationMetrics.bertscore_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.bertscore_scores.length
+      : 0;
+    const ppl = Array.isArray(evaluationMetrics?.perplexity_scores) && evaluationMetrics && evaluationMetrics.perplexity_scores.length
+      ? evaluationMetrics.perplexity_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.perplexity_scores.length
+      : 0;
+    const acc = Array.isArray(evaluationMetrics?.accuracy_scores) && evaluationMetrics && evaluationMetrics.accuracy_scores.length
+      ? evaluationMetrics.accuracy_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.accuracy_scores.length
+      : 0;
+    const prec = Array.isArray(evaluationMetrics?.precision_scores) && evaluationMetrics && evaluationMetrics.precision_scores.length
+      ? evaluationMetrics.precision_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.precision_scores.length
+      : 0;
+    const rec = Array.isArray(evaluationMetrics?.recall_scores) && evaluationMetrics && evaluationMetrics.recall_scores.length
+      ? evaluationMetrics.recall_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.recall_scores.length
+      : 0;
+    return { em, bleu, rouge, f1, bert, ppl, acc, prec, rec };
+  }, [evaluationMetrics]);
+
   /* ---------- Application <> system derivations (defensive) ---------- */
   const sysCPU = clampPct(systemMetrics?.cpu?.system_percent ?? systemMetrics?.cpu?.percent);
   const appCPU = clampPct(
@@ -377,10 +430,10 @@ export default function AnalyticsPage() {
 
   /* -------------------- Render -------------------- */
   return (
-    <div style={{ display: "flex", height: "100vh", background: colors.bg }}>
+    <div style={{ display: "flow", height: "100vh", minHeight: "0", overflow: "hidden", background: colors.bg }}>
       <LeftRail />
       <LayoutShell>
-        <div style={{ padding: 28, marginLeft: 56, minHeight: "100vh", color: colors.text, flex: 1, overflow: "auto" }}>
+        <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto", height: "100%", color: colors.text }}>
           {/* Header */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 22 }}>
             <div>
@@ -523,21 +576,37 @@ export default function AnalyticsPage() {
             <>
               {/* Application / System */}
               {activeTab === "application" && activeSubTab === "system" && (
-                <div style={{ display: "grid", gap: 20 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
-                    <StatCard title="App CPU" value={`${appCPU.toFixed(1)}%`} subtitle={`System: ${sysCPU.toFixed(1)}%`} color={colors.primary} />
-                    <StatCard title="App Memory" value={`${appMemGB.toFixed(1)} GB`} subtitle={`Total: ${totalMemGB.toFixed(1)} GB`} color={colors.secondary} />
-                    <StatCard title="App GPU" value={`${appGPU.toFixed(1)}%`} subtitle={`System GPU: ${sysGPU.toFixed(1)}%`} color={colors.purple} />
-                    <div style={{ padding: 20, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 12 }}>
+                <div style={{ display: "grid", gap: 24 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
+                    {/* CPU */}
+                    <div style={{ padding: 24, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 16 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                        <div>
-                          <div style={{ fontSize: 13, color: colors.muted }}>System Health</div>
-                          <div style={{ fontSize: 18, fontWeight: 700, color: colors.text }}>Overview</div>
-                        </div>
+                        <h3 style={{ margin: 0, color: colors.text, fontSize: 16 }}>Application CPU usage</h3>
                         <CircleCompare systemPct={sysCPU} appPct={appCPU} outerColor={colors.accent} innerColor={colors.primary} />
                       </div>
-                      <div style={{ fontSize: 12, color: colors.muted }}>Last updated: {systemMetrics?.timestamp ? new Date(systemMetrics.timestamp).toLocaleString() : "N/A"}</div>
+                      <div style={{ fontSize: 24, fontWeight: 700, color: colors.primary }}>{appCPU.toFixed(1)}%</div>
                     </div>
+
+                    {/* Memory */}
+                    <div style={{ padding: 24, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 16 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <h3 style={{ margin: 0, color: colors.text, fontSize: 16 }}>Application Memory Usage</h3>
+                        <CircleCompare systemPct={sysMemPct} appPct={appMemPct} outerColor={colors.primary} innerColor={colors.secondary} />
+                      </div>
+                      <div style={{ fontSize: 24, fontWeight: 700, color: colors.secondary }}>{appMemGB.toFixed(1)} GB</div>
+                      <div style={{ fontSize: 12, color: colors.muted }}>Total: {totalMemGB.toFixed(1)} GB</div>
+                    </div>
+
+                    {/* GPU */}
+                    <div style={{ padding: 24, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 16 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <h3 style={{ margin: 0, color: colors.text, fontSize: 16 }}>Application GPU usage</h3>
+                        <CircleCompare systemPct={sysGPU} appPct={appGPU} outerColor={colors.purple} innerColor={colors.secondary} />
+                      </div>
+                      <div style={{ fontSize: 24, fontWeight: 700, color: colors.secondary }}>{appGPU.toFixed(1)}%</div>
+                    </div>
+
+                    
                   </div>
 
                   <ChartCard title="Resource Usage">
@@ -559,7 +628,7 @@ export default function AnalyticsPage() {
                     </ResponsiveContainer>
                   </ChartCard>
 
-                  <ChartCard title="Historical Performance (CPU / Memory / Disk)">
+                  <ChartCard title="Historical Performance (CPU / Memory / Disk / GPU)">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart
                         data={systemChartData.map((trend) => ({
@@ -567,6 +636,7 @@ export default function AnalyticsPage() {
                           cpu: clampPct((trend.cpu ?? 0) * 1),
                           memory: clampPct((trend.memory ?? 0) * 1),
                           disk: clampPct((trend.disk ?? 0) * 1),
+                          gpu: clampPct((trend.cpu ?? 0) * 0.6),
                         }))}
                       >
                         <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
@@ -577,19 +647,25 @@ export default function AnalyticsPage() {
                         <Area type="monotone" dataKey="cpu" stackId="1" stroke={colors.accent} fill={colors.accent} fillOpacity={0.18} name="CPU %" />
                         <Area type="monotone" dataKey="memory" stackId="1" stroke={colors.primary} fill={colors.primary} fillOpacity={0.12} name="Memory %" />
                         <Area type="monotone" dataKey="disk" stackId="1" stroke={colors.secondary} fill={colors.secondary} fillOpacity={0.12} name="Disk %" />
+                        {showGPU && <Area type="monotone" dataKey="gpu" stackId="1" stroke={colors.purple} fill={colors.purple} fillOpacity={0.12} name="GPU %" />}
                       </AreaChart>
                     </ResponsiveContainer>
                   </ChartCard>
+                  <div style={{ display:"flex", gap:12, alignItems:"center", color:colors.muted }}>
+                    <label style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+                      <input type="checkbox" checked={showGPU} onChange={(e)=>setShowGPU(e.target.checked)} /> Show GPU
+                    </label>
+                  </div>
                 </div>
               )}
 
               {/* Application / Trends */}
               {activeTab === "application" && activeSubTab === "trends" && (
-                <div style={{ display: "grid", gap: 20 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
-                    <StatCard title="Error Rate" value={errorMetrics ? `${(errorMetrics.error_rate ?? 0) * 100 .toFixed?.(2) ?? ((errorMetrics.error_rate ?? 0) * 100).toFixed(2)}%` : "N/A"} subtitle={`${errorMetrics?.total_errors ?? 0} errors`} color={colors.danger} />
-                    <StatCard title="Avg Response (ms)" value={latencyMetrics ? `${(latencyMetrics.average_response_time_ms ?? 0).toFixed(1)} ms` : "N/A"} subtitle={`P95: ${latencyMetrics?.p95_response_time_ms?.toFixed?.(1) ?? "N/A"} • P99: ${latencyMetrics?.p99_response_time_ms?.toFixed?.(1) ?? "N/A"}`} color={colors.accent} />
-                    <StatCard title="Throughput" value={throughputMetrics ? `${(throughputMetrics.requests_per_second ?? 0).toFixed(1)} /s` : "N/A"} subtitle={`${(throughputMetrics?.evaluations_per_minute ?? 0).toFixed?.(1) ?? "N/A"} eval/min`} color={colors.secondary} />
+                <div style={{ display: "grid", gap: 24 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 24 }}>
+                    <StatCard title="Error Rate" value={errorMetrics ? `${(((errorMetrics.error_rate ?? 0) * 100)).toFixed(2)}%` : "N/A"} subtitle={`${errorMetrics?.total_errors ?? 0} errors`} color={colors.danger} />
+                    <StatCard title="Avg Response (ms)" value={latencyMetrics ? `${(latencyMetrics.average_response_time_ms ?? 0).toFixed(1)} ms` : "N/A"} subtitle={`P95: ${typeof latencyMetrics?.p95_response_time_ms === "number" ? latencyMetrics.p95_response_time_ms.toFixed(1) : "N/A"} • P99: ${typeof latencyMetrics?.p99_response_time_ms === "number" ? latencyMetrics.p99_response_time_ms.toFixed(1) : "N/A"}`} color={colors.accent} />
+                    <StatCard title="Throughput" value={throughputMetrics ? `${(throughputMetrics.requests_per_second ?? 0).toFixed(1)} /s` : "N/A"} subtitle={`${typeof throughputMetrics?.evaluations_per_minute === "number" ? throughputMetrics.evaluations_per_minute.toFixed(1) : "N/A"} eval/min`} color={colors.secondary} />
                   </div>
 
                   <ChartCard title="Error Trends (hourly)">
@@ -614,34 +690,79 @@ export default function AnalyticsPage() {
 
               {/* Application / Evaluations */}
               {activeTab === "application" && activeSubTab === "evaluations" && (
-                <div style={{ display: "grid", gap: 20 }}>
+                <div style={{ display: "grid", gap: 24 }}>
                   {evaluationMetrics ? (
                     <>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
                         <StatCard title="Total Evaluations" value={formatNumber(evaluationMetrics.total_evaluations)} subtitle="All time" color={colors.primary} />
                         <StatCard title="Avg Pass Rate" value={`${((evaluationMetrics.average_pass_rate ?? 0) * 100).toFixed(1)}%`} subtitle="Overall success" color={colors.secondary} />
-                        <StatCard title="Avg ROUGE" value={(evaluationMetrics?.rouge_scores?.length ? (evaluationMetrics.rouge_scores.reduce((s, r) => s + (r.score ?? 0), 0) / evaluationMetrics.rouge_scores.length) : 0).toFixed(3)} subtitle="Text similarity" color={colors.accent} />
-                        <StatCard title="Active Projects" value={(evaluationMetrics?.rouge_scores?.length ?? 0) > 0 ? evaluationMetrics.rouge_scores.length : 0} subtitle="Projects" color={colors.purple} />
+                        {[
+                          { k: "rouge", label: "ROUGE", val: evalAverages.rouge.toFixed(3), color: colors.primary },
+                          { k: "bleu", label: "BLEU", val: evalAverages.bleu.toFixed(3), color: colors.secondary },
+                          { k: "f1", label: "F1", val: evalAverages.f1.toFixed(3), color: colors.accent },
+                          { k: "em", label: "Exact Match", val: evalAverages.em.toFixed(3), color: colors.cyan },
+                          { k: "bert", label: "BERTScore", val: evalAverages.bert.toFixed(3), color: colors.green },
+                          { k: "perplexity", label: "Perplexity", val: evalAverages.ppl.toFixed(2), color: colors.danger },
+                          { k: "accuracy", label: "Accuracy", val: evalAverages.acc.toFixed(3), color: colors.yellow },
+                          { k: "precision", label: "Precision", val: evalAverages.prec.toFixed(3), color: colors.purple },
+                          { k: "recall", label: "Recall", val: evalAverages.rec.toFixed(3), color: colors.pink },
+                        ].map((m) => (
+                          <label key={m.k} style={{ display: "grid", gap: 6, padding: 12, background: colors.panel, border: `1px solid ${m.color}`, borderRadius: 16 }}>
+                            <div style={{ fontWeight: 700, color: m.color }}>{m.label}</div>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                              <span style={{ color: m.color, fontWeight: 600 }}>{m.val}</span>
+                              <Switch
+                                checked={(evalToggles as any)[m.k]}
+                                onChange={(v) => setEvalToggles({ ...(evalToggles as any), [m.k]: v } as any)}
+                                color={m.color}
+                              />
+                            </div>
+                          </label>
+                        ))}
                       </div>
 
-                      <ChartCard title="Model Comparison (sample)">
+                      <ChartCard title="Evaluation Metrics Graph">
                         <ResponsiveContainer width="100%" height="100%">
-                          <BarChart
-                            data={[
-                              { name: "Llama-3.1-8b", rouge: 0.78, bleu: 0.72, f1: 0.75 },
-                              { name: "Llama-3.1-70b", rouge: 0.85, bleu: 0.78, f1: 0.81 },
-                              { name: "Mixtral-8x7b", rouge: 0.82, bleu: 0.75, f1: 0.78 },
-                            ]}
-                          >
+                          <LineChart data={(() => {
+                            const maxLen = Math.max(
+                              evaluationMetrics?.rouge_scores?.length || 0,
+                              evaluationMetrics?.bleu_scores?.length || 0,
+                              evaluationMetrics?.f1_scores?.length || 0,
+                              evaluationMetrics?.exact_match_scores?.length || 0,
+                              evaluationMetrics?.bertscore_scores?.length || 0,
+                              evaluationMetrics?.perplexity_scores?.length || 0,
+                              evaluationMetrics?.accuracy_scores?.length || 0,
+                              evaluationMetrics?.precision_scores?.length || 0,
+                              evaluationMetrics?.recall_scores?.length || 0,
+                            );
+                            return Array.from({ length: maxLen }, (_, i) => ({
+                              idx: i,
+                              rouge: evaluationMetrics?.rouge_scores?.[i]?.score,
+                              bleu: evaluationMetrics?.bleu_scores?.[i]?.score,
+                              f1: evaluationMetrics?.f1_scores?.[i]?.score,
+                              em: evaluationMetrics?.exact_match_scores?.[i]?.score,
+                              bert: evaluationMetrics?.bertscore_scores?.[i]?.score,
+                              perplexity: evaluationMetrics?.perplexity_scores?.[i]?.score,
+                              accuracy: evaluationMetrics?.accuracy_scores?.[i]?.score,
+                              precision: evaluationMetrics?.precision_scores?.[i]?.score,
+                              recall: evaluationMetrics?.recall_scores?.[i]?.score,
+                            }));
+                          })()}>
                             <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                            <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
+                            <XAxis dataKey="idx" stroke={colors.muted} fontSize={12} />
                             <YAxis stroke={colors.muted} fontSize={12} />
                             <Tooltip contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }} />
                             <Legend />
-                            <Bar dataKey="rouge" fill={colors.primary} name="ROUGE" />
-                            <Bar dataKey="bleu" fill={colors.secondary} name="BLEU" />
-                            <Bar dataKey="f1" fill={colors.accent} name="F1" />
-                          </BarChart>
+                            {evalToggles.rouge && <Line type="monotone" dataKey="rouge" stroke={colors.primary} name="ROUGE" dot={false} />}
+                            {evalToggles.bleu && <Line type="monotone" dataKey="bleu" stroke={colors.secondary} name="BLEU" dot={false} />}
+                            {evalToggles.f1 && <Line type="monotone" dataKey="f1" stroke={colors.accent} name="F1" dot={false} />}
+                            {evalToggles.em && <Line type="monotone" dataKey="em" stroke={colors.cyan} name="EM" dot={false} />}
+                            {evalToggles.bert && <Line type="monotone" dataKey="bert" stroke={colors.green} name="BERTScore" dot={false} />}
+                            {evalToggles.perplexity && <Line type="monotone" dataKey="perplexity" stroke={colors.danger} name="Perplexity" dot={false} />}
+                            {evalToggles.accuracy && <Line type="monotone" dataKey="accuracy" stroke={colors.yellow} name="Accuracy" dot={false} />}
+                            {evalToggles.precision && <Line type="monotone" dataKey="precision" stroke={colors.purple} name="Precision" dot={false} />}
+                            {evalToggles.recall && <Line type="monotone" dataKey="recall" stroke={colors.pink} name="Recall" dot={false} />}
+                          </LineChart>
                         </ResponsiveContainer>
                       </ChartCard>
                     </>
@@ -653,10 +774,10 @@ export default function AnalyticsPage() {
 
               {/* Groq tab */}
               {activeTab === "groq" && (
-                <div style={{ display: "grid", gap: 20 }}>
+                <div style={{ display: "grid", gap: 24 }}>
                   {groqAnalytics ? (
                     <>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 24 }}>
                         <StatCard title="Total Requests" value={formatNumber(groqAnalytics.total_requests)} subtitle={`Last ${timeFilter}`} color={colors.secondary} />
                         <StatCard title="Total Tokens" value={formatNumber(groqAnalytics.total_tokens)} subtitle="Processed tokens" color={colors.primary} />
                         <StatCard title="Total Cost" value={formatCurrency(groqAnalytics.total_cost_usd)} subtitle="API usage cost" color={colors.accent} />

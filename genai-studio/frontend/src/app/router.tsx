@@ -11,7 +11,7 @@ import SettingsPage from "@/pages/Settings/SettingsPage";
 import CustomPagesIndex from "@/pages/Custom/CustomPagesIndex";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import BackgroundOperationsIndicator from "@/components/BackgroundOperations/BackgroundOperationsIndicator";
-
+import ModelSelector from '@/components/TopBar/ModelSelector';
 
 
 // If you have a ModelSelector, import it here and render in the header.
@@ -29,11 +29,16 @@ function AppShell() {
                    bg-white/90 dark:bg-neutral-900/90 backdrop-blur supports-[backdrop-filter]:bg-white/60 px-3"
         style={{ height: HEADER_H }}
       ><div></div>
+        
         <div className="flex items-center gap-2">
           {/* Collapse buttons are small, see .icon-btn-sm in index.css */}
           {/* If you had left toggle here, render it with className="icon-btn-sm" */}
-          <strong className="text-sm">GenAI Assessment Studio</strong>
+          {/*ADD title later, take navigation bar into account <strong className="text-sm">GenAI Assessment Studio</strong>" */}
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <ModelSelector />
+          </div>
         </div>
+        
         <div className="flex items-center gap-2">
           {/* <ModelSelector />  <- stays visible */}
           {/* <button className="icon-btn-sm" aria-label="Toggle right panel">…</button> */}

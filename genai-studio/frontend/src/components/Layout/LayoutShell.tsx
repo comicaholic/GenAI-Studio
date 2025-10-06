@@ -1,6 +1,5 @@
 import React from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
-import ModelSelector from "@/components/TopBar/ModelSelector";
 
 /**
  * Three-column app shell
@@ -41,7 +40,7 @@ export default function LayoutShell({
   React.useEffect(() => { if (!right) setRightOpen(false); }, [right]);
 
   return (
-    <div style={{ display: "grid", gridTemplateRows: "56px 1fr", height: "100vh" }}>
+    <div style={{ display: "grid", gridTemplateRows: "auto 1fr", minHeight: "100dvh" }}>
       {/* Sticky header (56px) */}
       <header
         style={{
@@ -71,10 +70,8 @@ export default function LayoutShell({
           {/* Title (optional) */}
           {title ? <div style={{ color: "#e2e8f0", fontSize: 14, opacity: 0.9 }}>{title}</div> : null}
 
-          {/* Centered model selector */}
-          <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
-            <ModelSelector />
-          </div>
+          {/* Center spacer (global ModelSelector lives in top app header) */}
+          <div style={{ flex: 1 }} />
 
           {/* Right collapse (24x24) */}
           {right ? (
@@ -117,7 +114,7 @@ export default function LayoutShell({
           {/* CENTER (the ONLY scrollable column) */}
           <main
             style={{
-              height: "calc(100vh - 56px)",
+              height: "auto",
               overflow: "auto",
               padding: 12,
               borderRadius: 12,
@@ -179,7 +176,7 @@ const sideStickyLeft: React.CSSProperties = {
   position: "sticky",
   top: 0,
   alignSelf: "start",
-  height: "calc(100vh - 56px)",
+  height: "calc(100dvh - 56px)",
   overflow: "auto",
   paddingRight: 4,
 };
@@ -188,7 +185,7 @@ const sideStickyRight: React.CSSProperties = {
   position: "sticky",
   top: 0,
   alignSelf: "start",
-  height: "calc(100vh - 56px)",
-  overflow: "auto",
+  height: "calc(100dvh - 56px)",
+  overflow: "hidden",
   paddingLeft: 4,
 };
