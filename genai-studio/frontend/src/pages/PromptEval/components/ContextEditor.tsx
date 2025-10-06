@@ -45,7 +45,7 @@ export default function ContextEditor({ value, onChange }: ContextEditorProps) {
         alignItems: 'center',
         marginBottom: '12px',
       }}>
-        <h3 style={{
+        <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100" style={{
           color: '#e2e8f0',
           margin: 0,
           fontSize: '14px',
@@ -61,8 +61,7 @@ export default function ContextEditor({ value, onChange }: ContextEditorProps) {
           }}>
             {tokenCount} tokens
           </span>
-          <button
-            onClick={handleCopy}
+          <button className="btn h-10 min-w-[96px]" onClick={handleCopy}
             style={{
               background: 'none',
               border: 'none',
@@ -86,8 +85,7 @@ export default function ContextEditor({ value, onChange }: ContextEditorProps) {
         </div>
       </div>
 
-      <textarea
-        value={localValue}
+      <textarea className="input text-sm min-h-32" value={localValue}
         onChange={handleChange}
         placeholder="Enter additional context, instructions, or background information..."
         style={{

@@ -12,10 +12,14 @@ export const DEFAULT_METRICS: MetricState = {
   precision:false, precision_avg:false, recall:false, recall_avg:false,
 };
 
-export default function MetricsPanel({
-  metrics, onChange
-}: { metrics: MetricState; onChange: (m: MetricState)=>void; }) {
 
+export default function MetricsPanel(props: {
+  metrics?: MetricState;              // preferred
+  state?: MetricState;                // legacy alias
+  onChange: (next: MetricState) => void;
+}) {
+  const metrics = (props.metrics ?? props.state) ?? DEFAULT_METRICS;
+  const { onChange } = props;
   const ck = (k: keyof MetricState) => (e: React.ChangeEvent<HTMLInputElement>) => onChange({ ...metrics, [k]: e.target.checked });
 
   return (

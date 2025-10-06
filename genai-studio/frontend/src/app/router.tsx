@@ -12,31 +12,52 @@ import CustomPagesIndex from "@/pages/Custom/CustomPagesIndex";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import BackgroundOperationsIndicator from "@/components/BackgroundOperations/BackgroundOperationsIndicator";
 
+
+
+// If you have a ModelSelector, import it here and render in the header.
+
+// Height constants (keep header small and tidy)
+const HEADER_H = 48; // 12 * 4px
+
 function AppShell() {
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
-      <LeftRail />
+    <div className="h-screen w-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 grid grid-rows-[auto,1fr]">
+      {/* ============== TOP BAR (sticky) ============== */}
+      <header
+        className="z-30 row-start-1 row-end-2 flex h-12 items-center justify-between
+                   border-b border-neutral-200/70 dark:border-neutral-800/70
+                   bg-white/90 dark:bg-neutral-900/90 backdrop-blur supports-[backdrop-filter]:bg-white/60 px-3"
+        style={{ height: HEADER_H }}
+      ><div></div>
+        <div className="flex items-center gap-2">
+          {/* Collapse buttons are small, see .icon-btn-sm in index.css */}
+          {/* If you had left toggle here, render it with className="icon-btn-sm" */}
+          <strong className="text-sm">GenAI Assessment Studio</strong>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* <ModelSelector />  <- stays visible */}
+          {/* <button className="icon-btn-sm" aria-label="Toggle right panel">…</button> */}
+        </div>
+      </header>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", marginLeft: 56 }}>
-        <header style={{ height: 48, borderBottom: "1px solid #334155", display: "grid", gridTemplateColumns: "1fr minmax(420px, 640px) 1fr", alignItems: "center", background: "#0f172a", color: "#e2e8f0" }}>
-          <div />
-          <div style={{ justifySelf: "center" }}>
-            <strong>GenAI Assessment Studio</strong>
-            <span style={{ marginLeft: 8, fontSize: 12, color: "#94a3b8" }}>Testing Platform</span>
+      {/* ============== BODY (three columns) ============== */}
+      <div className="row-start-2 row-end-3 grid h-[calc(100vh-48px)] grid-cols-[56px,1fr]">
+        {/* Left rail (icons) — fixed 56px. No margins/gaps. */}
+        <div className="col-start-1 col-end-2 h-full border-r border-neutral-200/60 dark:border-neutral-800/60 bg-[#0B1B2C]">
+          <LeftRail />
+        </div>
+
+        {/* Main scroll container — only THIS scrolls */}
+        <main className="col-start-1 col-end-3 min-w-0 h-full overflow-y-auto">
+          <div className="px-4 py-5">
+            <Outlet />
           </div>
-          <div />
-          <div />
-        </header>
-
-        <main style={{ flex: 1, overflow: "auto", background: "#0f172a", color: "#e2e8f0" }}>
-          <Outlet />
         </main>
       </div>
-      
-      <BackgroundOperationsIndicator />
     </div>
   );
 }
+
 
 export const router = createBrowserRouter([
   {

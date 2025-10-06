@@ -1,0 +1,98 @@
+/* src/index.css */
+@import "tailwindcss";
+@reference "tailwindcss";
+@theme {
+  /* custom brand color used by .btn-primary (bg-brand) */
+  --color-brand: #6D5EF0;
+
+  /* the card shadow used by .card (shadow-card) */
+  --shadow-card: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
+
+  /* radii used by helpers */
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+}
+
+/* App-wide tweaks */
+:root {
+  color-scheme: light dark;
+}
+html, body, #root { height: 100%; }
+body { overflow: hidden; background: #0b1220;} /* stop second scrollbar */
+
+/* now @apply works because we referenced tailwind */
+/*body { @apply antialiased bg-neutral-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-50; }
+
+/* helpers */
+.container-page { @apply mx-auto w-full max-w-7xl px-6; }
+.card { @apply rounded-2xl shadow-card bg-white dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60; }
+.card-head { @apply px-5 py-4 border-b border-neutral-200/60 dark:border-neutral-700/60; }
+.card-body { @apply p-5; }
+/* a base class for convenience (ok to define) */
+.btn { @apply inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium border; }
+/* But do NOT @apply .btn in v4 — repeat the utilities instead */
+.btn-primary { 
+  @apply inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium 
+         border border-transparent bg-brand text-white hover:opacity-90;
+}
+.btn-ghost { 
+  @apply inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium 
+         border border-transparent bg-transparent hover:bg-neutral-100 dark:hover:bg-neutral-800;
+}
+
+.input {
+  @apply rounded-xl border border-neutral-300 dark:border-neutral-700
+         bg-white dark:bg-neutral-800 px-3 py-2
+         outline-none focus:ring-2 focus:ring-brand/40;
+}
+.icon-btn {
+  @apply inline-flex h-8 w-8 items-center justify-center rounded-lg border
+         border-neutral-300/70 dark:border-neutral-700/70
+         bg-white/70 dark:bg-neutral-900/70 hover:bg-neutral-100 dark:hover:bg-neutral-800
+         transition;
+}
+.btn-outline {
+  @apply inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium
+         border border-neutral-300 dark:border-neutral-700 bg-transparent
+         hover:bg-neutral-100 dark:hover:bg-neutral-800;
+}
+.btn-danger {
+  @apply inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium
+         border border-transparent bg-red-600 text-white hover:bg-red-500;
+}
+
+/* small icon toggle button */
+.icon-btn-sm {
+  @apply inline-flex h-7 w-7 items-center justify-center rounded-md
+         border border-neutral-300/70 dark:border-neutral-700/70
+         bg-white/80 dark:bg-neutral-900/80 hover:bg-neutral-100 dark:hover:bg-neutral-800
+         transition;
+}
+/* src/index.css (or wherever your CSS lives) */
+.collapse-btn {
+  height: 24px;
+  width: 24px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #334155;
+  background: #0b1220;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+/* headings don't get hidden under sticky header */
+:where(h1,h2,h3){ scroll-margin-top: 3.5rem; }
+
+/* change THIS to not apply `.input` */
+.select {
+  @apply rounded-xl border border-neutral-300 dark:border-neutral-700
+         bg-white dark:bg-neutral-800 px-3 py-2 pr-9
+         outline-none focus:ring-2 focus:ring-brand/40;
+}
+.badge { @apply inline-flex items-center rounded-lg bg-neutral-100 dark:bg-neutral-800 px-2 py-1 text-xs; }
+
+
+
+

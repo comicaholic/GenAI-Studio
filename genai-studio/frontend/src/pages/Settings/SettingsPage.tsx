@@ -1,27 +1,14 @@
-import React, { useState, useEffect } from "react";
+// src/pages/Settings/SettingsPage.tsx
+import React, { useEffect, useRef, useState } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import { api } from "@/services/api";
 import { useNotifications } from "@/components/Notification/Notification";
 import PresetEditor from "@/components/PresetEditor/PresetEditor";
 
-// Default settings to guarantee required nested objects exist
-const defaultSettings: Settings = {
-  ui: { theme: "dark", defaultLandingPage: "/", backgroundStateManagement: true },
-  paths: {
-    ocrSource: "./data/source",
-    ocrReference: "./data/reference",
-    promptSource: "./data/source",
-    promptReference: "./data/reference",
-    chatDownloadPath: "./data/downloads",
-  },
-  presets: { ocr: [], prompt: [], chat: [] },
-  groq: { apiKey: "", connected: false },
-  huggingface: { token: "", connected: false },
-};
-
-
-
-interface Settings {
+/** ------------------------------
+ *  Types & defaults (robust to partial backend payloads)
+ *  ------------------------------ */
+type Settings = {
   ui: {
     theme: "light" | "dark";
     defaultLandingPage: string;
@@ -47,9 +34,9 @@ interface Settings {
     token: string;
     connected: boolean;
   };
-}
+};
 
-interface PresetData {
+type PresetData = {
   id?: string;
   name: string;
   type: "ocr" | "prompt" | "chat";
@@ -78,111 +65,166 @@ interface PresetData {
       recall_avg: boolean;
     };
   };
-}
+};
 
+const defaultSettings: Settings = {
+  ui: { theme: "dark", defaultLandingPage: "/", backgroundStateManagement: true },
+  paths: {
+    ocrSource: "./data/source",
+    ocrReference: "./data/reference",
+    promptSource: "./data/source",
+    promptReference: "./data/reference",
+    chatDownloadPath: "./data/downloads",
+  },
+  presets: { ocr: [], prompt: [], chat: [] },
+  groq: { apiKey: "", connected: false },
+  huggingface: { token: "", connected: false },
+};
+
+/** ------------------------------
+ *  Component
+ *  ------------------------------ */
 export default function SettingsPage() {
   const { showSuccess, showError, showInfo } = useNotifications();
+
+  // state
   const [settings, setSettings] = useState<Settings>(defaultSettings);
-
-
-  const [activeTab, setActiveTab] = useState("ui");
+  const [activeTab, setActiveTab] = useState<"ui" | "paths" | "presets" | "groq" | "huggingface">("ui");
   const [isLoading, setIsLoading] = useState(true);
+
+  // preset editor state
   const [showPresetEditor, setShowPresetEditor] = useState(false);
   const [editingPreset, setEditingPreset] = useState<PresetData | null>(null);
   const [presetDetails, setPresetDetails] = useState<Record<string, PresetData>>({});
 
-  const loadSettings = async () => {
-    setIsLoading(true);
-    try {
-      const response = await api.get("/settings");
-      // Merge backend response into defaults so no field is undefined
-      setSettings({ ...defaultSettings, ...response.data });
-    } catch (error: any) {
-      console.error("Failed to load settings:", error);
-      setSettings(defaultSettings); // fallback so UI never breaks
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // folder picker cache (optionally move to context later)
+  const dirHandlesRef = useRef<Record<string, any>>({});
 
+  // platform capability
+  const canPickDirectory = typeof (window as any).showDirectoryPicker === "function";
+
+  /** load settings from backend */
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get("/settings");
+        // merge so we never render undefined sub-objects
+        setSettings({ ...defaultSettings, ...(res.data || {}) });
+      } catch (err: any) {
+        console.error("Failed to load settings:", err);
+        setSettings(defaultSettings);
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, []);
+
+  /** helpers */
+  const updateSetting = (path: string, value: any) => {
+    setSettings((prev) => {
+      const next: any = { ...prev };
+      const keys = path.split(".");
+      let cur = next;
+      for (let i = 0; i < keys.length - 1; i++) {
+        const k = keys[i];
+        if (cur[k] == null || typeof cur[k] !== "object") cur[k] = {};
+        cur = cur[k];
+      }
+      cur[keys[keys.length - 1]] = value;
+      return next as Settings;
+    });
+  };
 
   const saveSettings = async () => {
     try {
-      await api.post("/settings", settings);
-      showSuccess("Settings Saved", "Your settings have been saved successfully!");
-    } catch (error: any) {
-      showError("Save Failed", "Failed to save settings: " + (error.message || error));
+      await api.post("/settings", settings); // backend persists & writes .env as needed
+      showSuccess("Settings Saved", "Your settings have been saved successfully.");
+    } catch (err: any) {
+      showError("Save Failed", err?.message || "Failed to save settings.");
     }
   };
 
   const testGroqConnection = async () => {
     if (!settings.groq.apiKey.trim()) {
-      showError("Missing API Key", "Please enter a Groq API key first.");
+      showError("Missing API Key", "Enter a Groq API key first.");
       return;
     }
-    
     try {
-      const response = await api.post("/groq/test", { apiKey: settings.groq.apiKey });
-      setSettings(prev => ({
-        ...prev,
-        groq: { ...prev.groq, connected: response.data.connected }
-      }));
-      if (response.data.connected) {
-        showSuccess("Groq Connected", `Groq API connected successfully! Found ${response.data.models_count || 0} models.`);
-      } else {
-        showError("Connection Failed", response.data.error || "Failed to connect to Groq API.");
-      }
-    } catch (error: any) {
-      showError("Connection Test Failed", "Failed to test Groq connection: " + (error.message || error));
+      const res = await api.post("/groq/test", { apiKey: settings.groq.apiKey });
+      setSettings((prev) => ({ ...prev, groq: { ...prev.groq, connected: !!res.data?.connected } }));
+      res.data?.connected
+        ? showSuccess("Groq Connected", `OK${res.data?.models_count ? ` — ${res.data.models_count} models` : ""}.`)
+        : showError("Groq Failed", res.data?.error || "Connection failed.");
+    } catch (e: any) {
+      showError("Groq Failed", e?.message || "Connection failed.");
     }
   };
 
   const testHuggingFaceConnection = async () => {
     if (!settings.huggingface.token.trim()) {
-      showError("Missing Token", "Please enter a Hugging Face token first.");
+      showError("Missing Token", "Enter a Hugging Face token first.");
       return;
     }
-    
     try {
-      const response = await api.post("/huggingface/test", { token: settings.huggingface.token });
-      setSettings(prev => ({
-        ...prev,
-        huggingface: { ...prev.huggingface, connected: response.data.connected }
-      }));
-      if (response.data.connected) {
-        showSuccess("Hugging Face Connected", `Connected as ${response.data.username || 'user'}!`);
+      const res = await api.post("/huggingface/test", { token: settings.huggingface.token });
+      setSettings((p) => ({ ...p, huggingface: { ...p.huggingface, connected: !!res.data?.connected } }));
+      res.data?.connected
+        ? showSuccess("Hugging Face Connected", `Connected as ${res.data?.username || "user"}.`)
+        : showError("HF Failed", res.data?.error || "Connection failed.");
+    } catch (e: any) {
+      showError("HF Failed", e?.message || "Connection failed.");
+    }
+  };
+
+  /** folder picking (Chromium native or fallback) */
+  async function browseForFolder(settingKey: keyof Settings["paths"]) {
+    try {
+      if (canPickDirectory) {
+        const handle = await (window as any).showDirectoryPicker({ mode: "read" });
+        dirHandlesRef.current[settingKey] = handle;
+        updateSetting(`paths.${settingKey}`, handle.name || "Selected Folder");
       } else {
-        showError("Connection Failed", response.data.error || "Failed to connect to Hugging Face.");
+        const input = document.createElement("input");
+        (input as any).webkitdirectory = true;
+        input.type = "file";
+        input.onchange = (ev: any) => {
+          const files: FileList = ev.target.files;
+          if (files && files.length) {
+            const first: any = files[0];
+            const relPath = first.webkitRelativePath || first.name;
+            const topFolder = relPath.split("/")[0] || "Selected Folder";
+            dirHandlesRef.current[settingKey] = files;
+            updateSetting(`paths.${settingKey}`, topFolder);
+          }
+        };
+        input.click();
       }
-    } catch (error: any) {
-      showError("Connection Test Failed", "Failed to test Hugging Face connection: " + (error.message || error));
+    } catch (err) {
+      console.warn("Folder pick canceled/failed:", err);
     }
-  };
+  }
 
-  const loadPresetDetails = async (type: string, presetName: string) => {
+  /** presets — load / edit / save / delete / clone / import / export */
+  const loadPresetDetails = async (type: string, name: string) => {
     try {
-      const response = await api.get(`/presets/${type}/${presetName}`);
-      setPresetDetails(prev => ({
-        ...prev,
-        [`${type}:${presetName}`]: response.data
-      }));
-    } catch (error) {
-      console.error(`Failed to load preset ${presetName}:`, error);
+      const res = await api.get(`/presets/${type}/${name}`);
+      setPresetDetails((prev) => ({ ...prev, [`${type}:${name}`]: res.data as PresetData }));
+    } catch (err) {
+      console.error("Failed to load preset:", name, err);
     }
   };
 
-  const handlePresetEdit = (type: string, presetName: string) => {
-    const key = `${type}:${presetName}`;
-    const preset = presetDetails[key];
-    if (preset) {
-      setEditingPreset(preset);
+  const handlePresetEdit = (type: string, name: string) => {
+    const key = `${type}:${name}`;
+    const cached = presetDetails[key];
+    if (cached) {
+      setEditingPreset(cached);
       setShowPresetEditor(true);
     } else {
-      // Load preset details first
-      loadPresetDetails(type, presetName).then(() => {
-        const loadedPreset = presetDetails[`${type}:${presetName}`];
-        if (loadedPreset) {
-          setEditingPreset(loadedPreset);
+      loadPresetDetails(type, name).then(() => {
+        const loaded = presetDetails[`${type}:${name}`];
+        if (loaded) {
+          setEditingPreset(loaded);
           setShowPresetEditor(true);
         }
       });
@@ -192,798 +234,505 @@ export default function SettingsPage() {
   const handlePresetSave = async (preset: PresetData) => {
     try {
       if (preset.id) {
-        // Update existing preset
         await api.put(`/presets/${preset.type}/${preset.name}`, preset);
       } else {
-        // Create new preset
         await api.post(`/presets/${preset.type}`, preset);
-        setSettings(prev => ({
+        setSettings((prev) => ({
           ...prev,
-          presets: {
-            ...prev.presets,
-            [preset.type]: [...prev.presets[preset.type], preset.name]
-          }
+          presets: { ...prev.presets, [preset.type]: [...prev.presets[preset.type], preset.name] },
         }));
       }
-      
-      // Update preset details
-      setPresetDetails(prev => ({
-        ...prev,
-        [`${preset.type}:${preset.name}`]: preset
-      }));
-      
+      setPresetDetails((prev) => ({ ...prev, [`${preset.type}:${preset.name}`]: preset }));
       setShowPresetEditor(false);
       setEditingPreset(null);
-    } catch (error: any) {
-      throw new Error(error.message || "Failed to save preset");
+    } catch (e: any) {
+      showError("Preset Save Failed", e?.message || "Failed to save preset.");
     }
   };
 
-  const handlePresetDelete = async (presetId: string) => {
-    if (!editingPreset) return;
-    
+  const handlePresetDelete = async (type: keyof Settings["presets"], name: string) => {
     try {
-      await api.delete(`/presets/${editingPreset.type}/${editingPreset.name}`);
-      setSettings(prev => ({
+      await api.delete(`/presets/${type}/${name}`);
+      setSettings((prev) => ({
         ...prev,
-        presets: {
-          ...prev.presets,
-          [editingPreset.type]: prev.presets[editingPreset.type].filter(p => p !== editingPreset.name)
-        }
+        presets: { ...prev.presets, [type]: prev.presets[type].filter((p) => p !== name) },
       }));
-      
-      // Remove from preset details
-      const key = `${editingPreset.type}:${editingPreset.name}`;
-      setPresetDetails(prev => {
-        const newDetails = { ...prev };
-        delete newDetails[key];
-        return newDetails;
+      setPresetDetails((prev) => {
+        const copy = { ...prev };
+        delete copy[`${type}:${name}`];
+        return copy;
       });
-      
       setShowPresetEditor(false);
       setEditingPreset(null);
-    } catch (error: any) {
-      throw new Error(error.message || "Failed to delete preset");
+      showSuccess("Preset Deleted", `"${name}" was removed.`);
+    } catch (e: any) {
+      showError("Delete Failed", e?.message || "Failed to delete preset.");
     }
   };
 
   const handlePresetClone = (preset: PresetData) => {
-    const clonedPreset = {
-      ...preset,
-      name: `${preset.name} (Copy)`,
-      id: undefined
-    };
-    setEditingPreset(clonedPreset);
+    setEditingPreset({ ...preset, id: undefined, name: `${preset.name} (Copy)` });
   };
 
   const handlePresetExport = (preset: PresetData) => {
-    const blob = new Blob([JSON.stringify(preset, null, 2)], {
-      type: 'application/json'
-    });
+    const blob = new Blob([JSON.stringify(preset, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = `preset-${preset.name}-${preset.type}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showSuccess("Preset Exported", `Preset "${preset.name}" has been exported successfully.`);
+    showSuccess("Preset Exported", `"${preset.name}" exported.`);
   };
 
   const handlePresetImport = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        try {
-          const text = await file.text();
-          const preset = JSON.parse(text) as PresetData;
-          setEditingPreset(preset);
-          setShowPresetEditor(true);
-        } catch (error) {
-          showError("Import Failed", "Failed to parse preset file. Please ensure it's a valid JSON file.");
-        }
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const preset = JSON.parse(text) as PresetData;
+        setEditingPreset(preset);
+        setShowPresetEditor(true);
+      } catch {
+        showError("Import Failed", "Invalid JSON file.");
       }
     };
     input.click();
   };
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const updateSetting = (path: string, value: any) => {
-    setSettings(prev => {
-      const newSettings: any = { ...prev };
-      const keys = path.split('.');
-      let current = newSettings;
-      for (let i = 0; i < keys.length - 1; i++) {
-        const k = keys[i];
-        if (current[k] == null || typeof current[k] !== "object") {
-          current[k] = {}; // ensure intermediate object exists
-        }
-        current = current[k];
-      }
-      current[keys[keys.length - 1]] = value;
-      return newSettings as Settings;
-    });
-  };
-
-
-  const deletePreset = async (type: keyof Settings['presets'], presetName: string) => {
-    try {
-      await api.delete(`/presets/${type}/${presetName}`);
-      setSettings(prev => ({
-        ...prev,
-        presets: {
-          ...prev.presets,
-          [type]: prev.presets[type].filter(p => p !== presetName),
-        },
-      }));
-      showSuccess("Preset Deleted", `Preset "${presetName}" has been deleted successfully.`);
-    } catch (error: any) {
-      showError("Delete Failed", "Failed to delete preset: " + (error.message || error));
-    }
-  };
-
-  const tabs = [
-    { id: "ui", label: "UI & Appearance", icon: "🎨" },
-    { id: "paths", label: "File Paths", icon: "📁" },
-    { id: "presets", label: "Presets", icon: "⚙️" },
-    { id: "groq", label: "Groq API", icon: "🔐" },
-    { id: "huggingface", label: "Hugging Face", icon: "🤗" },
-  ];
-  
-  // Detect if File System Access is available
-  const canPickDirectory = typeof (window as any).showDirectoryPicker === "function";
-
-  // Cache handles in-memory for later reads (you can move this to context if needed)
-  const dirHandlesRef = React.useRef<Record<string, any>>({});
-
+  /** layout */
   if (isLoading) {
     return (
       <div style={{ display: "flex", height: "100vh" }}>
         <LeftRail />
-        <div style={{ padding: 24, textAlign: "center", color: "#94a3b8", marginLeft: 56, background: "#0f172a", minHeight: "100vh", flex: 1 }}>
-          Loading settings...
+        <div style={{ marginLeft: 56, flex: 1, background: "#0f172a", color: "#94a3b8", display: "grid", placeItems: "center" }}>
+          Loading settings…
         </div>
       </div>
     );
   }
 
-  
-
-  // Open a folder and store a friendly name + handle
-  async function browseForFolder(settingKey: keyof Settings["paths"]) {
-    try {
-      if (canPickDirectory) {
-        // Modern Chromium way
-        const handle = await (window as any).showDirectoryPicker({ mode: "read" });
-        dirHandlesRef.current[settingKey] = handle;
-        // Use a friendly label for display
-        updateSetting(`paths.${settingKey}`, handle.name || "Selected Folder");
-      } else {
-        // Fallback: webkitdirectory input
-        const input = document.createElement("input");
-        (input as any).webkitdirectory = true;
-        input.type = "file";
-        input.onchange = (ev: any) => {
-          const files: FileList = ev.target.files;
-          if (files && files.length) {
-            // Derive a label from the first file's relative path root
-            // (Not a true path; browsers won't give you absolute paths)
-            const first = files[0] as any;
-            const relPath = first.webkitRelativePath || first.name;
-            const topFolder = relPath.split("/")[0] || "Selected Folder";
-            dirHandlesRef.current[settingKey] = files; // store the list for later use
-            updateSetting(`paths.${settingKey}`, topFolder);
-          }
-        };
-        input.click();
-      }
-    } catch (err) {
-      console.error("Folder pick canceled or failed:", err);
-    }
-  }
-
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
-      <LeftRail />
-      <div style={{ padding: 24, background: "#0f172a", minHeight: "100vh", marginLeft: 56, color: "#e2e8f0", flex: 1, overflow: "auto" }}>
-        <h1 style={{ margin: "0 0 24px 0", color: "#e2e8f0" }}>Settings</h1>
+    <div style={{ display: "grid", gridTemplateRows: "56px 1fr", height: "100vh" }}>
+      {/* top spacer to match other pages’ fixed header height */}
+      <header style={{ height: 56, borderBottom: "1px solid #1f2a3a", background: "#0a0f1a" }} />
 
-        <div style={{ display: "flex", gap: 24 }}>
-          {/* Tabs */}
-          <div style={{ width: 200 }}>
-            <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  style={{
-                    ...styles.tab,
-                    ...(activeTab === tab.id ? styles.tabActive : {}),
-                  }}
-                >
-                  <span style={{ marginRight: 8 }}>{tab.icon}</span>
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
-          </div>
+      <div style={{ display: "flex", minHeight: 0 }}>
+        {/* non-scrolling left nav */}
+        <LeftRail />
 
-          {/* Content */}
-          <div style={{ flex: 1 }}>
-            <div style={styles.content}>
-              {/* UI & Appearance Tab */}
-              {activeTab === "ui" && (
-                <div>
-                  <h2 style={styles.sectionTitle}>UI & Appearance</h2>
-                  
-                  <div style={styles.settingGroup}>
-                    <label style={styles.label}>Theme</label>
-                    <select
-                      value={settings.ui.theme}
-                      onChange={(e) => updateSetting('ui.theme', e.target.value)}
-                      style={styles.select}
-                    >
-                      <option value="dark">Dark Mode</option>
-                      <option value="light">Light Mode</option>
-                    </select>
-                  </div>
+        {/* sticky tabs + scrollable content */}
+        <div
+          style={{
+            marginLeft: 56,
+            display: "grid",
+            gridTemplateColumns: "240px 1fr",
+            width: "100%",
+            minWidth: 0,
+            background: "#0f172a",
+            color: "#e2e8f0",
+          }}
+        >
+          {/* tabs (sticky) */}
+          <aside
+            style={{
+              position: "sticky",
+              top: 56,
+              alignSelf: "start",
+              height: "calc(100vh - 56px)",
+              borderRight: "1px solid #1f2a3a",
+              background: "#0b1220",
+              padding: 12,
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            {[
+              { id: "ui", label: "UI & Appearance" },
+              { id: "paths", label: "File Paths" },
+              { id: "presets", label: "Presets" },
+              { id: "groq", label: "Groq API" },
+              { id: "huggingface", label: "Hugging Face" },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setActiveTab(t.id as any)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #2b3443",
+                  background: activeTab === (t.id as any) ? "#132035" : "#0f172a",
+                  color: "#e2e8f0",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
 
-                  <div style={styles.settingGroup}>
-                    <label style={styles.label}>Default Landing Page</label>
-                    <select
-                      value={settings.ui.defaultLandingPage}
-                      onChange={(e) => updateSetting('ui.defaultLandingPage', e.target.value)}
-                      style={styles.select}
-                    >
-                      <option value="/">Home</option>
-                      <option value="/ocr">OCR Evaluation</option>
-                      <option value="/prompt">Prompt Evaluation</option>
-                      <option value="/chat">Chat</option>
-                      <option value="/models">Models</option>
-                      <option value="/analytics">Analytics</option>
-                    </select>
-                  </div>
-
-                  <div style={styles.settingGroup}>
-                    <label style={styles.label}>Background State Management</label>
-                    <div style={styles.checkboxGroup}>
-                      <input
-                        type="checkbox"
-                        id="backgroundState"
-                        checked={settings.ui.backgroundStateManagement}
-                        onChange={(e) => updateSetting('ui.backgroundStateManagement', e.target.checked)}
-                        style={styles.checkbox}
-                      />
-                      <label htmlFor="backgroundState" style={styles.checkboxLabel}>
-                        Keep pages running in background when navigating
-                      </label>
-                    </div>
-                    <div style={styles.helpText}>
-                      When enabled, OCR evaluations, prompt evaluations, and chat sessions will continue running in the background when you navigate to other pages. Operations like AI responses and evaluations won't be interrupted.
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* File Paths Tab */}
-              {activeTab === "paths" && (
-                <div>
-                  <h2 style={styles.sectionTitle}>File Paths</h2>
-                  
-                  <div style={styles.settingGroup}>
-                    <h3 style={styles.subsectionTitle}>OCR Evaluation Page</h3>
-                    <div style={styles.inputGroup}>
-                      <label style={styles.inputLabel}>Source Input Folder</label>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input
-                          type="text"
-                          value={settings.paths.ocrSource}
-                          onChange={(e) => updateSetting('paths.ocrSource', e.target.value)}
-                          style={{ ...styles.input, flex: 1 }}
-                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
-                        />
-                        <button
-                          onClick={() => browseForFolder("ocrSource")}
-                          style={styles.browseBtn}
-                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
-                        >
-                          Browse…
-                        </button>
-                      </div>
-                    </div>
-                    <div style={styles.inputGroup}>
-                      <label style={styles.inputLabel}>Reference Input Folder</label>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input
-                          type="text"
-                          value={settings.paths.ocrReference}
-                          onChange={(e) => updateSetting('paths.ocrReference', e.target.value)}
-                          style={{ ...styles.input, flex: 1 }}
-                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
-                        />
-                        <button
-                          onClick={() => browseForFolder("ocrReference")}
-                          style={styles.browseBtn}
-                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
-                        >
-                          Browse…
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={styles.settingGroup}>
-                    <h3 style={styles.subsectionTitle}>Prompt Evaluation Page</h3>
-                    <div style={styles.inputGroup}>
-                      <label style={styles.inputLabel}>Source Input Folder</label>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input
-                          type="text"
-                          value={settings.paths.promptSource}
-                          onChange={(e) => updateSetting('paths.promptSource', e.target.value)}
-                          style={{ ...styles.input, flex: 1 }}
-                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
-                        />
-                        <button
-                          onClick={() => browseForFolder("promptSource")}
-                          style={styles.browseBtn}
-                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
-                        >
-                          Browse…
-                        </button>
-                      </div>
-                    </div>
-                    <div style={styles.inputGroup}>
-                      <label style={styles.inputLabel}>Reference Input Folder</label>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input
-                          type="text"
-                          value={settings.paths.promptReference}
-                          onChange={(e) => updateSetting('paths.promptReference', e.target.value)}
-                          style={{ ...styles.input, flex: 1 }}
-                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
-                        />
-                        <button
-                          onClick={() => browseForFolder("promptReference")}
-                          style={styles.browseBtn}
-                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
-                        >
-                          Browse…
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={styles.settingGroup}>
-                    <h3 style={styles.subsectionTitle}>Chat Downloads</h3>
-                    <div style={styles.inputGroup}>
-                      <label style={styles.inputLabel}>Chats Folder</label>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input
-                          type="text"
-                          value={settings.paths.chatDownloadPath}
-                          onChange={(e) => updateSetting('paths.chatDownloadPath', e.target.value)}
-                          style={{ ...styles.input, flex: 1 }}
-                          placeholder={canPickDirectory ? "Choose a folder…" : "Choose a folder (Chromium recommended)"}
-                        />
-                        <button
-                          onClick={() => browseForFolder("chatDownloadPath")}
-                          style={styles.browseBtn}
-                          title={canPickDirectory ? "Pick Folder" : "Pick Folder (Chromium browsers)"}
-                        >
-                          Browse…
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Presets Tab */}
-              {activeTab === "presets" && (
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                    <h2 style={styles.sectionTitle}>Preset Management</h2>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        onClick={handlePresetImport}
-                        style={styles.importBtn}
-                      >
-                        📥 Import
-                      </button>
-                      <button
-                        onClick={() => {
-                          setEditingPreset(null);
-                          setShowPresetEditor(true);
-                        }}
-                        style={styles.createBtn}
-                      >
-                        ＋ Create New Preset
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {Object.entries(settings.presets).map(([type, presets]) => (
-                    <div key={type} style={styles.settingGroup}>
-                      <h3 style={styles.subsectionTitle}>{type.charAt(0).toUpperCase() + type.slice(1)} Presets</h3>
-                      {presets.length === 0 ? (
-                        <div style={styles.emptyState}>No presets found</div>
-                      ) : (
-                        <div style={styles.presetList}>
-                          {presets.map((preset) => (
-                            <div key={preset} style={styles.presetItem}>
-                              <span style={styles.presetName}>{preset}</span>
-                              <div style={styles.presetActions}>
-                                <button
-                                  onClick={() => handlePresetEdit(type, preset)}
-                                  style={styles.actionBtn}
-                                >
-                                  ✏️ Edit
-                                </button>
-                                <button
-                                  onClick={() => showInfo("Preset Location", `Preset "${preset}" is located in the presets folder.`)}
-                                  style={styles.actionBtn}
-                                >
-                                  📁 Reveal
-                                </button>
-                                <button
-                                  onClick={() => deletePreset(type as keyof Settings['presets'], preset)}
-                                  style={{...styles.actionBtn, ...styles.dangerBtn}}
-                                >
-                                  🗑️ Delete
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Groq Tab */}
-              {activeTab === "groq" && (
-              <div style={{ display: "grid", gap: 24 }}>
-                <div style={{ padding: 24, background: "#1e293b", border: "1px solid #334155", borderRadius: 16 }}>
-                  <h2 style={{ margin: "0 0 16px 0", color: "#e2e8f0" }}>Groq API Settings</h2>
-                  
-                  <label style={{ display: "block", marginBottom: 8, color: "#e2e8f0" }}>API Key</label>
-                  <input
-                    type="password"
-                    value={settings.groq?.apiKey ?? ""}
-                    onChange={(e) => updateSetting("groq.apiKey", e.target.value)}
-                    style={{
-                      width: "100%",
-                      padding: "8px",
-                      borderRadius: 6,
-                      border: "1px solid #334155",
-                      background: "#0f172a",
-                      color: "#e2e8f0",
-                    }}
-                  />
-
-                  <button
-                    onClick={() => {
-                      // quick connection test
-                      api.get("/models/list?include_groq=true").then(() => {
-                        alert("Groq API connected successfully!");
-                      }).catch(() => {
-                        alert("Failed to connect to Groq API. Check your key.");
-                      });
-                    }}
-                    style={{
-                      marginTop: 12,
-                      padding: "8px 16px",
-                      background: "#10b981",
-                      border: "none",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      color: "#fff"
-                    }}
-                  >
-                    Test Connection
-                  </button>
-                </div>
-              </div>
-            )}
-
-              {/* Hugging Face Tab */}
-              {activeTab === "huggingface" && (
-                <div>
-                  <h2 style={styles.sectionTitle}>Hugging Face Configuration</h2>
-                  
-                  <div style={styles.settingGroup}>
-                    <label style={styles.label}>Access Token</label>
-                    <div style={styles.inputGroup}>
-                      <input
-                        type="password"
-                        value={settings.huggingface.token}
-                        onChange={(e) => updateSetting('huggingface.token', e.target.value)}
-                        placeholder="Enter your Hugging Face access token"
-                        style={styles.input}
-                      />
-                      <button
-                        onClick={testHuggingFaceConnection}
-                        style={styles.testBtn}
-                      >
-                        Test Connection
-                      </button>
-                    </div>
-                    <div style={styles.statusIndicator}>
-                      Status: <span style={{
-                        color: settings.huggingface.connected ? "#10b981" : "#ef4444",
-                        fontWeight: "bold"
-                      }}>
-                        {settings.huggingface.connected ? "Connected" : "Not Connected"}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div style={styles.infoBox}>
-                    <h4 style={{ margin: "0 0 8px 0", color: "#e2e8f0" }}>About Hugging Face</h4>
-                    <p style={{ margin: 0, color: "#94a3b8", fontSize: 14, lineHeight: 1.5 }}>
-                      Hugging Face provides access to thousands of pre-trained models and datasets. 
-                      When connected, you can use Hugging Face models for inference and fine-tuning.
-                      You can get your access token from the <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" style={{ color: "#60a5fa" }}>Hugging Face Settings</a>.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Save Button */}
-            <div style={{ marginTop: 24, display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ marginTop: "auto", display: "grid", gap: 8 }}>
               <button
                 onClick={saveSettings}
-                style={styles.saveBtn}
+                style={{
+                  height: 36,
+                  borderRadius: 8,
+                  background: "#2563eb",
+                  border: "1px solid #1f2a3a",
+                  color: "white",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
               >
-                Save Settings
+                Save changes
               </button>
             </div>
-          </div>
-        </div>
+          </aside>
 
-        {/* Preset Editor Modal */}
-        {showPresetEditor && (
-          <PresetEditor
-            preset={editingPreset}
-            onSave={handlePresetSave}
-            onCancel={() => {
-              setShowPresetEditor(false);
-              setEditingPreset(null);
+          {/* content (only this scrolls) */}
+          <main
+            style={{
+              height: "calc(100vh - 56px)",
+              overflow: "auto",
+              padding: 16,
+              display: "grid",
+              gap: 16,
             }}
-            onDelete={editingPreset?.id ? handlePresetDelete : undefined}
-            onClone={handlePresetClone}
-            onExport={handlePresetExport}
-          />
-        )}
+          >
+            {/* UI */}
+            {activeTab === "ui" && (
+              <section style={card}>
+                <h2 style={h2}>UI & Appearance</h2>
+
+                <div style={group}>
+                  <label style={label}>Theme</label>
+                  <select
+                    value={settings.ui.theme}
+                    onChange={(e) => updateSetting("ui.theme", e.target.value)}
+                    style={select}
+                  >
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                  </select>
+                </div>
+
+                <div style={group}>
+                  <label style={label}>Default Landing Page</label>
+                  <select
+                    value={settings.ui.defaultLandingPage}
+                    onChange={(e) => updateSetting("ui.defaultLandingPage", e.target.value)}
+                    style={select}
+                  >
+                    <option value="/">Home</option>
+                    <option value="/ocr">OCR Evaluation</option>
+                    <option value="/prompt">Prompt Evaluation</option>
+                    <option value="/chat">Chat</option>
+                    <option value="/models">Models</option>
+                    <option value="/analytics">Analytics</option>
+                  </select>
+                </div>
+
+                <div style={group}>
+                  <label style={label}>Background State Management</label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={settings.ui.backgroundStateManagement}
+                      onChange={(e) => updateSetting("ui.backgroundStateManagement", e.target.checked)}
+                      style={{ margin: 0 }}
+                    />
+                    <span style={{ fontSize: 13, color: "#cbd5e1" }}>
+                      Keep pages running when navigating.
+                    </span>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {/* Paths */}
+            {activeTab === "paths" && (
+              <section style={card}>
+                <h2 style={h2}>File Paths</h2>
+
+                <h3 style={h3}>OCR Evaluation</h3>
+                <div style={group}>
+                  <label style={sublabel}>Source Input Folder</label>
+                  <RowPath
+                    value={settings.paths.ocrSource}
+                    onChange={(v) => updateSetting("paths.ocrSource", v)}
+                    onBrowse={() => browseForFolder("ocrSource")}
+                  />
+                </div>
+                <div style={group}>
+                  <label style={sublabel}>Reference Input Folder</label>
+                  <RowPath
+                    value={settings.paths.ocrReference}
+                    onChange={(v) => updateSetting("paths.ocrReference", v)}
+                    onBrowse={() => browseForFolder("ocrReference")}
+                  />
+                </div>
+
+                <h3 style={h3}>Prompt Evaluation</h3>
+                <div style={group}>
+                  <label style={sublabel}>Source Input Folder</label>
+                  <RowPath
+                    value={settings.paths.promptSource}
+                    onChange={(v) => updateSetting("paths.promptSource", v)}
+                    onBrowse={() => browseForFolder("promptSource")}
+                  />
+                </div>
+                <div style={group}>
+                  <label style={sublabel}>Reference Input Folder</label>
+                  <RowPath
+                    value={settings.paths.promptReference}
+                    onChange={(v) => updateSetting("paths.promptReference", v)}
+                    onBrowse={() => browseForFolder("promptReference")}
+                  />
+                </div>
+
+                <h3 style={h3}>Chat Downloads</h3>
+                <div style={group}>
+                  <label style={sublabel}>Chats Folder</label>
+                  <RowPath
+                    value={settings.paths.chatDownloadPath}
+                    onChange={(v) => updateSetting("paths.chatDownloadPath", v)}
+                    onBrowse={() => browseForFolder("chatDownloadPath")}
+                  />
+                </div>
+              </section>
+            )}
+
+            {/* Presets */}
+            {activeTab === "presets" && (
+              <section style={card}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h2 style={h2}>Preset Management</h2>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={btnGreen} onClick={handlePresetImport}>Import</button>
+                    <button
+                      style={btnBlue}
+                      onClick={() => {
+                        setEditingPreset(null);
+                        setShowPresetEditor(true);
+                      }}
+                    >
+                      Create Preset
+                    </button>
+                  </div>
+                </div>
+
+                {(["ocr", "prompt", "chat"] as const).map((type) => (
+                  <div key={type} style={{ marginTop: 12 }}>
+                    <h3 style={h3}>{type.toUpperCase()} Presets</h3>
+                    {settings.presets[type].length === 0 ? (
+                      <div style={{ color: "#94a3b8", fontStyle: "italic", fontSize: 14 }}>No presets yet.</div>
+                    ) : (
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {settings.presets[type].map((name) => (
+                          <div key={name} style={presetRow}>
+                            <span style={{ color: "#e2e8f0", fontSize: 14 }}>{name}</span>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button style={btnRow} onClick={() => handlePresetEdit(type, name)}>Edit</button>
+                              <button style={btnRow} onClick={() => showInfo("Preset Location", "See presets folder.")}>
+                                Reveal
+                              </button>
+                              <button
+                                style={{ ...btnRow, borderColor: "#ef4444", color: "#ef4444" }}
+                                onClick={() => handlePresetDelete(type, name)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </section>
+            )}
+
+            {/* Groq */}
+            {activeTab === "groq" && (
+              <section style={card}>
+                <h2 style={h2}>Groq API</h2>
+                <div style={group}>
+                  <label style={label}>API Key</label>
+                  <input
+                    type="password"
+                    value={settings.groq.apiKey}
+                    onChange={(e) => updateSetting("groq.apiKey", e.target.value)}
+                    style={input}
+                    placeholder="groq_xxx…"
+                  />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={btnBlue} onClick={testGroqConnection}>Test Connection</button>
+                    <span style={{ alignSelf: "center", fontSize: 13, color: "#94a3b8" }}>
+                      Status:{" "}
+                      <b style={{ color: settings.groq.connected ? "#10b981" : "#ef4444" }}>
+                        {settings.groq.connected ? "Connected" : "Not connected"}
+                      </b>
+                    </span>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {/* Hugging Face */}
+            {activeTab === "huggingface" && (
+              <section style={card}>
+                <h2 style={h2}>Hugging Face</h2>
+                <div style={group}>
+                  <label style={label}>Access Token</label>
+                  <input
+                    type="password"
+                    value={settings.huggingface.token}
+                    onChange={(e) => updateSetting("huggingface.token", e.target.value)}
+                    style={input}
+                    placeholder="hf_xxx…"
+                  />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={btnBlue} onClick={testHuggingFaceConnection}>Test Connection</button>
+                    <span style={{ alignSelf: "center", fontSize: 13, color: "#94a3b8" }}>
+                      Status:{" "}
+                      <b style={{ color: settings.huggingface.connected ? "#10b981" : "#ef4444" }}>
+                        {settings.huggingface.connected ? "Connected" : "Not connected"}
+                      </b>
+                    </span>
+                  </div>
+                </div>
+                <div style={noteBox}>
+                  Get your token at{" "}
+                  <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>
+                    huggingface.co/settings/tokens
+                  </a>.
+                </div>
+              </section>
+            )}
+          </main>
+        </div>
       </div>
+
+      {/* Preset Editor Modal */}
+      {showPresetEditor && (
+        <PresetEditor
+          preset={editingPreset}
+          onSave={handlePresetSave}
+          onCancel={() => {
+            setShowPresetEditor(false);
+            setEditingPreset(null);
+          }}
+          onDelete={editingPreset?.id ? () => handlePresetDelete(editingPreset.type, editingPreset.name) : undefined}
+          onClone={handlePresetClone}
+          onExport={handlePresetExport}
+        />
+      )}
     </div>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  tab: {
-    padding: "12px 16px",
-    border: "none",
-    background: "transparent",
-    color: "#94a3b8",
-    cursor: "pointer",
-    borderRadius: 8,
-    textAlign: "left",
-    fontSize: 14,
-    display: "flex",
-    alignItems: "center",
-    width: "100%",
-  },
-  tabActive: {
-    background: "#1e293b",
-    color: "#e2e8f0",
-    fontWeight: 500,
-    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
-  },
-  content: {
-    background: "#1e293b",
-    border: "1px solid #334155",
-    borderRadius: 12,
-    padding: 24,
-  },
-  sectionTitle: {
-    margin: "0 0 20px 0",
-    color: "#e2e8f0",
-    fontSize: 20,
-    fontWeight: 600,
-  },
-  subsectionTitle: {
-    margin: "0 0 12px 0",
-    color: "#e2e8f0",
-    fontSize: 16,
-    fontWeight: 500,
-  },
-  settingGroup: {
-    marginBottom: 24,
-  },
-  label: {
-    display: "block",
-    marginBottom: 8,
-    color: "#e2e8f0",
-    fontSize: 14,
-    fontWeight: 500,
-  },
-  inputLabel: {
-    display: "block",
-    marginBottom: 6,
-    color: "#94a3b8",
-    fontSize: 12,
-  },
-  select: {
-    width: "100%",
-    padding: "8px 12px",
-    border: "1px solid #334155",
-    borderRadius: 8,
-    background: "#0f172a",
-    color: "#e2e8f0",
-    fontSize: 14,
-  },
-  input: {
-    width: "100%",
-    padding: "8px 12px",
-    border: "1px solid #334155",
-    borderRadius: 8,
-    background: "#0f172a",
-    color: "#e2e8f0",
-    fontSize: 14,
-  },
-  inputGroup: {
-    marginBottom: 16,
-  },
-  emptyState: {
-    color: "#94a3b8",
-    fontSize: 14,
-    fontStyle: "italic",
-  },
-  presetList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
-  presetItem: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "8px 12px",
-    background: "#0f172a",
-    border: "1px solid #334155",
-    borderRadius: 8,
-  },
-  presetName: {
-    color: "#e2e8f0",
-    fontSize: 14,
-  },
-  presetActions: {
-    display: "flex",
-    gap: 8,
-  },
-  actionBtn: {
-    padding: "4px 8px",
-    border: "1px solid #334155",
-    borderRadius: 6,
-    background: "#1e293b",
-    color: "#e2e8f0",
-    cursor: "pointer",
-    fontSize: 12,
-  },
-  dangerBtn: {
-    borderColor: "#ef4444",
-    color: "#ef4444",
-  },
-  testBtn: {
-    padding: "8px 16px",
-    border: "1px solid #1d4ed8",
-    borderRadius: 8,
-    background: "#1d4ed8",
-    color: "#ffffff",
-    cursor: "pointer",
-    fontSize: 14,
-    marginLeft: 8,
-  },
-  statusIndicator: {
-    marginTop: 8,
-    fontSize: 14,
-    color: "#64748b",
-  },
-  infoBox: {
-    background: "#0f172a",
-    border: "1px solid #334155",
-    borderRadius: 8,
-    padding: 16,
-    marginTop: 16,
-  },
-  saveBtn: {
-    padding: "12px 24px",
-    background: "#10b981",
-    border: "none",
-    borderRadius: 8,
-    color: "#ffffff",
-    cursor: "pointer",
-    fontSize: 16,
-    fontWeight: 500,
-  },
-  createBtn: {
-    padding: "8px 16px",
-    background: "#1d4ed8",
-    border: "none",
-    borderRadius: 8,
-    color: "#ffffff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 500,
-  },
-  importBtn: {
-    padding: "8px 16px",
-    background: "#059669",
-    border: "none",
-    borderRadius: 8,
-    color: "#ffffff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 500,
-  },
-  helpText: {
-    fontSize: 12,
-    color: "#94a3b8",
-    marginTop: 4,
-  },
-  checkboxGroup: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 8,
-  },
-  checkbox: {
-    margin: 0,
-  },
-  checkboxLabel: {
-    fontSize: 14,
-    color: "#e2e8f0",
-    cursor: "pointer",
-  },
-  modalOverlay: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: "rgba(0, 0, 0, 0.5)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1000,
-  },
-  modal: {
-    background: "#1e293b",
-    border: "1px solid #334155",
-    borderRadius: 12,
-    padding: 24,
-    minWidth: 600,
-    maxWidth: 800,
-    maxHeight: "80vh",
-    overflow: "auto",
-  },
-  cancelBtn: {
-    padding: "8px 16px",
-    border: "1px solid #334155",
-    borderRadius: 8,
-    background: "#0f172a",
-    color: "#e2e8f0",
-    cursor: "pointer",
-    fontSize: 14,
-  },
+/** ------------------------------
+ *  Small subcomponents & styles
+ *  ------------------------------ */
+function RowPath({
+  value,
+  onChange,
+  onBrowse,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onBrowse: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 8 }}>
+      <input value={value} onChange={(e) => onChange(e.target.value)} style={{ ...input, flex: 1 }} />
+      <button style={btnRow} onClick={onBrowse}>
+        Browse…
+      </button>
+    </div>
+  );
+}
+
+const card: React.CSSProperties = {
+  background: "#1e293b",
+  border: "1px solid #334155",
+  borderRadius: 12,
+  padding: 16,
+};
+
+const h2: React.CSSProperties = { margin: "0 0 12px 0", color: "#e2e8f0", fontSize: 18, fontWeight: 600 };
+const h3: React.CSSProperties = { margin: "12px 0 8px 0", color: "#e2e8f0", fontSize: 15, fontWeight: 500 };
+
+const group: React.CSSProperties = { display: "grid", gap: 8, marginTop: 8 };
+const label: React.CSSProperties = { color: "#e2e8f0", fontSize: 14, fontWeight: 500 };
+const sublabel: React.CSSProperties = { color: "#cbd5e1", fontSize: 12 };
+
+const input: React.CSSProperties = {
+  width: "100%",
+  padding: "8px 10px",
+  border: "1px solid #334155",
+  borderRadius: 8,
+  background: "#0f172a",
+  color: "#e2e8f0",
+  fontSize: 14,
+  outline: "none",
+};
+
+const select: React.CSSProperties = { ...input };
+
+const btnBlue: React.CSSProperties = {
+  padding: "8px 12px",
+  border: "1px solid #1d4ed8",
+  background: "#1d4ed8",
+  color: "#fff",
+  borderRadius: 8,
+  cursor: "pointer",
+  fontSize: 14,
+};
+const btnGreen: React.CSSProperties = {
+  padding: "8px 12px",
+  border: "1px solid #059669",
+  background: "#059669",
+  color: "#fff",
+  borderRadius: 8,
+  cursor: "pointer",
+  fontSize: 14,
+};
+const btnRow: React.CSSProperties = {
+  padding: "6px 10px",
+  border: "1px solid #334155",
+  background: "#0f172a",
+  color: "#e2e8f0",
+  borderRadius: 8,
+  cursor: "pointer",
+  fontSize: 13,
+};
+
+const presetRow: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: "8px 12px",
+  background: "#0f172a",
+  border: "1px solid #334155",
+  borderRadius: 8,
+};
+
+const noteBox: React.CSSProperties = {
+  marginTop: 8,
+  padding: 12,
+  borderRadius: 8,
+  background: "#0f172a",
+  border: "1px solid #334155",
+  color: "#94a3b8",
+  fontSize: 13,
 };

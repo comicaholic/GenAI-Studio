@@ -93,17 +93,15 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
           alignItems: "center",
           justifyContent: "space-between",
         }}>
-          <h2 style={{ margin: 0, color: "#e2e8f0" }}>Discover Models</h2>
-          <button
-            onClick={onClose}
+          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100" style={{ margin: 0, color: "#e2e8f0" }}>Discover Models</h2>
+          <button className="btn h-10 min-w-[96px]" onClick={onClose}
             style={{
               background: "none",
               border: "none",
               color: "#94a3b8",
               fontSize: 24,
               cursor: "pointer",
-            }}
-          >
+            }}>
             ×
           </button>
         </div>
@@ -113,8 +111,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
           {/* Left Panel - Search */}
           <div style={{ width: "50%", padding: 16, borderRight: "1px solid #334155", overflow: "auto" }}>
             <div style={{ marginBottom: 16 }}>
-          <input
-                type="text"
+          <input className="input h-10 text-sm" type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search models..."
@@ -128,8 +125,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                   marginBottom: 12,
                 }}
               />
-              <select
-                value={sortBy}
+              <select className="select h-10 text-sm" value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 style={{
                   width: "100%",
@@ -148,7 +144,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
 
             {/* Search Results */}
             <div>
-              <h3 style={{ color: "#e2e8f0", marginBottom: 12 }}>Search Results</h3>
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100" style={{ color: "#e2e8f0", marginBottom: 12 }}>Search Results</h3>
               {isSearching && <div style={{ color: "#94a3b8", textAlign: "center" }}>Searching...</div>}
               {searchResults.map((model) => (
                 <div
@@ -199,7 +195,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
           <div style={{ width: "50%", padding: 16, overflow: "auto" }}>
             {selectedModel ? (
               <div>
-                <h3 style={{ color: "#e2e8f0", marginBottom: 16 }}>Model Information</h3>
+                <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100" style={{ color: "#e2e8f0", marginBottom: 16 }}>Model Information</h3>
                 <div style={{ marginBottom: 12 }}>
                   <strong style={{ color: "#e2e8f0" }}>Name:</strong>
                   <div style={{ color: "#94a3b8", marginTop: 4 }}>{selectedModel.label}</div>
@@ -249,8 +245,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                     </div>
                   </div>
                 )}
-                <button
-                  style={{
+                <button className="btn h-10 min-w-[96px]" style={{
                     padding: "8px 16px",
                     background: "#1e293b",
                     border: "1px solid #334155",
@@ -441,14 +436,13 @@ export default function ModelsPage() {
     <div style={{ display: "flex", height: "100vh" }}>
       <LeftRail />
       <div style={{ padding: 24, marginLeft: 56, background: "#0f172a", minHeight: "100vh", color: "#e2e8f0", flex: 1, overflow: "auto" }}>
-        <h1 style={{ margin: "0 0 24px 0", color: "#e2e8f0" }}>My Models</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-100" style={{ margin: "0 0 24px 0", color: "#e2e8f0" }}>My Models</h1>
 
         {/* Directory Configuration */}
         <div style={{ marginBottom: 32 }}>
-          <h2 style={{ color: "#e2e8f0", marginBottom: 12 }}>Models Directory</h2>
+          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100" style={{ color: "#e2e8f0", marginBottom: 12 }}>Models Directory</h2>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              type="text"
+            <input className="input h-10 text-sm" type="text"
               value={modelsDirectory}
               onChange={(e) => setModelsDirectory(e.target.value)}
               style={{
@@ -461,8 +455,7 @@ export default function ModelsPage() {
               }}
             />
             <div ref={menuRef} style={{ position: "relative" }}>
-              <button
-                onClick={() => setShowMenu(!showMenu)}
+              <button className="btn h-10 min-w-[96px]" onClick={() => setShowMenu(!showMenu)}
                 style={{
                   padding: "12px 16px",
                   border: "1px solid #334155",
@@ -490,8 +483,7 @@ export default function ModelsPage() {
                     padding: 8,
                   }}
                 >
-                  <button
-                    onClick={() => {
+                  <button className="btn h-10 min-w-[96px]" onClick={() => {
                       openFileExplorer();
                       setShowMenu(false);
                     }}
@@ -514,8 +506,7 @@ export default function ModelsPage() {
                   >
                     Browse Path
                   </button>
-                  <button
-                    onClick={() => {
+                  <button className="btn h-10 min-w-[96px]" onClick={() => {
                       resetToDefault();
                       setShowMenu(false);
                     }}
@@ -538,8 +529,7 @@ export default function ModelsPage() {
                   >
                     Reset to Default
                   </button>
-                  <button
-                    onClick={() => {
+                  <button className="btn h-10 min-w-[96px]" onClick={() => {
                       loadLocalModels();
                       setShowMenu(false);
                     }}
@@ -562,8 +552,7 @@ export default function ModelsPage() {
                   >
                     Refresh
                   </button>
-                  <button
-                    onClick={() => {
+                  <button className="btn h-10 min-w-[96px]" onClick={() => {
                       openFileExplorer();
                       setShowMenu(false);
                     }}
@@ -589,8 +578,7 @@ export default function ModelsPage() {
         </div>
       )}
             </div>
-            <button
-              onClick={() => setIsDiscoverOpen(true)}
+            <button className="btn h-10 min-w-[96px]" onClick={() => setIsDiscoverOpen(true)}
               style={{
                 padding: "12px 24px",
                 background: "#1e293b",
@@ -609,9 +597,8 @@ export default function ModelsPage() {
         {/* Models Table */}
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <h2 style={{ color: "#e2e8f0", margin: 0 }}>Downloaded Models</h2>
-            <input
-              type="text"
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100" style={{ color: "#e2e8f0", margin: 0 }}>Downloaded Models</h2>
+            <input className="input h-10 text-sm" type="text"
               placeholder="Filter models..."
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
@@ -639,10 +626,10 @@ export default function ModelsPage() {
             </div>
           ) : (
             <div style={{ overflow: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
+              <table className="w-full text-sm" style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead className="bg-neutral-50 dark:bg-neutral-800 text-left">
                   <tr style={{ background: "#1e293b" }}>
-                  <th style={{ width: 36, padding: 12, textAlign: "center", color: "#e2e8f0", border: "1px solid #334155" }}>
+                  <th className="px-4 py-3 font-medium" style={{ width: 36, padding: 12, textAlign: "center", color: "#e2e8f0", border: "1px solid #334155" }}>
                     <input
                       type="checkbox"
                       id="master-checkbox"
@@ -664,37 +651,37 @@ export default function ModelsPage() {
                       title={disabledIds.size === 0 ? "Deselect All" : "Select All"}
                     />
                   </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th className="px-4 py-3 font-medium" style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
                       Model
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th className="px-4 py-3 font-medium" style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
                       Category
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th className="px-4 py-3 font-medium" style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
                       Publisher
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th className="px-4 py-3 font-medium" style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
                       Parameters
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th className="px-4 py-3 font-medium" style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
                       Size
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th className="px-4 py-3 font-medium" style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
                       Quantization
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th className="px-4 py-3 font-medium" style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
                       Source
                     </th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-neutral-200/60 dark:divide-neutral-700/60">
                   {filteredModels.map((model, index) => {
                     const k = modelKey(model);
                     const modelChecked = !disabledIds.has(k);
                     console.log(`Rendering checkbox for ${k}:`, modelChecked, 'disabledIds:', Array.from(disabledIds));
                     return (
                   <tr key={k} style={{ background: index % 2 === 0 ? "#0f172a" : "#1e293b" }}>
-                    <td style={{ padding: 12, textAlign: "center", border: "1px solid #334155" }}>
+                    <td className="px-4 py-3 align-top" style={{ padding: 12, textAlign: "center", border: "1px solid #334155" }}>
                       <input
                         type="checkbox"
                         id={`model-checkbox-${k}`}
@@ -706,11 +693,11 @@ export default function ModelsPage() {
                         }}
                       />
                     </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
+                      <td className="px-4 py-3 align-top" style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
                         <div style={{ fontWeight: "bold" }}>{model.name || model.label}</div>
                         <div style={{ fontSize: 12, color: "#94a3b8" }}>{model.id}</div>
                       </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
+                      <td className="px-4 py-3 align-top" style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
                         <span style={{
                           padding: "4px 8px",
                           borderRadius: 4,
@@ -721,19 +708,19 @@ export default function ModelsPage() {
                           {model.category || "Unknown"}
                         </span>
                       </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
+                      <td className="px-4 py-3 align-top" style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
                         {model.publisher || "Unknown"}
                       </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
+                      <td className="px-4 py-3 align-top" style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
                         {model.params || "Unknown"}
                       </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
+                      <td className="px-4 py-3 align-top" style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
                         {model.size || "Unknown"}
                       </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
+                      <td className="px-4 py-3 align-top" style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
                         {model.quant || "N/A"}
                       </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
+                      <td className="px-4 py-3 align-top" style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
                         <span style={{
                           padding: "2px 6px",
                           borderRadius: 4,

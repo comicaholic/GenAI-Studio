@@ -71,8 +71,7 @@ export default function AttachmentsTab({ currentRun }: AttachmentsTabProps) {
 
             <div style={{ display: 'flex', gap: '4px' }}>
               {resource.dataUrl && (
-                <button
-                  onClick={() => {
+                <button className="btn h-10 min-w-[96px]" onClick={() => {
                     // Open preview in new window
                     const newWindow = window.open();
                     if (newWindow) {
@@ -80,7 +79,7 @@ export default function AttachmentsTab({ currentRun }: AttachmentsTabProps) {
                         <html>
                           <head><title>${resource.name}</title></head>
                           <body style="margin:0; padding:20px; background:#1e293b; color:#e2e8f0;">
-                            <h3>${resource.name}</h3>
+                            <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">${resource.name}</h3>
                             ${resource.mime.startsWith('image/') 
                               ? `<img src="${resource.dataUrl}" style="max-width:100%; height:auto;" />`
                               : `<pre style="white-space: pre-wrap; font-family: monospace;">${resource.dataUrl}</pre>`
@@ -105,8 +104,7 @@ export default function AttachmentsTab({ currentRun }: AttachmentsTabProps) {
                 </button>
               )}
               
-              <button
-                onClick={() => {
+              <button className="btn h-10 min-w-[96px]" onClick={() => {
                   if (resource.file) {
                     const url = URL.createObjectURL(resource.file);
                     const a = document.createElement('a');

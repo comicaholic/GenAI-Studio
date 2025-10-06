@@ -1,15 +1,31 @@
-# GenAI Studio (React + FastAPI)
+# 🚀 GenAI Studio
 
-## Quick start (Windows)
-1) Run `one_time_setup.bat` (right-click → Run with PowerShell).
-    - or use docker with the docker-compose.yml 
-2) Run `run.bat` to start backend (8000) and frontend (5173).
+A full-stack application for running LLM evaluations, OCR-based file ingestion, and analytics.  
+Built with **React (Vite) frontend** + **FastAPI backend**, with support for **Groq API models** and local resources.  
 
-## One-time requirements
-- Python 3.10+
-- Node 18+
-- (Optional) Tesseract OCR for image PDFs
+---
 
-## Notes
-- Copy `.env.example` to `.env` (root and backend) and set `GROQ_API_KEY` for Groq.
-- Local models directory: `./data/models`
+## 📦 Prerequisites
+
+Depending on your setup, install the following:
+
+### 🐍 Local / Conda Environment
+- [Python 3.10+](https://www.python.org/downloads/)
+- [Conda](https://docs.conda.io/en/latest/miniconda.html) (Miniconda or Anaconda)
+- [Node.js 18+](https://nodejs.org/en/) (with npm/yarn)
+- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) (required for OCR features)
+  - Ensure `tesseract` is available in your system PATH
+
+### 🐳 Docker
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
+
+---
+
+## ⚙️ Environment Setup
+
+1. Copy `.env.example` → `.env` in both:
+   - Project root
+   - Backend folder (`./backend`)
+2. Add your keys if needed:
+   ```ini
+   GROQ_API_KEY=your_api_key_here

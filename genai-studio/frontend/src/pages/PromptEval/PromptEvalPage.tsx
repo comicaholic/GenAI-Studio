@@ -1,4 +1,4 @@
-// frontend/src/pages/PromptEval/PromptEvalPage.tsx
+// src/pages/PromptEval/PromptEvalPage.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import LeftRail from '@/components/LeftRail/LeftRail';
 import ModelSelector from '@/components/TopBar/ModelSelector';
@@ -28,7 +28,7 @@ export default function PromptEvalPage() {
   // Sidebar state
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
-  
+
   // Main state
   const { selected } = useModel();
   const [draft, setDraft] = useState(promptEvalStore.getDraft());
@@ -38,11 +38,11 @@ export default function PromptEvalPage() {
   const [activeRightTab, setActiveRightTab] = useState<'prompt' | 'parameters' | 'metrics'>('prompt');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  
+
   // Parameters and metrics
   const [params, setParams] = useState<ModelParams>(DEFAULT_PARAMS);
   const [metricsState, setMetricsState] = useState<MetricState>(DEFAULT_METRICS);
-  
+
   // File handling
   const [promptFileName, setPromptFileName] = useState("");
   const [promptText, setPromptText] = useState("");
@@ -50,46 +50,52 @@ export default function PromptEvalPage() {
   const [reference, setReference] = useState("");
   const [promptChoices, setPromptChoices] = useState<string[]>([]);
   const [referenceChoices, setReferenceChoices] = useState<string[]>([]);
-  
+
   // Evaluation results
   const [scores, setScores] = useState<Record<string, any> | null>(null);
   const [llmOutput, setLlmOutput] = useState("");
-  
+
   const { showError, showSuccess } = useNotifications();
   const { addOperation, updateOperation } = useBackgroundState();
 
-  // Load initial state
+  // Load initial state (store draft)
   useEffect(() => {
     const storedDraft = promptEvalStore.getDraft();
     setDraft(storedDraft);
   }, []);
 
-  // Load file choices
+  // Load file choices (safe)
   useEffect(() => {
     (async () => {
       try {
         const p = await listFiles("source");
-        setPromptChoices(p.files);
-        const r = await listFiles("reference");
-        setReferenceChoices(r.files);
+        if (p?.files) setPromptChoices(p.files);
       } catch {
-        // ignore; dropdowns just won't show if listing fails
+        // ignore; optional
+      }
+
+      try {
+        const r = await listFiles("reference");
+        if (r?.files) setReferenceChoices(r.files);
+      } catch {
+        // ignore
       }
     })();
   }, []);
 
-  // Handle draft updates
+  // updateDraft uses functional update to avoid stale closures
   const updateDraft = useCallback((updates: Partial<typeof draft>) => {
-    const newDraft = { ...draft, ...updates };
-    setDraft(newDraft);
-    
-    // Update store
-    if (updates.prompt !== undefined) promptEvalStore.updatePrompt(updates.prompt);
-    if (updates.context !== undefined) promptEvalStore.updateContext(updates.context);
-    if (updates.parameters) promptEvalStore.updateParameters(updates.parameters);
-    if (updates.selectedModelId !== undefined) promptEvalStore.updateSelectedModel(updates.selectedModelId);
-    if (updates.resourceIds) promptEvalStore.updateResourceIds(updates.resourceIds);
-  }, [draft]);
+    setDraft((prevDraft) => {
+      const newDraft = { ...prevDraft, ...updates };
+      // propagate to store (keep your existing store usage)
+      if (updates.prompt !== undefined) promptEvalStore.updatePrompt(updates.prompt);
+      if (updates.context !== undefined) promptEvalStore.updateContext(updates.context);
+      if (updates.parameters) promptEvalStore.updateParameters(updates.parameters as any);
+      if ((updates as any).selectedModelId !== undefined) promptEvalStore.updateSelectedModel((updates as any).selectedModelId);
+      if ((updates as any).resourceIds) promptEvalStore.updateResourceIds((updates as any).resourceIds);
+      return newDraft;
+    });
+  }, []);
 
   // File upload handlers
   const onPromptUpload = async (file: File) => {
@@ -126,7 +132,7 @@ export default function PromptEvalPage() {
       return;
     }
 
-    if (!draft.prompt.trim()) {
+    if (!draft?.prompt?.trim()) {
       setError('Please enter a prompt');
       return;
     }
@@ -135,9 +141,9 @@ export default function PromptEvalPage() {
     setError(null);
     setBusy('Running prompt...');
 
-    const runId = crypto.randomUUID();
+    const runId = crypto.randomUUID?.() ?? (Date.now().toString() + Math.random().toString());
     const startTime = Date.now();
-    const resources = resourceStore.getByIds(draft.resourceIds);
+    const resources = resourceStore.getByIds(draft.resourceIds || []);
 
     const runResult: RunResult = {
       id: runId,
@@ -148,7 +154,7 @@ export default function PromptEvalPage() {
       resources,
       prompt: draft.prompt,
       context: draft.context,
-      parameters: draft.parameters,
+      parameters: draft.parameters || params,
     };
 
     setCurrentRun(runResult);
@@ -157,6 +163,7 @@ export default function PromptEvalPage() {
       const abortController = new AbortController();
       let output = '';
 
+      // callLLM is an async iterable (stream); iterate chunks
       for await (const chunk of callLLM({
         modelId: selected.id,
         prompt: draft.prompt,
@@ -175,32 +182,36 @@ export default function PromptEvalPage() {
         finishedAt: endTime,
         output,
         usage: {
-          promptTokens: estimateTokens(draft.prompt + (draft.context || '')),
+          promptTokens: estimateTokens((draft.prompt || '') + (draft.context || '')),
           completionTokens: estimateTokens(output),
-          totalTokens: estimateTokens(draft.prompt + (draft.context || '') + output),
+          totalTokens: estimateTokens((draft.prompt || '') + (draft.context || '') + output),
         },
       };
 
       setCurrentRun(finalResult);
       setLlmOutput(output);
-      promptEvalStore.addRunResult(finalResult);
-      setRunHistory(promptEvalStore.getRunHistory());
+      try {
+        promptEvalStore.addRunResult(finalResult);
+        setRunHistory(promptEvalStore.getRunHistory());
+      } catch {
+        // store ops are best-effort
+      }
 
     } catch (error: any) {
       const endTime = Date.now();
       const errorResult: RunResult = {
         ...runResult,
         finishedAt: endTime,
-        error: error.message,
+        error: error?.message ?? String(error),
       };
 
       setCurrentRun(errorResult);
-      setError(error.message);
+      setError(error?.message ?? String(error));
     } finally {
       setIsRunning(false);
       setBusy(null);
     }
-  }, [selected, draft]);
+  }, [selected, draft, params]);
 
   // Handle evaluation
   const onEvaluate = useCallback(async () => {
@@ -208,18 +219,17 @@ export default function PromptEvalPage() {
       showError("Model Required", "Select a model first.");
       return;
     }
-    if (!draft.prompt.trim()) {
+    if (!draft?.prompt?.trim()) {
       showError("Prompt Required", "Select or write a prompt first.");
       return;
     }
-    if (!reference.trim()) {
+    if (!reference?.trim()) {
       showError("Missing Reference", "Provide reference text first.");
       return;
     }
 
     setBusy("Computing metrics...");
-    
-    // Add background operation
+
     const operationId = addOperation({
       type: 'prompt',
       status: 'running',
@@ -230,7 +240,7 @@ export default function PromptEvalPage() {
       const res = await computeMetrics({
         prediction: llmOutput || currentRun?.output || "",
         reference,
-        metrics: Object.keys(metricsState).filter(key => metricsState[key as keyof MetricState]),
+        metrics: Object.keys(metricsState).filter(key => (metricsState as any)[key]),
         meta: {
           model: selected.id,
           params,
@@ -239,51 +249,54 @@ export default function PromptEvalPage() {
         },
       });
 
-      setScores(res.scores);
+      setScores(res.scores ?? res);
       
-      // Save evaluation to history
-      const evaluation = {
-        id: crypto.randomUUID(),
-        type: 'prompt' as const,
-        title: `Prompt Evaluation - ${new Date().toLocaleDateString()}`,
-        model: { id: selected.id, provider: selected.provider },
-        parameters: params,
-        metrics: Object.keys(metricsState).filter(key => metricsState[key as keyof MetricState]),
-        usedText: {
-          promptText: draft.prompt,
-          context: draft.context,
-          referenceText: reference
-        },
-        files: {
-          promptFileName: promptFileName,
-          referenceFileName: refFileName
-        },
-        results: res.scores,
-        startedAt: new Date().toISOString(),
-        finishedAt: new Date().toISOString()
-      };
-      
-      await historyService.saveEvaluation(evaluation);
-      
-      updateOperation(operationId, { 
-        status: 'completed', 
+      // Save evaluation to history (best-effort)
+      try {
+        const evaluation = {
+          id: crypto.randomUUID?.() ?? (Date.now().toString() + Math.random().toString()),
+          type: 'prompt' as const,
+          title: `Prompt Evaluation - ${new Date().toLocaleDateString()}`,
+          model: { id: selected.id, provider: selected.provider },
+          parameters: params,
+          metrics: Object.keys(metricsState).filter(key => (metricsState as any)[key]),
+          usedText: {
+            promptText: draft.prompt,
+            context: draft.context,
+            referenceText: reference
+          },
+          files: {
+            promptFileName,
+            referenceFileName: refFileName
+          },
+          results: res.scores ?? res,
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString()
+        };
+        await historyService.saveEvaluation?.(evaluation);
+      } catch (e) {
+        // ignore save errors; history is "best-effort"
+      }
+
+      updateOperation(operationId, {
+        status: 'completed',
         progress: 100,
         endTime: Date.now()
       });
-      
+
       showSuccess("Evaluation Complete", "Prompt evaluation completed and saved successfully!");
-      
+
     } catch (e: any) {
       updateOperation(operationId, { 
         status: 'error', 
-        error: e?.response?.data?.detail ?? e.message ?? e,
+        error: e?.response?.data?.detail ?? e?.message ?? String(e),
         endTime: Date.now()
       });
-      showError("Metric Computation Failed", "Metric computation failed: " + (e?.response?.data?.detail ?? e.message ?? e));
+      showError("Metric Computation Failed", "Metric computation failed: " + (e?.response?.data?.detail ?? e?.message ?? String(e)));
     } finally {
       setBusy(null);
     }
-  }, [selected, draft.prompt, reference, llmOutput, currentRun, metricsState, params, promptFileName, refFileName, showError]);
+  }, [selected, draft?.prompt, reference, llmOutput, currentRun, metricsState, params, promptFileName, refFileName]);
 
   // Download handlers
   const onDownloadCSV = useCallback(() => {
@@ -323,7 +336,7 @@ export default function PromptEvalPage() {
   // Left sidebar content
   const left = (
     <div style={{ display: "grid", gap: 16 }}>
-      <h3 style={{ color: "#e2e8f0" }}>Prompt</h3>
+      <h3 style={{ color: "#e2e8f0", margin: 0 }}>Prompt</h3>
       <FileDrop
         onFile={onPromptUpload}
         accept=".txt,.md"
@@ -334,6 +347,7 @@ export default function PromptEvalPage() {
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Quick load from folder</div>
           <select
+            className="select h-10 text-sm"
             id="promptQuick"
             onChange={async (e) => {
               const name = e.target.value;
@@ -347,15 +361,15 @@ export default function PromptEvalPage() {
                 const file = new File([res.data], name);
                 await onPromptUpload(file);
               } catch (e: any) {
-                showError("Load Prompt Failed", "Load prompt failed: " + (e?.response?.data?.detail ?? e.message ?? e));
+                showError("Load Prompt Failed", "Load prompt failed: " + (e?.response?.data?.detail ?? e?.message ?? e));
               } finally {
                 setBusy(null);
               }
             }}
-            style={{ 
-              width: "100%", 
-              padding: "6px 8px", 
-              border: "1px solid #475569", 
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              border: "1px solid #475569",
               borderRadius: 8,
               background: "#1e293b",
               color: "#e2e8f0",
@@ -369,7 +383,7 @@ export default function PromptEvalPage() {
                 {f}
               </option>
             ))}
-            </select>
+          </select>
         </div>
       )}
 
@@ -379,7 +393,7 @@ export default function PromptEvalPage() {
         </div>
       )}
 
-      <h3 style={{ color: "#e2e8f0" }}>Reference</h3>
+      <h3 style={{ color: "#e2e8f0", marginTop: 8 }}>Reference</h3>
       <FileDrop
         onFile={onReferenceUpload}
         accept=".pdf,.txt,.png,.jpg,.jpeg,.tif,.tiff"
@@ -390,25 +404,26 @@ export default function PromptEvalPage() {
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Quick load from folder</div>
           <select
+            className="select h-10 text-sm"
             id="refQuick"
             onChange={async (e) => {
               const name = e.target.value;
               if (!name) return;
-                setBusy("Loading reference…");
-                try {
-                  const data = await loadReferenceByName(name);
-                  setRefFileName(data.filename);
-                  setReference(data.text);
+              setBusy("Loading reference…");
+              try {
+                const data = await loadReferenceByName(name);
+                setRefFileName(data.filename);
+                setReference(data.text);
               } catch (e: any) {
-                showError("Load Reference Failed", "Load reference failed: " + (e?.response?.data?.detail ?? e.message ?? e));
+                showError("Load Reference Failed", "Load reference failed: " + (e?.response?.data?.detail ?? e?.message ?? e));
               } finally {
                 setBusy(null);
               }
             }}
-            style={{ 
-              width: "100%", 
-              padding: "6px 8px", 
-              border: "1px solid #475569", 
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              border: "1px solid #475569",
               borderRadius: 8,
               background: "#1e293b",
               color: "#e2e8f0",
@@ -423,7 +438,7 @@ export default function PromptEvalPage() {
               </option>
             ))}
           </select>
-          </div>
+        </div>
       )}
       {refFileName && (
         <div style={{ fontSize: 12, color: "#94a3b8" }}>
@@ -431,7 +446,7 @@ export default function PromptEvalPage() {
         </div>
       )}
 
-      <h3 style={{ color: "#e2e8f0" }}>Resources</h3>
+      <h3 style={{ color: "#e2e8f0", marginTop: 8 }}>Resources</h3>
       <UploadPanel
         resourceIds={draft.resourceIds}
         onResourceIdsChange={(ids: string[]) => updateDraft({ resourceIds: ids })}
@@ -444,8 +459,7 @@ export default function PromptEvalPage() {
     <div style={{ display: "grid", gap: 16 }}>
       {/* Tab Navigation */}
       <div style={{ display: "flex", borderBottom: "1px solid #334155" }}>
-        <button
-          onClick={() => setActiveRightTab("prompt")}
+        <button onClick={() => setActiveRightTab("prompt")}
           style={{
             padding: "8px 12px",
             border: "none",
@@ -458,8 +472,7 @@ export default function PromptEvalPage() {
         >
           Context
         </button>
-        <button
-          onClick={() => setActiveRightTab("parameters")}
+        <button onClick={() => setActiveRightTab("parameters")}
           style={{
             padding: "8px 12px",
             border: "none",
@@ -472,8 +485,7 @@ export default function PromptEvalPage() {
         >
           Parameters
         </button>
-        <button
-          onClick={() => setActiveRightTab("metrics")}
+        <button onClick={() => setActiveRightTab("metrics")}
           style={{
             padding: "8px 12px",
             border: "none",
@@ -492,7 +504,6 @@ export default function PromptEvalPage() {
       {activeRightTab === "prompt" && (
         <div>
           <div style={{ marginBottom: 16 }}>
-            
             <PresetManager
               onPresetChange={handlePresetApply}
               autoApplyOnMount={false}
@@ -501,9 +512,9 @@ export default function PromptEvalPage() {
           </div>
           <div style={{ marginBottom: 16 }}>
             <h4 style={{ color: "#e2e8f0", marginBottom: 8 }}>Context</h4>
-            <ExpandableTextarea 
-              editable 
-              value={draft.context} 
+            <ExpandableTextarea
+              editable
+              value={draft.context}
               onChange={(value) => updateDraft({ context: value })}
             />
           </div>
@@ -517,8 +528,8 @@ export default function PromptEvalPage() {
             autoApplyOnMount={false}
             presetStore={promptEvalPresetStore}
           />
-          <div style={{ marginTop: 16 }}/>
-      <ParamsPanel params={params} onChange={setParams} />
+          <div style={{ marginTop: 16 }} />
+          <ParamsPanel params={params} onChange={setParams} />
         </div>
       )}
 
@@ -529,32 +540,31 @@ export default function PromptEvalPage() {
             autoApplyOnMount={false}
             presetStore={promptEvalPresetStore}
           />
-      <MetricsPanel metrics={metricsState} onChange={setMetricsState} />
+          <MetricsPanel metrics={metricsState} onChange={setMetricsState} />
         </div>
       )}
     </div>
   );
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
+    <div style={{ display: "flex", height: "100vh", minHeight: 0 }}>
       <LeftRail />
-      
-      <div style={{ display: "flex", flexDirection: "column", flex: 1, marginLeft: 56 }}>
+
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, marginLeft: 56, minHeight: 0 }}>
         {/* Top Bar */}
-        <header style={{ 
-          height: 48, 
-          borderBottom: "1px solid #334155", 
-          display: "grid", 
+        <header style={{
+          height: 48,
+          borderBottom: "1px solid #334155",
+          display: "grid",
           gridTemplateColumns: "1fr auto 1fr",
           alignItems: "center",
           padding: "0 16px",
-          background: "#0f172a", 
-          color: "#e2e8f0" 
+          background: "#0f172a",
+          color: "#e2e8f0"
         }}>
           {/* Left Section */}
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <button
-              onClick={() => setLeftOpen(!leftOpen)}
+            <button onClick={() => setLeftOpen(!leftOpen)}
               style={{
                 padding: "6px 10px",
                 border: "1px solid #334155",
@@ -563,22 +573,26 @@ export default function PromptEvalPage() {
                 borderRadius: 6,
                 cursor: "pointer",
                 fontSize: 12,
+                height: 32,
+                minWidth: 36,
+                display: 'grid',
+                placeItems: 'center'
               }}
+              aria-label={leftOpen ? "Collapse left" : "Expand left"}
             >
               {leftOpen ? "⟨" : "⟩"}
             </button>
-            <strong>Prompt Evaluation</strong>
+            <strong style={{ fontSize: 15 }}>Prompt Evaluation</strong>
           </div>
-          
+
           {/* Center Section - Model Selector */}
           <div style={{ display: "flex", justifyContent: "center" }}>
             <ModelSelector />
           </div>
-          
+
           {/* Right Section */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
-            <button
-              onClick={() => setRightOpen(!rightOpen)}
+            <button onClick={() => setRightOpen(!rightOpen)}
               style={{
                 padding: "6px 10px",
                 border: "1px solid #334155",
@@ -587,199 +601,238 @@ export default function PromptEvalPage() {
                 borderRadius: 6,
                 cursor: "pointer",
                 fontSize: 12,
+                height: 32,
+                minWidth: 36,
+                display: 'grid',
+                placeItems: 'center'
               }}
+              aria-label={rightOpen ? "Collapse right" : "Expand right"}
             >
               {rightOpen ? "⟩" : "⟨"}
             </button>
-    </div>
+          </div>
         </header>
 
-        <div style={{ display: "flex", flex: 1 }}>
+        {/* body area: left sidebar, center (scrollable), right sidebar */}
+        <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
           {/* Left Sidebar */}
           {leftOpen && (
-            <aside style={{ width: 300, borderRight: "1px solid #334155", padding: 12, overflow: "auto", background: "#1e293b", color: "#e2e8f0" }}>
+            <aside style={{
+              width: 300,
+              borderRight: "1px solid #334155",
+              padding: 12,
+              overflow: "auto",
+              background: "#1e293b",
+              color: "#e2e8f0",
+              minHeight: 0
+            }}>
               {left}
             </aside>
           )}
 
-          {/* Main Content */}
-          <main style={{ flex: 1, padding: 16, overflow: "auto", background: "#0f172a", color: "#e2e8f0" }}>
+          {/* Main Content (only this scrolls) */}
+          <main
+            className="container-page py-6 space-y-6"
+            style={{
+              flex: 1,
+              padding: 16,
+              overflow: "auto",
+              background: "#0f172a",
+              color: "#e2e8f0",
+              minHeight: 0
+            }}
+          >
             {busy && (
-              <div style={{ background: "#1e293b", border: "1px solid #334155", padding: 8, borderRadius: 8, color: "#e2e8f0" }}>{busy}</div>
+              <div style={{
+                background: "#1e293b",
+                border: "1px solid #334155",
+                padding: 8,
+                borderRadius: 8,
+                color: "#e2e8f0"
+              }}>{busy}</div>
             )}
 
             {error && (
-              <div style={{ background: "#ef444420", border: "1px solid #ef4444", padding: 8, borderRadius: 8, color: "#fca5a5", marginBottom: 16 }}>{error}</div>
+              <div style={{
+                background: "#ef444420",
+                border: "1px solid #ef4444",
+                padding: 8,
+                borderRadius: 8,
+                color: "#fca5a5",
+                marginBottom: 16
+              }}>{error}</div>
             )}
 
             <section style={{ display: "grid", gap: 8 }}>
               <h3 style={{ margin: 0, color: "#e2e8f0" }}>Prompt</h3>
-              <ExpandableTextarea 
-                editable 
-                value={draft.prompt} 
+              <ExpandableTextarea
+                editable
+                value={draft?.prompt ?? ""}
                 onChange={(value) => updateDraft({ prompt: value })}
               />
-      </section>
+            </section>
 
             <section style={{ display: "grid", gap: 8, marginTop: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <h3 style={{ margin: 0, color: "#e2e8f0" }}>LLM Output</h3>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button 
-                    onClick={handleRun} 
-                    disabled={isRunning}
-                    style={{ 
-                      padding: "6px 10px", 
-                      background: isRunning ? "#6b7280" : "#1e293b", 
-                      border: "1px solid #334155", 
-                      color: "#e2e8f0", 
-                      borderRadius: 6,
-                      cursor: isRunning ? "not-allowed" : "pointer"
-                    }}
-                  >
-                    {isRunning ? "Running..." : "Run Prompt"}
-                  </button>
-                </div>
-        </div>
-              <ExpandableTextarea 
-                value={currentRun?.output || ""} 
+                <h3 style={{ margin: 0, color: "#e2e8f0" }}>LLM Output</h3>
+              </div>
+              <ExpandableTextarea
+                value={currentRun?.output ?? llmOutput ?? ""}
+                onChange={setLlmOutput}
               />
-      </section>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={handleRun}
+                  disabled={isRunning}
+                  style={{
+                    padding: "6px 10px",
+                    background: isRunning ? "#6b7280" : "#1e293b",
+                    border: "1px solid #334155",
+                    color: "#e2e8f0",
+                    borderRadius: 6,
+                    cursor: isRunning ? "not-allowed" : "pointer",
+                    height: 36,
+                    minWidth: 160
+                  }}>
+                  {isRunning ? "Running..." : "Build LLM Output"}
+                </button>
+              </div>
+            </section>
 
             <section style={{ display: "grid", gap: 8, marginTop: 16 }}>
               <h3 style={{ margin: 0, color: "#e2e8f0" }}>Reference Text</h3>
-              <ExpandableTextarea 
-                editable 
-                value={reference} 
+              <ExpandableTextarea
+                editable
+                value={reference}
                 onChange={setReference}
               />
-      </section>
+            </section>
 
-      <section style={{ marginTop: 16 }}>
+            <section style={{ marginTop: 16 }}>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={onEvaluate} style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}>
+                <button onClick={onEvaluate} style={{
+                  padding: "6px 10px",
+                  background: "#1e293b",
+                  border: "1px solid #334155",
+                  color: "#e2e8f0",
+                  borderRadius: 6,
+                  height: 36
+                }}>
                   Run Evaluation
                 </button>
-                <button onClick={onDownloadCSV} disabled={!scores} style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}>
+                <button onClick={onDownloadCSV} disabled={!scores} style={{
+                  padding: "6px 10px",
+                  background: "#1e293b",
+                  border: "1px solid #334155",
+                  color: "#e2e8f0",
+                  borderRadius: 6,
+                  height: 36
+                }}>
                   Download CSV
                 </button>
-                <button onClick={onDownloadPDF} disabled={!scores} style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}>
+                <button onClick={onDownloadPDF} disabled={!scores} style={{
+                  padding: "6px 10px",
+                  background: "#1e293b",
+                  border: "1px solid #334155",
+                  color: "#e2e8f0",
+                  borderRadius: 6,
+                  height: 36
+                }}>
                   Download PDF
                 </button>
-        </div>
+              </div>
 
-      {scores && (
+              {scores && (
                 <div style={{ marginTop: 12 }}>
                   <h4 style={{ color: "#e2e8f0", marginBottom: 8 }}>Evaluation Results</h4>
-                  <table style={{ 
-                    borderCollapse: "collapse", 
-                    width: "100%", 
+                  <table style={{
+                    borderCollapse: "collapse",
+                    width: "100%",
                     background: "#0f172a",
-                    borderRadius: "8px",
+                    borderRadius: 8,
                     overflow: "hidden",
-                    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)"
+                    boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)"
                   }}>
-            <thead>
-              <tr>
-                        <th style={{ 
-                          border: "1px solid #334155", 
-                          padding: "12px 16px", 
-                          textAlign: "left", 
-                          background: "#1e293b", 
+                    <thead>
+                      <tr>
+                        <th style={{
+                          border: "1px solid #334155",
+                          padding: "12px 16px",
+                          textAlign: "left",
+                          background: "#1e293b",
                           color: "#e2e8f0",
-                          fontWeight: "600",
-                          fontSize: "14px"
-                        }}>
-                          Metric
-                        </th>
-                        <th style={{ 
-                          border: "1px solid #334155", 
-                          padding: "12px 16px", 
-                          textAlign: "left", 
-                          background: "#1e293b", 
+                          fontWeight: 600,
+                          fontSize: 14
+                        }}>Metric</th>
+                        <th style={{
+                          border: "1px solid #334155",
+                          padding: "12px 16px",
+                          textAlign: "left",
+                          background: "#1e293b",
                           color: "#e2e8f0",
-                          fontWeight: "600",
-                          fontSize: "14px"
-                        }}>
-                          Score
-                        </th>
-              </tr>
-            </thead>
-            <tbody>
+                          fontWeight: 600,
+                          fontSize: 14
+                        }}>Score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {Object.entries(scores)
                         .filter(([key]) => {
-                          // Only show metrics that were actually selected
-                          if (key === 'rouge1' || key === 'rouge2' || key === 'rougeL' || key === 'rougeLsum') {
-                            return metricsState.rouge;
-                          }
-                          if (key === 'bleu') {
-                            return metricsState.bleu;
-                          }
-                          if (key === 'f1') {
-                            return metricsState.f1;
-                          }
-                          if (key === 'em') {
-                            return metricsState.em;
-                          }
-                          if (key === 'bertscore_precision' || key === 'bertscore_recall' || key === 'bertscore_f1') {
-                            return metricsState.bertscore;
-                          }
-                          if (key === 'perplexity') {
-                            return metricsState.perplexity;
-                          }
-                          if (key === 'accuracy') {
-                            return metricsState.accuracy;
-                          }
-                          if (key === 'precision') {
-                            return metricsState.precision;
-                          }
-                          if (key === 'recall') {
-                            return metricsState.recall;
-                          }
+                          // Only show metrics that were selected
+                          if (['rouge1','rouge2','rougeL','rougeLsum'].includes(key)) return !!metricsState?.rouge;
+                          if (key === 'bleu') return !!metricsState?.bleu;
+                          if (key === 'f1') return !!metricsState?.f1;
+                          if (key === 'em') return !!metricsState?.em;
+                          if (['bertscore_precision','bertscore_recall','bertscore_f1'].includes(key)) return !!metricsState?.bertscore;
+                          if (key === 'perplexity') return !!metricsState?.perplexity;
+                          if (key === 'accuracy') return !!metricsState?.accuracy;
+                          if (key === 'precision') return !!metricsState?.precision;
+                          if (key === 'recall') return !!metricsState?.recall;
                           return false;
                         })
                         .map(([key, value]) => (
-                          <tr key={key} style={{ 
-                            background: key.includes('rouge') && metricsState.rouge ? '#1e293b' : 
-                                       key === 'bleu' && metricsState.bleu ? '#1e293b' :
-                                       key === 'f1' && metricsState.f1 ? '#1e293b' :
-                                       key === 'em' && metricsState.em ? '#1e293b' :
-                                       key.includes('bertscore') && metricsState.bertscore ? '#1e293b' :
-                                       key === 'perplexity' && metricsState.perplexity ? '#1e293b' :
-                                       key === 'accuracy' && metricsState.accuracy ? '#1e293b' :
-                                       key === 'precision' && metricsState.precision ? '#1e293b' :
-                                       key === 'recall' && metricsState.recall ? '#1e293b' : '#0f172a'
+                          <tr key={key} style={{
+                            background:
+                              (key.includes('rouge') && metricsState?.rouge) || (key === 'bleu' && metricsState?.bleu)
+                                ? '#1e293b' : '#0f172a'
                           }}>
-                            <td style={{ 
-                              border: "1px solid #334155", 
-                              padding: "12px 16px", 
+                            <td style={{
+                              border: "1px solid #334155",
+                              padding: "12px 16px",
                               color: "#e2e8f0",
-                              fontWeight: "500",
-                              fontSize: "13px"
+                              fontWeight: 500,
+                              fontSize: 13
                             }}>
                               {key.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                             </td>
-                            <td style={{ 
-                              border: "1px solid #334155", 
-                              padding: "12px 16px", 
+                            <td style={{
+                              border: "1px solid #334155",
+                              padding: "12px 16px",
                               color: "#e2e8f0",
-                              fontSize: "13px",
+                              fontSize: 13,
                               fontFamily: "monospace"
                             }}>
                               {typeof value === 'number' ? value.toFixed(4) : String(value)}
                             </td>
                           </tr>
                         ))}
-            </tbody>
-          </table>
+                    </tbody>
+                  </table>
                 </div>
               )}
-        </section>
+            </section>
           </main>
 
           {/* Right Sidebar */}
           {rightOpen && (
-            <aside style={{ width: 340, borderLeft: "1px solid #334155", padding: 12, overflow: "auto", background: "#1e293b", color: "#e2e8f0" }}>
+            <aside style={{
+              width: 340,
+              borderLeft: "1px solid #334155",
+              padding: 12,
+              overflow: "auto",
+              background: "#1e293b",
+              color: "#e2e8f0",
+              minHeight: 0
+            }}>
               {right}
             </aside>
           )}

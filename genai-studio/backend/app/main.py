@@ -74,4 +74,4 @@ def spa(full_path: str):
     if os.path.isfile(index_path):
         return FileResponse(index_path)
     # If dist is missing, return a simple hint
-    return {"detail": "Frontend build not found. Run 'npm run build' in frontend/."}
+    return {"detail": "Run 'npm run build' in frontend/."}

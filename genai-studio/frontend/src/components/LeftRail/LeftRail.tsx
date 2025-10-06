@@ -1,18 +1,19 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
+import { IconHome, IconDoc, IconBolt, IconGraph, IconSettings } from "@/components/icons/icons";
 
 export default function LeftRail() {
   const location = useLocation();
 
   const navItems = [
-    { path: "/", icon: "🏠", label: "Home", title: "Home" },
-    { path: "/ocr", icon: "📄", label: "OCR Evaluation", title: "OCR Evaluation" },
-    { path: "/prompt", icon: "✏️", label: "Prompt Evaluation", title: "Prompt Evaluation" },
-    { path: "/chat", icon: "💬", label: "Chat", title: "Chat" },
-    { path: "/models", icon: "🤖", label: "My Models", title: "My Models" },
-    { path: "/analytics", icon: "📊", label: "Analytics", title: "Application Analytics" },
-    { path: "/settings", icon: "⚙️", label: "Settings", title: "Settings" },
-    { path: "/custom", icon: "🔧", label: "Custom", title: "Custom Pages" },
+    { path: "/", icon: "home", label: "Home", title: "Home" },
+    { path: "/ocr", icon: "doc", label: "OCR Evaluation", title: "OCR Evaluation" },
+    { path: "/prompt", icon: "bolt", label: "Prompt Evaluation", title: "Prompt Evaluation" },
+    { path: "/chat", icon: "chat", label: "Chat", title: "Chat" },
+    { path: "/models", icon: "bot", label: "My Models", title: "My Models" },
+    { path: "/analytics", icon: "graph", label: "Analytics", title: "Application Analytics" },
+    { path: "/settings", icon: "settings", label: "Settings", title: "Settings" },
+    { path: "/custom", icon: "wrench", label: "Custom", title: "Custom Pages" },
   ];
 
   return (
@@ -29,7 +30,7 @@ export default function LeftRail() {
               ...(isActive ? styles.activeItem : {}),
             }}
           >
-            <span style={styles.icon}>{item.icon}</span>
+            <span className="shrink-0 opacity-80">{item.icon==="home"?<IconHome/>:item.icon==="doc"?<IconDoc/>:item.icon==="bolt"?<IconBolt/>:item.icon==="graph"?<IconGraph/>:item.icon==="settings"?<IconSettings/>:null}</span>
           </Link>
         );
       })}

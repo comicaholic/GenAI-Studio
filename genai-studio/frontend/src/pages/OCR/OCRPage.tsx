@@ -1,5 +1,5 @@
-// frontend/src/pages/OCR/OCRPage.tsx
-import React, { useMemo, useState } from "react";
+// src/pages/OCR/OCRPage.tsx
+import React, { useMemo, useState, useEffect } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import ModelSelector from "@/components/TopBar/ModelSelector";
 import FileDrop from "@/components/FileDrop/FileDrop";
@@ -23,7 +23,6 @@ import { historyService } from "@/services/history";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.2, max_tokens: 512, top_p: 1.0, top_k: 40 };
 
-
 function renderPrompt(tmpl: string, ocrText: string, refText: string) {
   return tmpl
     .replace(/\{extracted text\}/gi, ocrText || "")
@@ -32,13 +31,11 @@ function renderPrompt(tmpl: string, ocrText: string, refText: string) {
     .replace(/\{reference\}/gi, refText || "");
 }
 
-
-
 export default function OCRPage() {
   // sidebar state
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
-  
+
   // left panel state
   const [srcFileName, setSrcFileName] = useState("");
   const [ocr, setOcr] = useState<OCRExtractResponse | null>(null);
@@ -47,33 +44,30 @@ export default function OCRPage() {
   const [sourceChoices, setSourceChoices] = useState<string[]>([]);
   const [referenceChoices, setReferenceChoices] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<"form" | "side-by-side" | "compare-two">("form");
-  
-
 
   // right panel state
-  // Single source of truth for prompt content
   const [textareaContent, setTextareaContent] = useState(() => {
-    const savedPrompt = localStorage.getItem('ocr-prompt');
+    const savedPrompt = localStorage.getItem("ocr-prompt");
     return savedPrompt || "Clean up OCR artifacts in {extracted text} and correct punctuation.";
   });
 
   // Save prompt to localStorage whenever it changes
   const handlePromptChange = (newPrompt: string) => {
     setTextareaContent(newPrompt);
-    localStorage.setItem('ocr-prompt', newPrompt);
+    localStorage.setItem("ocr-prompt", newPrompt);
   };
 
   // Handle preset changes
   const handlePresetChange = (preset: { body?: string }) => {
-    const presetText = preset.body || '';
+    const presetText = preset.body || "";
     setTextareaContent(presetText);
-    localStorage.setItem('ocr-prompt', presetText);
+    localStorage.setItem("ocr-prompt", presetText);
   };
+
   const [params, setParams] = useState<ModelParams>(DEFAULT_PARAMS);
   const [metricsState, setMetricsState] = useState<MetricState>(DEFAULT_METRICS);
-  
 
-  // Model selection
+  // Model selection & helpers
   const model_id = useSelectedModelId(false);
   const { showError, showSuccess } = useNotifications();
   const { addOperation, updateOperation } = useBackgroundState();
@@ -86,22 +80,28 @@ export default function OCRPage() {
   const [ocrText, setOcrText] = useState("");
   const [refText, setRefText] = useState("");
   const [llmOut, setLlmOut] = useState("");
-  const [metrics, setMetrics] = useState<string[]>([]);  // e.g., ["rouge","bleu","f1","em","bertscore","perplexity","accuracy","precision","recall"]
+  const [metrics, setMetrics] = useState<string[]>([]); // not used directly, kept for compatibility
 
   const meta = useMemo(
     () => ({
-      model: "(select at top)",
+      model: selected?.id ?? "(select at top)",
       params,
       source_file: srcFileName,
       reference_file: refFileName,
     }),
-    [params, srcFileName, refFileName]
+    [params, srcFileName, refFileName, selected]
   );
-  
-  // 1) Build LLM Output
+
+  // Build LLM Output (from older file)
   const onBuild = async () => {
-    if (!selected) { showError("Model Required", "Select a model first."); return; }
-    if (!textareaContent) { showError("Prompt Required", "Select or write a prompt first."); return; }
+    if (!selected) {
+      showError("Model Required", "Select a model first.");
+      return;
+    }
+    if (!textareaContent) {
+      showError("Prompt Required", "Select or write a prompt first.");
+      return;
+    }
 
     const prompt = renderPrompt(textareaContent, ocrText, refText);
     try {
@@ -114,11 +114,11 @@ export default function OCRPage() {
         top_p: params.top_p,
       });
       setLlmOut(res.output || "");
+      setLlmOutput(res.output || "");
     } catch (e: any) {
-      showError("LLM Call Failed", "LLM call failed: " + e.message);
+      showError("LLM Call Failed", "LLM call failed: " + (e?.message ?? String(e)));
     }
   };
-
 
   // ----- actions -----
   const onSourceUpload = async (file: File) => {
@@ -127,6 +127,7 @@ export default function OCRPage() {
     try {
       const res = await extractOCR(file);
       setOcr(res);
+      setOcrText(res?.text ?? "");
     } catch (e: any) {
       showError("OCR Failed", "OCR failed: " + (e?.response?.data?.detail ?? e.message ?? e));
     } finally {
@@ -143,7 +144,8 @@ export default function OCRPage() {
       const res = await api.post("/ocr/reference", form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setReference(res.data.text);
+      setReference(res.data.text ?? "");
+      setRefText(res.data.text ?? "");
     } catch (e: any) {
       showError("Reference Extraction Failed", "Reference extraction failed: " + (e?.response?.data?.detail ?? e.message ?? e));
     } finally {
@@ -151,25 +153,18 @@ export default function OCRPage() {
     }
   };
 
-
   const buildLlmOutput = async () => {
-    if (!selected) { showError("Model Required", "Select a model first."); return; }
-    if (!textareaContent.trim()) { showError("Prompt Required", "Select or write a prompt in the right panel."); return; }
+    if (!selected) {
+      showError("Model Required", "Select a model first.");
+      return;
+    }
+    if (!textareaContent.trim()) {
+      showError("Prompt Required", "Select or write a prompt in the right panel.");
+      return;
+    }
 
     const injected = renderPrompt(textareaContent, ocr?.text ?? "", reference || "");
-    console.log("Building LLM output with:", { 
-      selected: selected.id, 
-      originalPrompt: textareaContent,
-      ocrText: ocr?.text ?? "",
-      ocrTextLength: (ocr?.text ?? "").length,
-      referenceText: reference || "",
-      referenceTextLength: (reference || "").length,
-      injectedPrompt: injected,
-      injectedPromptLength: injected.length,
-      params 
-    });
-
-    // Check if the injected prompt is too short
+    // sanity check
     if (injected.trim().length < 10) {
       showError("Prompt Too Short", "The prompt after injection is too short. Make sure you have OCR text or reference text, or write a longer prompt.");
       return;
@@ -185,22 +180,18 @@ export default function OCRPage() {
         ],
         params
       );
-      console.log("LLM output received:", output);
-      console.log("LLM output length:", output.length);
-      setLlmOutput(output);
-    } catch (e:any) {
+      setLlmOutput(output || "");
+      setLlmOut(output || "");
+    } catch (e: any) {
       console.error("LLM call error:", e);
-      
-      // Extract more specific error information
       let errorMessage = "Unknown error";
       let errorTitle = "LLM Call Failed";
-      
+
       if (e?.response?.data?.detail) {
         errorMessage = e.response.data.detail;
-        // Check for specific error types
         if (errorMessage.includes("not compatible with chat completions")) {
           errorTitle = "Incompatible Model";
-          errorMessage = "This model is not designed for text generation. Please select a different model like 'groq/llama-3.1-8b-instant' or 'groq/mixtral-8x7b-32768'.";
+          errorMessage = "This model is not designed for text generation. Please select a different model.";
         } else if (errorMessage.includes("GROQ_API_KEY not set")) {
           errorTitle = "API Key Missing";
           errorMessage = "Please set your GROQ_API_KEY in the backend/.env file.";
@@ -211,7 +202,7 @@ export default function OCRPage() {
       } else if (e?.message) {
         errorMessage = e.message;
       }
-      
+
       showError(errorTitle, errorMessage);
     } finally {
       setBusy(null);
@@ -249,15 +240,11 @@ export default function OCRPage() {
     // If LLM output is empty, automatically run Build LLM first
     let currentLlmOutput = llmOutput;
     if (!currentLlmOutput || currentLlmOutput.trim() === "") {
-      console.log("LLM output is empty, running Build LLM first...");
       setBusy("Building LLM output...");
       try {
-        // Build LLM output and get the result directly
         const injected = renderPrompt(textareaContent, ocr?.text ?? "", reference || "");
-        
-        // Check if the injected prompt is too short
         if (injected.trim().length < 10) {
-          showError("Prompt Too Short", "The prompt after injection is too short. Make sure you have OCR text or reference text, or write a longer prompt.");
+          showError("Prompt Too Short", "The prompt after injection is too short.");
           return;
         }
 
@@ -269,52 +256,31 @@ export default function OCRPage() {
           ],
           params
         );
-        
-        // Update the state and use the output for evaluation
-        setLlmOutput(output);
-        currentLlmOutput = output;
-        
-        // Check if we got valid output
-        if (!currentLlmOutput || currentLlmOutput.trim() === "") {
-          showError("LLM Build Failed", "Failed to generate LLM output. Please check your model and prompt.");
-          return;
-        }
+        setLlmOutput(output || "");
+        currentLlmOutput = output || "";
       } catch (e: any) {
         console.error("LLM call error:", e);
-        
-        // Extract more specific error information
-        let errorMessage = "Unknown error";
+        let errorMessage = e?.message ?? "Unknown error";
         let errorTitle = "LLM Call Failed";
-        
         if (e?.response?.data?.detail) {
           errorMessage = e.response.data.detail;
-          // Check for specific error types
-          if (errorMessage.includes("not compatible with chat completions")) {
-            errorTitle = "Incompatible Model";
-            errorMessage = "This model is not designed for text generation. Please select a different model like 'groq/llama-3.1-8b-instant' or 'groq/mixtral-8x7b-32768'.";
-          } else if (errorMessage.includes("GROQ_API_KEY not set")) {
+          if (errorMessage.includes("GROQ_API_KEY not set")) {
             errorTitle = "API Key Missing";
             errorMessage = "Please set your GROQ_API_KEY in the backend/.env file.";
-          } else if (errorMessage.includes("502")) {
-            errorTitle = "Model Error";
-            errorMessage = "The selected model returned an error. Try a different model.";
           }
-        } else if (e?.message) {
-          errorMessage = e.message;
         }
-        
         showError(errorTitle, errorMessage);
         return;
+      } finally {
+        setBusy(null);
       }
     }
 
     setBusy("Computing metrics...");
-    
-    // Add background operation
     const operationId = addOperation({
-      type: 'ocr',
-      status: 'running',
-      progress: 0
+      type: "ocr",
+      status: "running",
+      progress: 0,
     });
 
     try {
@@ -325,12 +291,13 @@ export default function OCRPage() {
         meta,
       });
 
-      setScores(res.scores);
-      
+      const m = res?.scores ?? res?.scores ?? res?.data?.scores ?? res?.data ?? (res as any) ?? {};
+      setScores(m);
+
       // Save evaluation to history
       const evaluation = {
         id: crypto.randomUUID(),
-        type: 'ocr' as const,
+        type: "ocr" as const,
         title: `OCR Evaluation - ${new Date().toLocaleDateString()}`,
         model: { id: selected.id, provider: selected.provider },
         parameters: params,
@@ -338,32 +305,31 @@ export default function OCRPage() {
         usedText: {
           ocrText: ocr?.text ?? "",
           referenceText: reference,
-          promptText: renderPrompt(textareaContent, ocr?.text ?? "", reference || "")
+          promptText: renderPrompt(textareaContent, ocr?.text ?? "", reference || ""),
         },
         files: {
           sourceFileName: srcFileName,
-          referenceFileName: refFileName
+          referenceFileName: refFileName,
         },
-        results: res.scores,
+        results: m,
         startedAt: new Date().toISOString(),
-        finishedAt: new Date().toISOString()
+        finishedAt: new Date().toISOString(),
       };
-      
+
       await historyService.saveEvaluation(evaluation);
-      
-      updateOperation(operationId, { 
-        status: 'completed', 
+
+      updateOperation(operationId, {
+        status: "completed",
         progress: 100,
-        endTime: Date.now()
+        endTime: Date.now(),
       });
-      
+
       showSuccess("Evaluation Complete", "OCR evaluation completed and saved successfully!");
-      
     } catch (e: any) {
-      updateOperation(operationId, { 
-        status: 'error', 
-        error: e?.response?.data?.detail ?? e.message ?? e,
-        endTime: Date.now()
+      updateOperation(operationId, {
+        status: "error",
+        error: e?.response?.data?.detail ?? e.message ?? String(e),
+        endTime: Date.now(),
       });
       showError("Metric Computation Failed", "Metric computation failed: " + (e?.response?.data?.detail ?? e.message ?? e));
     } finally {
@@ -395,13 +361,31 @@ export default function OCRPage() {
     URL.revokeObjectURL(url);
   };
 
-  // ----- render -----
+  // ----- left quick-load lists -----
+  useEffect(() => {
+    (async () => {
+      try {
+        const s = await listFiles("source");
+        setSourceChoices(s.files ?? []);
+        const r = await listFiles("reference");
+        setReferenceChoices(r.files ?? []);
+      } catch {
+        // ignore listing errors
+      }
+    })();
+  }, []);
+
+  const [activeRightTab, setActiveRightTab] = useState<"prompt" | "parameters" | "metrics">("prompt");
+  const handleTabSwitch = (newTab: "prompt" | "parameters" | "metrics") => setActiveRightTab(newTab);
+  const getCurrentPromptText = () => textareaContent || "Clean up OCR artifacts in {extracted text} and correct punctuation.";
+
+  // ----- UI fragments -----
   const left = (
     <div style={{ display: "grid", gap: 12 }}>
-      {/* View Selection */}
       <div>
         <h3 style={{ margin: "0 0 8px 0", color: "#e2e8f0" }}>View Selection</h3>
         <select
+          className="select h-10 text-sm"
           value={viewMode}
           onChange={(e) => setViewMode(e.target.value as "form" | "side-by-side" | "compare-two")}
           style={{
@@ -420,46 +404,41 @@ export default function OCRPage() {
       </div>
 
       <h3 style={{ margin: 0, color: "#e2e8f0" }}>Source (OCR)</h3>
-      <FileDrop
-        onFile={onSourceUpload}
-        accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff"
-        label="Drop source file (PDF/Image) or click"
-      />
-      {/* Quick load source */}
+      <FileDrop onFile={onSourceUpload} accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" label="Drop source file (PDF/Image) or click" />
       {sourceChoices.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Quick load from folder</div>
           <select
+            className="select h-10 text-sm"
             id="srcQuick"
             onChange={async (e) => {
               const name = e.target.value;
               if (!name) return;
               setBusy("Loading source…");
               try {
-                const res = await api.get(`/files/load`, {
-                  params: { kind: "source", name },
-                  responseType: "blob",
-                });
+                const res = await api.get(`/files/load`, { params: { kind: "source", name }, responseType: "blob" });
                 const file = new File([res.data], name);
                 await onSourceUpload(file);
-                } catch (e: any) {
-                  showError("Load Source Failed", "Load source failed: " + (e?.response?.data?.detail ?? e.message ?? e));
-                } finally {
+              } catch (e: any) {
+                showError("Load Source Failed", "Load source failed: " + (e?.response?.data?.detail ?? e.message ?? e));
+              } finally {
                 setBusy(null);
               }
             }}
-            style={{ 
-              width: "100%", 
-              padding: "6px 8px", 
-              border: "1px solid #475569", 
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              border: "1px solid #475569",
               borderRadius: 8,
               background: "#1e293b",
               color: "#e2e8f0",
-              fontSize: "14px"
+              fontSize: "14px",
             }}
             defaultValue=""
           >
-            <option value="" disabled>Select a file</option>
+            <option value="" disabled>
+              Select a file
+            </option>
             {sourceChoices.map((f) => (
               <option key={f} value={f}>
                 {f}
@@ -479,16 +458,12 @@ export default function OCRPage() {
       )}
 
       <h3 style={{ color: "#e2e8f0" }}>Reference</h3>
-      <FileDrop
-        onFile={onReferenceUpload}
-        accept=".pdf,.txt,.png,.jpg,.jpeg,.tif,.tiff"
-        label="Drop reference (PDF/TXT/Image) or click"
-      />
-      {/* Quick load reference */}
+      <FileDrop onFile={onReferenceUpload} accept=".pdf,.txt,.png,.jpg,.jpeg,.tif,.tiff" label="Drop reference (PDF/TXT/Image) or click" />
       {referenceChoices.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Quick load from folder</div>
           <select
+            className="select h-10 text-sm"
             id="refQuick"
             onChange={async (e) => {
               const name = e.target.value;
@@ -498,24 +473,27 @@ export default function OCRPage() {
                 const data = await loadReferenceByName(name);
                 setRefFileName(data.filename);
                 setReference(data.text);
+                setRefText(data.text ?? "");
               } catch (e: any) {
                 showError("Load Reference Failed", "Load reference failed: " + (e?.response?.data?.detail ?? e.message ?? e));
               } finally {
                 setBusy(null);
               }
             }}
-            style={{ 
-              width: "100%", 
-              padding: "6px 8px", 
-              border: "1px solid #475569", 
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              border: "1px solid #475569",
               borderRadius: 8,
               background: "#1e293b",
               color: "#e2e8f0",
-              fontSize: "14px"
+              fontSize: "14px",
             }}
             defaultValue=""
           >
-            <option value="" disabled>Select a file</option>
+            <option value="" disabled>
+              Select a file
+            </option>
             {referenceChoices.map((f) => (
               <option key={f} value={f}>
                 {f}
@@ -532,40 +510,12 @@ export default function OCRPage() {
     </div>
   );
 
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const s = await listFiles("source");
-        setSourceChoices(s.files);
-        const r = await listFiles("reference");
-        setReferenceChoices(r.files);
-      } catch {
-        // ignore; dropdowns just won't show if listing fails
-      }
-    })();
-  }, []);
-
-  const [activeRightTab, setActiveRightTab] = useState<"prompt" | "parameters" | "metrics">("prompt");
-
-  // Handle tab switching - no special logic needed, textareaContent persists
-  const handleTabSwitch = (newTab: "prompt" | "parameters" | "metrics") => {
-    console.log("Tab switch:", { from: activeRightTab, to: newTab, textareaContent });
-    setActiveRightTab(newTab);
-  };
-
-  // Get the current prompt text - always use textareaContent
-  const getCurrentPromptText = () => {
-    // Use textareaContent if it has content, otherwise use default preset
-    const result = textareaContent || "Clean up OCR artifacts in {extracted text} and correct punctuation.";
-    console.log("Getting prompt text:", { activeTab: activeRightTab, textareaContent, result });
-    return result;
-  };
-
   const right = (
     <div style={{ display: "grid", gap: 16 }}>
       {/* Tab Navigation */}
       <div style={{ display: "flex", borderBottom: "1px solid #334155" }}>
         <button
+          className="btn h-10 min-w-[96px]"
           onClick={() => handleTabSwitch("prompt")}
           style={{
             padding: "8px 12px",
@@ -580,6 +530,7 @@ export default function OCRPage() {
           Prompt
         </button>
         <button
+          className="btn h-10 min-w-[96px]"
           onClick={() => handleTabSwitch("parameters")}
           style={{
             padding: "8px 12px",
@@ -594,6 +545,7 @@ export default function OCRPage() {
           Parameters
         </button>
         <button
+          className="btn h-10 min-w-[96px]"
           onClick={() => handleTabSwitch("metrics")}
           style={{
             padding: "8px 12px",
@@ -612,32 +564,20 @@ export default function OCRPage() {
       {/* Tab Content */}
       {activeRightTab === "prompt" && (
         <div>
-          <PromptPresetBox 
-            onPromptChange={handlePromptChange} 
-            value={getCurrentPromptText()} 
-            presetStore={ocrPresetStore}
-          />
+          <PromptPresetBox onPromptChange={handlePromptChange} value={getCurrentPromptText()} presetStore={ocrPresetStore} />
         </div>
       )}
 
       {activeRightTab === "parameters" && (
         <div>
-          <PresetManager
-            onPresetChange={handlePresetChange}
-            autoApplyOnMount={false}
-            presetStore={ocrPresetStore}
-          />
+          <PresetManager onPresetChange={handlePresetChange} autoApplyOnMount={false} presetStore={ocrPresetStore} />
           <ParamsPanel params={params} onChange={setParams} />
         </div>
       )}
 
       {activeRightTab === "metrics" && (
         <div>
-          <PresetManager
-            onPresetChange={handlePresetChange}
-            autoApplyOnMount={false}
-            presetStore={ocrPresetStore}
-          />
+          <PresetManager onPresetChange={handlePresetChange} autoApplyOnMount={false} presetStore={ocrPresetStore} />
           <MetricsPanel metrics={metricsState} onChange={setMetricsState} />
         </div>
       )}
@@ -654,14 +594,17 @@ export default function OCRPage() {
       <section style={{ display: "grid", gap: 8, marginTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h3 style={{ margin: 0, color: "#e2e8f0" }}>LLM Output</h3>
-          
         </div>
         <ExpandableTextarea editable value={llmOutput} onChange={setLlmOutput} />
         <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={buildLlmOutput} style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}>
-              Build LLM Output
-            </button>
-          </div>
+          <button
+            className="btn h-10 min-w-[96px]"
+            onClick={buildLlmOutput}
+            style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}
+          >
+            Build LLM Output
+          </button>
+        </div>
       </section>
 
       <section style={{ display: "grid", gap: 8, marginTop: 16 }}>
@@ -709,22 +652,25 @@ export default function OCRPage() {
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       <LeftRail />
-      
+
       <div style={{ display: "flex", flexDirection: "column", flex: 1, marginLeft: 56 }}>
         {/* Top Bar */}
-        <header style={{ 
-          height: 48, 
-          borderBottom: "1px solid #334155", 
-          display: "grid", 
-          gridTemplateColumns: "1fr auto 1fr",
-          alignItems: "center",
-          padding: "0 16px",
-          background: "#0f172a", 
-          color: "#e2e8f0" 
-        }}>
+        <header
+          style={{
+            height: 48,
+            borderBottom: "1px solid #334155",
+            display: "grid",
+            gridTemplateColumns: "1fr auto 1fr",
+            alignItems: "center",
+            padding: "0 16px",
+            background: "#0f172a",
+            color: "#e2e8f0",
+          }}
+        >
           {/* Left Section */}
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button
+              className="btn h-10 min-w-[96px]"
               onClick={() => setLeftOpen(!leftOpen)}
               style={{
                 padding: "6px 10px",
@@ -740,15 +686,16 @@ export default function OCRPage() {
             </button>
             <strong>OCR Evaluation</strong>
           </div>
-          
+
           {/* Center Section - Model Selector */}
           <div style={{ display: "flex", justifyContent: "center" }}>
             <ModelSelector />
           </div>
-          
+
           {/* Right Section */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
             <button
+              className="btn h-10 min-w-[96px]"
               onClick={() => setRightOpen(!rightOpen)}
               style={{
                 padding: "6px 10px",
@@ -774,42 +721,49 @@ export default function OCRPage() {
           )}
 
           {/* Main Content */}
-          <main style={{ flex: 1, padding: 16, overflow: "auto", background: "#0f172a", color: "#e2e8f0" }}>
-        {busy && (
-          <div style={{ background: "#1e293b", border: "1px solid #334155", padding: 8, borderRadius: 8, color: "#e2e8f0", marginBottom: 16 }}>{busy}</div>
-        )}
+          <main className="container-page py-6 space-y-6" style={{ flex: 1, padding: 16, overflow: "auto", background: "#0f172a", color: "#e2e8f0" }}>
+            {busy && <div style={{ background: "#1e293b", border: "1px solid #334155", padding: 8, borderRadius: 8, color: "#e2e8f0", marginBottom: 16 }}>{busy}</div>}
 
-        {viewMode === "form" && renderFormView()}
-        {viewMode === "side-by-side" && renderSideBySideView()}
-        {viewMode === "compare-two" && renderCompareTwoView()}
+            {viewMode === "form" && renderFormView()}
+            {viewMode === "side-by-side" && renderSideBySideView()}
+            {viewMode === "compare-two" && renderCompareTwoView()}
 
-        {scores && (
-          <section style={{ marginTop: 16 }}>
-            <h3 style={{ margin: "0 0 8px 0", color: "#e2e8f0" }}>Evaluation Results</h3>
-            <div style={{ display: "grid", gap: 8 }}>
-              {Object.entries(scores).map(([key, value]) => (
-                <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", background: "#1e293b", borderRadius: 4 }}>
-                  <span style={{ color: "#e2e8f0" }}>{key}</span>
-                  <span style={{ color: "#e2e8f0", fontFamily: "monospace" }}>{typeof value === 'number' ? value.toFixed(4) : String(value)}</span>
+            {scores && (
+              <section style={{ marginTop: 16 }}>
+                <h3 style={{ margin: "0 0 8px 0", color: "#e2e8f0" }}>Evaluation Results</h3>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {Object.entries(scores).map(([key, value]) => (
+                    <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", background: "#1e293b", borderRadius: 4 }}>
+                      <span style={{ color: "#e2e8f0" }}>{key}</span>
+                      <span style={{ color: "#e2e8f0", fontFamily: "monospace" }}>{typeof value === "number" ? value.toFixed(4) : String(value)}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            {/* Download buttons rendered globally below; keep results section focused on scores */}
-          </section>
-        )}
+              </section>
+            )}
 
-        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-          <button onClick={onEvaluate} style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}>
-            Run Evaluation
-          </button>
-          <button onClick={onDownloadCSV} disabled={!scores} style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}>
-            Download CSV
-          </button>
-          <button onClick={onDownloadPDF} disabled={!scores} style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}>
-            Download PDF
-          </button>
-        </div>
-      </main>
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button className="btn h-10 min-w-[96px]" onClick={onEvaluate} style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}>
+                Run Evaluation
+              </button>
+              <button
+                className="btn h-10 min-w-[96px]"
+                onClick={onDownloadCSV}
+                disabled={!scores}
+                style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}
+              >
+                Download CSV
+              </button>
+              <button
+                className="btn h-10 min-w-[96px]"
+                onClick={onDownloadPDF}
+                disabled={!scores}
+                style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}
+              >
+                Download PDF
+              </button>
+            </div>
+          </main>
 
           {/* Right Sidebar */}
           {rightOpen && (
@@ -823,8 +777,7 @@ export default function OCRPage() {
   );
 }
 
-
-
+// helper used by some other code paths in the repo (kept for compatibility)
 function getCurrentModelId(): string {
   const sel = document.querySelector('select[title="Select model"]') as HTMLSelectElement | null;
   return sel?.value || "stub:echo";

@@ -112,8 +112,7 @@ export default function ParametersTab({ parameters, onChange }: ParametersTabPro
           }}>
             Max Tokens
           </label>
-          <input
-            type="number"
+          <input className="input h-10 text-sm" type="number"
             min="1"
             max="8192"
             value={parameters.maxTokens || ''}
@@ -150,8 +149,7 @@ export default function ParametersTab({ parameters, onChange }: ParametersTabPro
           }}>
             System Prompt
           </label>
-          <textarea
-            value={parameters.system || ''}
+          <textarea className="input text-sm min-h-32" value={parameters.system || ''}
             onChange={(e) => handleParameterChange('system', e.target.value)}
             style={{
               width: '100%',
@@ -188,8 +186,7 @@ export default function ParametersTab({ parameters, onChange }: ParametersTabPro
           }}>
             Seed (Optional)
           </label>
-          <input
-            type="number"
+          <input className="input h-10 text-sm" type="number"
             value={parameters.seed || ''}
             onChange={(e) => handleParameterChange('seed', e.target.value ? parseInt(e.target.value) : null)}
             style={{
@@ -216,8 +213,7 @@ export default function ParametersTab({ parameters, onChange }: ParametersTabPro
 
       {/* Reset Button */}
       <div style={{ marginTop: '20px', textAlign: 'center' }}>
-        <button
-          onClick={() => onChange({
+        <button className="btn h-10 min-w-[96px]" onClick={() => onChange({
             temperature: 0.7,
             topP: 1.0,
             maxTokens: 1000,

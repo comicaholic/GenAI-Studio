@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
+// src/pages/Chat/ChatPage.tsx
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import ModelSelector from "@/components/TopBar/ModelSelector";
 import FileDrop from "@/components/FileDrop/FileDrop";
@@ -8,32 +9,49 @@ import ParamsPanel, { ModelParams } from "@/components/RightPanel/ParamsPanel";
 import { chatComplete } from "@/services/llm";
 import { useModel } from "@/context/ModelContext";
 import { chatPresetStore } from "@/stores/presetStore";
-import { useNotifications } from '@/components/Notification/Notification';
-import { useBackgroundState } from '@/stores/backgroundState';
-import { historyService } from '@/services/history';
+import { useNotifications } from "@/components/Notification/Notification";
+import { useBackgroundState } from "@/stores/backgroundState";
+import { historyService } from "@/services/history";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.7, max_tokens: 1024, top_p: 1.0, top_k: 40 };
+
+type UsageMeta = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  firstTokenMs?: number; // ms to first token
+  elapsedMs?: number; // total elapsed time in ms
+  stopReason?: string;
+};
 
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  timestamp: Date;
-  files?: File[];
+  timestamp: string; // ISO to simplify serialization
+  files?: { name: string; size?: number }[]; // don't store File objects in storage
+  meta?: UsageMeta;
 }
 
 interface ChatSession {
   id: string;
   title: string;
   messages: ChatMessage[];
-  createdAt: Date;
+  createdAt: string;
+  lastActivityAt?: string;
+  modelId?: string;
+  modelProvider?: string;
+  parameters?: ModelParams;
+  context?: string;
 }
+
+const STORAGE_KEY = "app:chat:sessions_v1";
 
 export default function ChatPage() {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState("");
   const [contextPrompt, setContextPrompt] = useState("");
   const [params, setParams] = useState<ModelParams>(DEFAULT_PARAMS);
@@ -43,139 +61,210 @@ export default function ChatPage() {
   const { selected } = useModel();
   const { showError, showSuccess } = useNotifications();
   const { addOperation, updateOperation } = useBackgroundState();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  const scrollToBottom = () => {
+  // load sessions from localStorage on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as ChatSession[];
+        setSessions(parsed);
+        if (parsed.length > 0) setCurrentSessionId(parsed[0].id);
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }, []);
+
+  // persist sessions to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    } catch {
+      // ignore storage failures
+    }
+  }, [sessions]);
+
+  const currentSession = sessions.find((s) => s.id === currentSessionId) ?? null;
+
+  // scroll to bottom on new messages
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  }, [currentSession?.messages?.length, isLoading]);
 
-  useEffect(scrollToBottom, [currentSession?.messages]);
-
-  const createNewSession = () => {
+  const createNewSession = useCallback(() => {
     const newSession: ChatSession = {
       id: crypto.randomUUID(),
       title: "New Chat",
       messages: [],
-      createdAt: new Date(),
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      modelId: selected?.id,
+      modelProvider: selected?.provider,
+      parameters: params,
+      context: contextPrompt,
     };
-    setSessions(prev => [newSession, ...prev]);
-    setCurrentSession(newSession);
+    setSessions((prev) => [newSession, ...prev]);
+    setCurrentSessionId(newSession.id);
+  }, [params, contextPrompt, selected]);
+
+  // rename session
+  const renameSession = (id: string, title: string) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
+  };
+
+  // delete session
+  const deleteSession = (id: string) => {
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+    if (currentSessionId === id) {
+      const remaining = sessions.filter((s) => s.id !== id);
+      setCurrentSessionId(remaining.length > 0 ? remaining[0].id : null);
+    }
+  };
+
+  // add a message to current session (user or assistant)
+  const pushMessageToCurrent = (msg: ChatMessage) => {
+    if (!currentSessionId) return;
+    setSessions((prev) =>
+      prev.map((s) => (s.id === currentSessionId ? { ...s, messages: [...s.messages, msg], lastActivityAt: new Date().toISOString() } : s))
+    );
+  };
+
+  // update last assistant message (for attaching meta or streaming updates)
+  const updateLastAssistant = (sessionId: string, patch: Partial<ChatMessage>) => {
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== sessionId) return s;
+        const msgs = [...s.messages];
+        // find last assistant message index
+        const idx = [...msgs].reverse().findIndex((m) => m.role === "assistant");
+        if (idx === -1) return s;
+        const actualIdx = msgs.length - 1 - idx;
+        msgs[actualIdx] = { ...msgs[actualIdx], ...patch };
+        return { ...s, messages: msgs, lastActivityAt: new Date().toISOString() };
+      })
+    );
   };
 
   const sendMessage = async () => {
-    if (!messageInput.trim() && attachedFiles.length === 0) return;
-    if (!selected) return;
-
+    if ((!messageInput.trim() && attachedFiles.length === 0) || !selected) return;
     setIsLoading(true);
-    
-    // Add background operation
-    const operationId = addOperation({
-      type: 'chat',
-      status: 'running',
-      progress: 0
-    });
 
-    const userMessage: ChatMessage = {
+    const operationId = addOperation({ type: "chat", status: "running", progress: 0 });
+
+    // create user message
+    const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       content: messageInput,
-      timestamp: new Date(),
-      files: attachedFiles.length > 0 ? [...attachedFiles] : undefined,
+      timestamp: new Date().toISOString(),
+      files: attachedFiles.length ? attachedFiles.map((f) => ({ name: f.name, size: f.size })) : undefined,
     };
 
-    if (currentSession) {
-      const updatedSession = {
-        ...currentSession,
-        messages: [...currentSession.messages, userMessage],
-      };
-      setCurrentSession(updatedSession);
-      setSessions(prev => prev.map(s => s.id === currentSession.id ? updatedSession : s));
-    }
+    // persist user message immediately
+    pushMessageToCurrent(userMsg);
 
+    // clear input & attachments
     setMessageInput("");
     setAttachedFiles([]);
 
+    // prepare model messages
+    const systemMessages = contextPrompt ? [{ role: "system" as const, content: contextPrompt }] : [];
+    const messagesForModel = [
+      ...systemMessages,
+      ...((currentSession?.messages ?? []).map((m) => ({ role: m.role as "user" | "assistant", content: m.content }))),
+      { role: "user" as const, content: userMsg.content },
+    ];
+
+    const startTime = performance.now();
     try {
       updateOperation(operationId, { progress: 25 });
-      
-      const messages = [
-        ...(contextPrompt ? [{ role: "system" as const, content: contextPrompt }] : []),
-        { role: "user" as const, content: messageInput }
-      ];
-      const response = await chatComplete(selected.id, messages, params);
-      
+
+      // call LLM - allow both string or object responses (defensive)
+      const raw = await chatComplete(selected.id, messagesForModel, params);
       updateOperation(operationId, { progress: 75 });
-      
-      const assistantMessage: ChatMessage = {
+
+      // normalize possible response shapes:
+      // - string
+      // - { output: string, usage: { ... }, stop_reason?, timing: { firstTokenMs, elapsedMs } }
+      let text = "";
+      let usage: UsageMeta = {};
+      if (typeof raw === "string") {
+        text = raw;
+      } else if (raw && typeof raw === "object") {
+        // try common fields
+        text = raw.output ?? raw.text ?? raw.response ?? "";
+        const u = raw.usage ?? raw.metrics ?? raw.meta ?? {};
+        usage.promptTokens = u.promptTokens ?? u.prompt_tokens ?? u.promptTokens;
+        usage.completionTokens = u.completionTokens ?? u.completion_tokens ?? u.completionTokens;
+        usage.totalTokens = u.totalTokens ?? u.total_tokens ?? u.totalTokens;
+        usage.firstTokenMs = u.firstTokenMs ?? raw.firstTokenMs ?? raw.first_token_ms ?? u.first_token_ms;
+        usage.elapsedMs = u.elapsedMs ?? raw.elapsedMs ?? raw.elapsed_ms ?? u.elapsed_ms;
+        usage.stopReason = raw.stop_reason ?? u.stop_reason ?? u.stopReason ?? raw.stopReason;
+      } else {
+        text = String(raw);
+      }
+
+      const endTime = performance.now();
+      // compute elapsed if not provided
+      if (!usage.elapsedMs) {
+        usage.elapsedMs = Math.max(0, Math.round(endTime - startTime));
+      }
+      // compute tokens/sec if tokens provided and elapsed available — attach later when rendering
+      // compute time-to-first-token if not provided (leave undefined if unknown)
+
+      const assistantMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: response,
-        timestamp: new Date(),
+        content: text,
+        timestamp: new Date().toISOString(),
+        meta: usage,
       };
 
+      // append assistant message
+      pushMessageToCurrent(assistantMsg);
+
+      // persist to history service - build a minimal chat object
       if (currentSession) {
-        const finalSession = {
-          ...currentSession,
-          messages: [...currentSession.messages, userMessage, assistantMessage],
-        };
-        setCurrentSession(finalSession);
-        setSessions(prev => prev.map(s => s.id === currentSession.id ? finalSession : s));
-        
-        // Save chat to history
-        const chat = {
-          id: currentSession.id,
-          title: currentSession.title,
-          model: { id: selected.id, provider: selected.provider },
-          parameters: params,
-          context: contextPrompt,
-          messagesSummary: `${finalSession.messages.length} messages`,
-          usedText: {
-            chatHistory: finalSession.messages.map(msg => ({
-              role: msg.role,
-              content: msg.content
-            }))
-          },
-          lastActivityAt: new Date().toISOString()
-        };
-        
-        await historyService.saveChat(chat);
+        const s = sessions.find((x) => x.id === currentSession.id) ?? currentSession;
+        const finalSession = { ...s, messages: [...s.messages, userMsg, assistantMsg], lastActivityAt: new Date().toISOString() };
+        try {
+          await historyService.saveChat({
+            id: finalSession.id,
+            title: finalSession.title,
+            model: { id: selected.id, provider: selected.provider },
+            parameters: params,
+            context: contextPrompt,
+            messagesSummary: `${finalSession.messages.length} messages`,
+            usedText: { chatHistory: finalSession.messages.map((m) => ({ role: m.role, content: m.content })) },
+            lastActivityAt: finalSession.lastActivityAt,
+          });
+        } catch (e) {
+          // non-blocking if history fails
+          console.warn("historyService.saveChat failed:", e);
+        }
       }
-      
-      updateOperation(operationId, { 
-        status: 'completed', 
-        progress: 100,
-        endTime: Date.now()
-      });
-      
-    } catch (error) {
-      updateOperation(operationId, { 
-        status: 'error', 
-        error: error instanceof Error ? error.message : 'Chat failed',
-        endTime: Date.now()
-      });
-      
-      console.error("Error sending message:", error);
-      const errorMessage: ChatMessage = {
+
+      updateOperation(operationId, { status: "completed", progress: 100, endTime: Date.now() });
+    } catch (e: any) {
+      updateOperation(operationId, { status: "error", error: e?.message ?? String(e), endTime: Date.now() });
+      showError("Chat Error", e?.message ?? "Failed to get response from model");
+
+      // append assistant error message
+      const errMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
         content: "Error: Could not get a response from the model.",
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
       };
-
-      if (currentSession) {
-        const errorSession = {
-          ...currentSession,
-          messages: [...currentSession.messages, userMessage, errorMessage],
-        };
-        setCurrentSession(errorSession);
-        setSessions(prev => prev.map(s => s.id === currentSession.id ? errorSession : s));
-      }
+      pushMessageToCurrent(errMsg);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -183,25 +272,51 @@ export default function ChatPage() {
   };
 
   const handleFileAttach = (file: File) => {
-    setAttachedFiles(prev => [...prev, file]);
+    setAttachedFiles((prev) => [...prev, file]);
   };
 
   const removeFile = (index: number) => {
-    setAttachedFiles(prev => prev.filter((_, i) => i !== index));
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const left = (
-    <div style={{ display: "grid", gap: 16 }}>
+  // UI helpers for rendering meta line under assistant messages
+  const renderUsageLine = (meta?: UsageMeta) => {
+    if (!meta) return null;
+    const tkPrompt = typeof meta.promptTokens === "number" ? meta.promptTokens : null;
+    const tkCompletion = typeof meta.completionTokens === "number" ? meta.completionTokens : null;
+    const tkTotal = typeof meta.totalTokens === "number" ? meta.totalTokens : null;
+    const elapsedSec = meta.elapsedMs ? (meta.elapsedMs / 1000) : undefined;
+    let tokensPerSec: number | null = null;
+    if (tkCompletion !== null && elapsedSec && elapsedSec > 0) tokensPerSec = +(tkCompletion / elapsedSec);
+    const firstTokenMs = meta.firstTokenMs ?? null;
+    const stopReason = meta.stopReason ?? null;
+
+    return (
+      <div style={{ marginTop: 8, fontSize: 12, color: "#94a3b8", fontFamily: "monospace" }}>
+        {tkPrompt !== null && <span>prompt: {tkPrompt} </span>}
+        {tkCompletion !== null && <span>completion: {tkCompletion} </span>}
+        {tkTotal !== null && <span>total: {tkTotal} </span>}
+        {tokensPerSec !== null && <span>• {tokensPerSec.toFixed(2)} tok/s </span>}
+        {firstTokenMs !== null && <span>• ttf: {Math.round(firstTokenMs)} ms </span>}
+        {elapsedSec !== undefined && <span>• {elapsedSec.toFixed(2)} s</span>}
+        {stopReason && <span>• stop: {stopReason}</span>}
+      </div>
+    );
+  };
+
+  // left & right panels (UI)
+  const leftPanel = (
+    <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ margin: 0, color: "#e2e8f0" }}>Chat History</h3>
+        <h3 style={{ margin: 0, color: "#e2e8f0", fontWeight: 600 }}>Chat History</h3>
         <button
           onClick={createNewSession}
           style={{
-            padding: "4px 8px",
+            padding: "6px 8px",
             background: "#2563eb",
             border: "1px solid #2563eb",
             color: "#fff",
-            borderRadius: 4,
+            borderRadius: 6,
             cursor: "pointer",
             fontSize: 12,
           }}
@@ -209,24 +324,46 @@ export default function ChatPage() {
           New
         </button>
       </div>
-      
+
       <div style={{ display: "grid", gap: 8 }}>
-        {sessions.map((session) => (
+        {sessions.map((s) => (
           <div
-            key={session.id}
-            onClick={() => setCurrentSession(session)}
+            key={s.id}
+            onClick={() => setCurrentSessionId(s.id)}
             style={{
               padding: 12,
-              background: currentSession?.id === session.id ? "#1e293b" : "#0f172a",
+              background: currentSessionId === s.id ? "#1e293b" : "#0f172a",
               border: "1px solid #334155",
               borderRadius: 8,
               cursor: "pointer",
               color: "#e2e8f0",
             }}
           >
-            <div style={{ fontWeight: "bold", marginBottom: 4 }}>{session.title}</div>
+            <div style={{ fontWeight: "700", marginBottom: 4 }}>{s.title}</div>
             <div style={{ fontSize: 12, color: "#94a3b8" }}>
-              {session.messages.length} messages • {session.createdAt.toLocaleDateString()}
+              {s.messages.length} messages • {new Date(s.createdAt).toLocaleDateString()}
+            </div>
+
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <button
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  const newTitle = prompt("Rename chat", s.title) || s.title;
+                  renameSession(s.id, newTitle);
+                }}
+                style={{ fontSize: 12, background: "transparent", border: "1px solid #334155", color: "#e2e8f0", padding: "4px 8px", borderRadius: 6 }}
+              >
+                Rename
+              </button>
+              <button
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  if (confirm("Delete chat?")) deleteSession(s.id);
+                }}
+                style={{ fontSize: 12, background: "transparent", border: "1px solid #7f1d1d", color: "#ef4444", padding: "4px 8px", borderRadius: 6 }}
+              >
+                Delete
+              </button>
             </div>
           </div>
         ))}
@@ -234,9 +371,8 @@ export default function ChatPage() {
     </div>
   );
 
-  const right = (
+  const rightPanel = (
     <div style={{ display: "grid", gap: 16 }}>
-      {/* Tab Navigation */}
       <div style={{ display: "flex", borderBottom: "1px solid #334155" }}>
         <button
           onClick={() => setActiveRightTab("context")}
@@ -247,7 +383,6 @@ export default function ChatPage() {
             color: activeRightTab === "context" ? "#e2e8f0" : "#94a3b8",
             cursor: "pointer",
             fontSize: 14,
-            borderBottom: activeRightTab === "context" ? "2px solid #60a5fa" : "2px solid transparent",
           }}
         >
           Context
@@ -261,52 +396,46 @@ export default function ChatPage() {
             color: activeRightTab === "parameters" ? "#e2e8f0" : "#94a3b8",
             cursor: "pointer",
             fontSize: 14,
-            borderBottom: activeRightTab === "parameters" ? "2px solid #60a5fa" : "2px solid transparent",
           }}
         >
           Parameters
         </button>
       </div>
 
-      {/* Tab Content */}
       {activeRightTab === "context" && (
         <div>
-          <PromptPresetBox 
-            onPromptChange={setContextPrompt} 
-            presetStore={chatPresetStore}
-          />
+          <PromptPresetBox onPromptChange={setContextPrompt} presetStore={chatPresetStore} />
         </div>
       )}
 
       {activeRightTab === "parameters" && (
         <div>
-          <PresetManager 
-            onPresetChange={(preset) => setContextPrompt(preset.body)} 
-            presetStore={chatPresetStore}
-          />
+          <PresetManager onPresetChange={(preset) => setContextPrompt(preset.body ?? "")} presetStore={chatPresetStore} />
           <ParamsPanel params={params} onChange={setParams} />
         </div>
       )}
     </div>
   );
 
+  const topBar = <ModelSelector />;
+
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       <LeftRail />
-
       <div style={{ display: "flex", flexDirection: "column", flex: 1, marginLeft: 56 }}>
         {/* Top Bar */}
-        <header style={{ 
-          height: 48, 
-          borderBottom: "1px solid #334155", 
-          display: "grid", 
-          gridTemplateColumns: "1fr auto 1fr",
-          alignItems: "center",
-          padding: "0 16px",
-          background: "#0f172a", 
-          color: "#e2e8f0" 
-        }}>
-          {/* Left Section */}
+        <header
+          style={{
+            height: 48,
+            borderBottom: "1px solid #334155",
+            display: "grid",
+            gridTemplateColumns: "1fr auto 1fr",
+            alignItems: "center",
+            padding: "0 16px",
+            background: "#0f172a",
+            color: "#e2e8f0",
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button
               onClick={() => setLeftOpen(!leftOpen)}
@@ -324,13 +453,9 @@ export default function ChatPage() {
             </button>
             <strong>Chat</strong>
           </div>
-          
-          {/* Center Section - Model Selector */}
-          <div style={{ display: "flex", justifyContent: "center" }}>
-            <ModelSelector />
-          </div>
-          
-          {/* Right Section */}
+
+          <div style={{ display: "flex", justifyContent: "center" }}>{topBar}</div>
+
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
             <button
               onClick={() => setRightOpen(!rightOpen)}
@@ -350,140 +475,127 @@ export default function ChatPage() {
         </header>
 
         <div style={{ display: "flex", flex: 1 }}>
-          {/* Left Sidebar */}
+          {/* Left */}
           {leftOpen && (
             <aside style={{ width: 300, borderRight: "1px solid #334155", padding: 12, overflow: "auto", background: "#1e293b", color: "#e2e8f0" }}>
-              {left}
+              {leftPanel}
             </aside>
           )}
 
-          {/* Main Content */}
-          <main style={{ flex: 1, padding: 16, overflow: "auto", background: "#0f172a", color: "#e2e8f0", display: "flex", flexDirection: "column" }}>
-        {/* Chat Messages */}
-        <div style={{ flex: 1, overflow: "auto", padding: 16, border: "1px solid #334155", borderRadius: 8, marginBottom: 16 }}>
-          {currentSession?.messages.map((message) => (
-            <div
-              key={message.id}
-              style={{
-                marginBottom: 16,
-                padding: 12,
-                borderRadius: 8,
-                background: message.role === "user" ? "#1e293b" : "#0f172a",
-                border: "1px solid #334155",
-              }}
-            >
-              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
-                {message.role === "user" ? "You" : "Assistant"} • {message.timestamp.toLocaleTimeString()}
-              </div>
-              <div style={{ whiteSpace: "pre-wrap", color: "#e2e8f0" }}>{message.content}</div>
-              {message.files && message.files.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Attached files:</div>
-                  {message.files.map((file, index) => (
-                    <div key={index} style={{ fontSize: 12, color: "#94a3b8" }}>
-                      📎 {file.name}
+          {/* Main */}
+          <main style={{ flex: 1, display: "flex", flexDirection: "column", padding: 16, background: "#0f172a", color: "#e2e8f0" }}>
+            <div style={{ flex: 1, overflow: "auto", padding: 12, border: "1px solid #334155", borderRadius: 8 }}>
+              {(currentSession?.messages ?? []).map((m) => (
+                <div key={m.id} style={{ marginBottom: 16 }}>
+                  <div
+                    style={{
+                      padding: 12,
+                      borderRadius: 8,
+                      background: m.role === "user" ? "#1e293b" : "#0f172a",
+                      border: "1px solid #334155",
+                      maxWidth: 920,
+                    }}
+                  >
+                    <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
+                      {m.role === "user" ? "You" : "Assistant"} • {new Date(m.timestamp).toLocaleTimeString()}
+                    </div>
+                    <div style={{ whiteSpace: "pre-wrap", color: "#e2e8f0" }}>{m.content}</div>
+
+                    {m.files && m.files.length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Attached files:</div>
+                        {m.files.map((f, idx) => (
+                          <div key={idx} style={{ fontSize: 12, color: "#94a3b8" }}>
+                            📎 {f.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* usage meta */}
+                    {m.role === "assistant" && m.meta && <div>{renderUsageLine(m.meta)}</div>}
+                  </div>
+                </div>
+              ))}
+              {isLoading && <div style={{ padding: 12, color: "#94a3b8" }}>Assistant is typing…</div>}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Composer */}
+            <div style={{ marginTop: 12, borderTop: "1px solid #1f2a3a", paddingTop: 12 }}>
+              {attachedFiles.length > 0 && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                  {attachedFiles.map((f, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", background: "#1e293b", borderRadius: 6 }}>
+                      <span style={{ color: "#e2e8f0" }}>📎</span>
+                      <span style={{ color: "#e2e8f0", fontSize: 13 }}>{f.name}</span>
+                      <button onClick={() => removeFile(i)} style={{ background: "transparent", border: "none", color: "#ef4444", cursor: "pointer" }}>
+                        ×
+                      </button>
                     </div>
                   ))}
                 </div>
               )}
-            </div>
-          ))}
-          {isLoading && (
-            <div style={{ padding: 12, textAlign: "center", color: "#94a3b8" }}>
-              Assistant is typing...
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
 
-        {/* Message Input */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {/* Attached Files */}
-          {attachedFiles.length > 0 && (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {attachedFiles.map((file, index) => (
-                <div
-                  key={index}
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ minWidth: 40 }}>
+                  <FileDrop onFile={handleFileAttach} accept=".txt,.pdf,.png,.jpg,.jpeg,.tif,.tiff,.docx,.doc" label="📎" />
+                </div>
+                <textarea
+                  value={messageInput}
+                  onChange={(e) => setMessageInput(e.target.value)}
+                  onKeyDown={handleKeyPress}
+                  placeholder="Type your message… (Shift+Enter for newline)"
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                    padding: "4px 8px",
-                    background: "#1e293b",
-                    border: "1px solid #334155",
-                    borderRadius: 4,
-                    fontSize: 12,
+                    flex: 1,
+                    minHeight: 56,
+                    maxHeight: 200,
+                    resize: "vertical",
+                    padding: 12,
+                    borderRadius: 8,
+                    background: "#0f172a",
                     color: "#e2e8f0",
+                    border: "1px solid #334155",
                   }}
-                >
-                  <span>📎</span>
-                  <span>{file.name}</span>
+                />
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <button
-                    onClick={() => removeFile(index)}
+                    onClick={sendMessage}
+                    disabled={isLoading || (!messageInput.trim() && attachedFiles.length === 0)}
                     style={{
-                      background: "none",
-                      border: "none",
-                      color: "#ef4444",
-                      cursor: "pointer",
-                      fontSize: 12,
+                      padding: "8px 12px",
+                      borderRadius: 8,
+                      border: "1px solid #334155",
+                      background: "#1e293b",
+                      color: "#e2e8f0",
+                      cursor: isLoading ? "not-allowed" : "pointer",
                     }}
                   >
-                    ×
+                    {isLoading ? "Sending…" : "Send"}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      // quick save session title
+                      if (!currentSessionId) return;
+                      const title = prompt("Save chat as (title):", sessions.find((x) => x.id === currentSessionId)?.title ?? "");
+                      if (!title) return;
+                      renameSession(currentSessionId, title);
+                      showSuccess("Saved", "Chat renamed.");
+                    }}
+                    style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#94a3b8" }}
+                  >
+                    Save Title
                   </button>
                 </div>
-              ))}
+              </div>
             </div>
-          )}
-
-          {/* Input Area */}
-          <div style={{ display: "flex", gap: 8 }}>
-            <div style={{ minWidth: 40, height: 40 }}>
-              <FileDrop
-                onFile={handleFileAttach}
-                accept=".txt,.pdf,.png,.jpg,.jpeg,.tif,.tiff,.docx,.doc"
-                label="📎"
-              />
-            </div>
-            <textarea
-              value={messageInput}
-              onChange={(e) => setMessageInput(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Type your message..."
-              style={{
-                flex: 1,
-                padding: 12,
-                border: "1px solid #334155",
-                borderRadius: 8,
-                background: "#0f172a",
-                color: "#e2e8f0",
-                resize: "vertical",
-                minHeight: 40,
-                maxHeight: 120,
-              }}
-            />
-            <button
-              onClick={sendMessage}
-              disabled={isLoading || (!messageInput.trim() && attachedFiles.length === 0)}
-              style={{
-                padding: "8px 16px",
-                border: "1px solid #334155",
-                borderRadius: 8,
-                background: "#1e293b",
-                color: "#e2e8f0",
-                cursor: isLoading ? "not-allowed" : "pointer",
-                opacity: isLoading ? 0.5 : 1,
-              }}
-            >
-              Send
-            </button>
-          </div>
-        </div>
           </main>
 
-          {/* Right Sidebar */}
+          {/* Right */}
           {rightOpen && (
-            <aside style={{ width: 340, borderLeft: "1px solid #334155", padding: 12, overflow: "auto", background: "#1e293b", color: "#e2e8f0" }}>
-              {right}
+            <aside style={{ width: 360, borderLeft: "1px solid #334155", padding: 12, overflow: "auto", background: "#1e293b", color: "#e2e8f0" }}>
+              {rightPanel}
             </aside>
           )}
         </div>

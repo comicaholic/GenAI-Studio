@@ -90,8 +90,6 @@ def get_groq_models():
     
     key = os.getenv("GROQ_API_KEY")
     print(f"Getting Groq models, API key present: {bool(key)}")
-    if not key:
-        return {"warning": "GROQ_API_KEY not set; showing local models only."}, []
 
     url = "https://api.groq.com/openai/v1/models"
     headers = {"Authorization": f"Bearer {key}"}
@@ -132,10 +130,10 @@ def get_groq_models():
         print(f"Response status: {e.response.status_code}")
         print(f"Response text: {e.response.text}")
         # Keep the app usable and surface a clear message in the UI
-        return {"error": f"Groq models fetch failed: {e}. Endpoint: {url}"}, []
+        
     except Exception as e:
         print(f"Groq models API error: {e}")
-        return {"error": f"Groq models fetch failed: {e}"}, []
+        
 
 def scan_models_dir():
     from app.services.config import load_config
