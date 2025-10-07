@@ -7,17 +7,40 @@ export default function PresetManager({
   onPresetChange,
   autoApplyOnMount = false,
   presetStore,
+  currentContent = "",
+  currentParameters,
+  currentMetrics,
 }: { 
-  onPresetChange: (preset: { title: string; body: string; id: string }) => void;
+  onPresetChange: (preset: { title: string; body: string; id: string; parameters?: Preset['parameters']; metrics?: any }) => void;
   autoApplyOnMount?: boolean;
   presetStore: PresetStore;
+  currentContent?: string;
+  currentParameters?: Preset['parameters'];
+  currentMetrics?: any;
 }) {
   const [presets, setPresets] = useState<Preset[]>(presetStore.getPresets());
-  const [selected, setSelected] = useState("default");
+  const [selected, setSelected] = useState(() => {
+    // Try to restore last selected preset from localStorage
+    const lastSelected = localStorage.getItem(`preset-selected-${presetStore.constructor.name}`);
+    return lastSelected || "default";
+  });
+  
   const current = useMemo(() => {
     const found = presets.find((p) => p.title === selected);
     return found ?? presets[0] ?? { id: "preset-empty", title: "(empty)", body: "" };
   }, [presets, selected]);
+
+  // Track if current content differs from selected preset
+  const hasChanges = useMemo(() => {
+    if (selected === "__new__" || selected === "__import__") return false;
+    const currentPreset = presets.find(p => p.title === selected);
+    if (!currentPreset) return false;
+    
+    const contentChanged = currentContent !== currentPreset.body;
+    const paramsChanged = currentParameters && JSON.stringify(currentParameters) !== JSON.stringify(currentPreset.parameters);
+    const metricsChanged = currentMetrics && JSON.stringify(currentMetrics) !== JSON.stringify(currentPreset.metrics);
+    return contentChanged || paramsChanged || metricsChanged;
+  }, [selected, currentContent, currentParameters, currentMetrics, presets]);
 
   const [mode, setMode] = useState<Mode>("normal");
   const [newTitle, setNewTitle] = useState("");
@@ -38,31 +61,122 @@ export default function PresetManager({
   // Only apply preset on mount if explicitly enabled
   useEffect(() => {
     if (!autoApplyOnMount) return;
-    onPresetChange(current);
+    onPresetChange({
+      title: current.title,
+      body: current.body,
+      id: current.id,
+      parameters: current.parameters,
+      metrics: current.metrics
+    });
     // run once on mount; don't depend on current.id
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Handle explicit preset selection (not tab switching)
   const handlePresetChange = (newPresetTitle: string) => {
+    // Handle virtual options
+    if (newPresetTitle === "__new__") {
+      setMode("createNew");
+      setNewTitle("");
+      return;
+    }
+    if (newPresetTitle === "__import__") {
+      setImportModal(true);
+      return;
+    }
+
     setSelected(newPresetTitle);
+    // Save selection to localStorage for persistence
+    localStorage.setItem(`preset-selected-${presetStore.constructor.name}`, newPresetTitle);
+    
     // When user explicitly selects a preset, notify parent
     const newPreset = presets.find(p => p.title === newPresetTitle) ?? current;
-    if (newPreset) onPresetChange(newPreset);
+    if (newPreset) {
+      onPresetChange({
+        title: newPreset.title,
+        body: newPreset.body,
+        id: newPreset.id,
+        parameters: newPreset.parameters,
+        metrics: newPreset.metrics
+      });
+    }
+  };
+
+  // Save changes to current preset
+  const saveCurrentPreset = () => {
+    if (selected === "__new__" || selected === "__import__") return;
+    
+    const currentPreset = presets.find(p => p.title === selected);
+    if (!currentPreset) return;
+
+    const updatedPreset = {
+      ...currentPreset,
+      body: currentContent,
+      parameters: currentParameters || currentPreset.parameters,
+      metrics: currentMetrics || currentPreset.metrics,
+      updatedAt: Date.now()
+    };
+
+    presetStore.updatePreset(currentPreset.id, {
+      title: updatedPreset.title,
+      body: updatedPreset.body,
+      parameters: updatedPreset.parameters,
+      metrics: updatedPreset.metrics
+    });
+    
+    // Refresh presets
+    setPresets(presetStore.getPresets());
   };
 
   const commit = () => {
-    // This would commit changes to the current preset
-    // For now, just a placeholder since we're not managing text here
+    saveCurrentPreset();
+  };
+
+  const revert = () => {
+    if (!hasChanges) return;
+    
+    // Revert to the original preset values
+    const currentPreset = presets.find(p => p.title === selected);
+    if (!currentPreset) return;
+    
+    // Notify parent to revert to original values
+    onPresetChange({
+      title: currentPreset.title,
+      body: currentPreset.body,
+      id: currentPreset.id,
+      parameters: currentPreset.parameters,
+      metrics: currentPreset.metrics
+    });
   };
 
   const saveAsNew = () => {
     if (!newTitle.trim()) return;
     const t = newTitle.trim();
     const id = "preset-" + t.toLowerCase().replace(/\s+/g, "-");
-    presetStore.savePreset({ id, title: t, body: current.body });
+    
+    // Save the new preset with current values (including uncommitted changes)
+    presetStore.savePreset({ 
+      id, 
+      title: t, 
+      body: currentContent,
+      parameters: currentParameters,
+      metrics: currentMetrics
+    });
+    
     setPresets(presetStore.getPresets());
-    handlePresetChange(t);
+    // Switch to the new preset and apply it immediately (since it contains current values)
+    setSelected(t);
+    localStorage.setItem(`preset-selected-${presetStore.constructor.name}`, t);
+    
+    // Apply the new preset immediately since it contains the current values
+    onPresetChange({
+      title: t,
+      body: currentContent,
+      id: id,
+      parameters: currentParameters,
+      metrics: currentMetrics
+    });
+    
     setMode("normal");
     setNewTitle("");
   };
@@ -189,6 +303,62 @@ export default function PresetManager({
                 ))}
               </optgroup>
             </select>
+            <button
+              onClick={commit}
+              disabled={!hasChanges}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: hasChanges ? "1px solid #16a34a" : "1px solid #334155",
+                background: hasChanges ? "#16a34a" : "#1e293b",
+                color: hasChanges ? "#fff" : "#94a3b8",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: hasChanges ? "pointer" : "not-allowed",
+                transition: "all 0.2s ease",
+                opacity: hasChanges ? 1 : 0.6,
+              }}
+              onMouseEnter={(e) => {
+                if (hasChanges) {
+                  e.currentTarget.style.background = "#15803d";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (hasChanges) {
+                  e.currentTarget.style.background = "#16a34a";
+                }
+              }}
+            >
+              Commit
+            </button>
+            <button
+              onClick={revert}
+              disabled={!hasChanges}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: hasChanges ? "1px solid #ef4444" : "1px solid #334155",
+                background: hasChanges ? "#ef4444" : "#1e293b",
+                color: hasChanges ? "#fff" : "#94a3b8",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: hasChanges ? "pointer" : "not-allowed",
+                transition: "all 0.2s ease",
+                opacity: hasChanges ? 1 : 0.6,
+              }}
+              onMouseEnter={(e) => {
+                if (hasChanges) {
+                  e.currentTarget.style.background = "#dc2626";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (hasChanges) {
+                  e.currentTarget.style.background = "#ef4444";
+                }
+              }}
+            >
+              Revert
+            </button>
           </>
         ) : (
           <>
@@ -212,7 +382,7 @@ export default function PresetManager({
               onClick={saveAsNew}
               style={{ border: "1px solid #16a34a", padding: "6px 10px", borderRadius: 8, background: "#16a34a", color: "#fff" }}
             >
-              Save new preset
+              Save
             </button>
           </>
         )}
@@ -234,21 +404,12 @@ export default function PresetManager({
       {mode === "normal" && (
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           <button
-            disabled={true} // Always disabled since we're not managing text here
-            onClick={commit}
-            style={{
-              opacity: 0.6,
-              border: "1px solid #334155",
-              padding: "6px 10px",
-              borderRadius: 8,
-              background: "#1e293b",
-              color: "#e2e8f0",
-            }}
-          >
-            Commit changes
-          </button>
-          <button
             onClick={() => {
+              // First commit any changes to the current preset
+              if (hasChanges) {
+                commit();
+              }
+              // Then open save as new dialog
               setMode("saveAs");
               setNewTitle("");
             }}

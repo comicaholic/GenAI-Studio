@@ -1,7 +1,27 @@
 {
   "paths": {
-    "source_dir": "data/source",
-    "reference_dir": "data/reference",
-    "context_dir": "data/context"
+    "ocrSource": "data\\source",
+    "ocrReference": "data\\reference",
+    "promptSource": "data\\source",
+    "promptReference": "data\\reference",
+    "chatDownloadPath": "data\\downloads"
+  },
+  "ui": {
+    "theme": "dark",
+    "defaultLandingPage": "/",
+    "backgroundStateManagement": true
+  },
+  "presets": {
+    "ocr": [],
+    "prompt": [],
+    "chat": []
+  },
+  "groq": {
+    "apiKey": "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",
+    "connected": true
+  },
+  "huggingface": {
+    "token": "",
+    "connected": false
   }
 }

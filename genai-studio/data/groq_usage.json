@@ -16,5 +16,95 @@
     "cost_usd": 0.00083,
     "request_duration_ms": 1000,
     "success": true
+  },
+  {
+    "id": "groq_1759808900727",
+    "model": "openai/gpt-oss-20b",
+    "timestamp": "2025-10-07T14:48:20.727884",
+    "tokens_used": 625,
+    "cost_usd": 0.0003125,
+    "request_duration_ms": 1030,
+    "success": true
+  },
+  {
+    "id": "groq_1759817351599",
+    "model": "gemma2-9b-it",
+    "timestamp": "2025-10-07T17:09:11.599107",
+    "tokens_used": 1660,
+    "cost_usd": 0.00083,
+    "request_duration_ms": 1037,
+    "success": true
+  },
+  {
+    "id": "groq_1759817437735",
+    "model": "whisper-large-v3-turbo",
+    "timestamp": "2025-10-07T17:10:37.735811",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 295,
+    "success": false
+  },
+  {
+    "id": "groq_1759817451951",
+    "model": "llama-3.1-8b-instant",
+    "timestamp": "2025-10-07T17:10:51.951577",
+    "tokens_used": 1797,
+    "cost_usd": 0.0008985,
+    "request_duration_ms": 1118,
+    "success": true
+  },
+  {
+    "id": "groq_1759817602643",
+    "model": "llama-3.1-8b-instant",
+    "timestamp": "2025-10-07T17:13:22.643705",
+    "tokens_used": 1797,
+    "cost_usd": 0.0008985,
+    "request_duration_ms": 1180,
+    "success": true
+  },
+  {
+    "id": "groq_1759822144710",
+    "model": "gemma2-9b-it",
+    "timestamp": "2025-10-07T18:29:04.710780",
+    "tokens_used": 1639,
+    "cost_usd": 0.0008194999999999999,
+    "request_duration_ms": 952,
+    "success": true
+  },
+  {
+    "id": "groq_1759822956315",
+    "model": "gemma2-9b-it",
+    "timestamp": "2025-10-07T18:42:36.315510",
+    "tokens_used": 1660,
+    "cost_usd": 0.00083,
+    "request_duration_ms": 989,
+    "success": true
+  },
+  {
+    "id": "groq_1759822966873",
+    "model": "gemma2-9b-it",
+    "timestamp": "2025-10-07T18:42:46.873394",
+    "tokens_used": 1660,
+    "cost_usd": 0.00083,
+    "request_duration_ms": 976,
+    "success": true
+  },
+  {
+    "id": "groq_1759823132618",
+    "model": "gemma2-9b-it",
+    "timestamp": "2025-10-07T18:45:32.618971",
+    "tokens_used": 1660,
+    "cost_usd": 0.00083,
+    "request_duration_ms": 999,
+    "success": true
+  },
+  {
+    "id": "groq_1759823142574",
+    "model": "gemma2-9b-it",
+    "timestamp": "2025-10-07T18:45:42.574855",
+    "tokens_used": 1660,
+    "cost_usd": 0.00083,
+    "request_duration_ms": 962,
+    "success": true
   }
 ]

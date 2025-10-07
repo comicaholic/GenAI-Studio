@@ -79,11 +79,20 @@ def load_config() -> Dict:
     return cfg
 
 def save_config(cfg: Dict) -> None:
-    # always save relative when possible
-    to_save = {"paths": {}}
-    for k, v in cfg.get("paths", {}).items():
-        rel_or_abs = _to_rel_for_save(_to_abs(v))
-        to_save["paths"][k] = rel_or_abs
+    # Save all settings, not just paths
+    to_save = {}
+    
+    # Handle paths with relative conversion
+    if "paths" in cfg:
+        to_save["paths"] = {}
+        for k, v in cfg.get("paths", {}).items():
+            rel_or_abs = _to_rel_for_save(_to_abs(v))
+            to_save["paths"][k] = rel_or_abs
+    
+    # Save other settings as-is
+    for key, value in cfg.items():
+        if key != "paths":
+            to_save[key] = value
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with CONFIG_PATH.open("w", encoding="utf-8") as f:

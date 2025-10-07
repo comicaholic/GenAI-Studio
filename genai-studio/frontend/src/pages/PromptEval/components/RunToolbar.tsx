@@ -29,8 +29,7 @@ export default function RunToolbar({
     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
       {/* Model Selector */}
       <div style={{ position: 'relative' }}>
-        <button
-          onClick={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
+        <button className="btn h-10 min-w-[96px]" onClick={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
           style={{
             background: '#334155',
             border: '1px solid #475569',
@@ -89,8 +88,7 @@ export default function RunToolbar({
       </div>
 
       {/* Run Button */}
-      <button
-        onClick={onRun}
+      <button className="btn h-10 min-w-[96px]" onClick={onRun}
         disabled={isRunning || !selectedModel}
         style={{
           background: isRunning || !selectedModel ? '#6b7280' : '#3b82f6',
@@ -105,8 +103,7 @@ export default function RunToolbar({
           alignItems: 'center',
           gap: '8px',
           transition: 'background 0.2s ease',
-        }}
-      >
+        }}>
         {isRunning ? (
           <>
             <div style={{

@@ -45,7 +45,7 @@ export default function PromptEditor({ value, onChange }: PromptEditorProps) {
         alignItems: 'center',
         marginBottom: '12px',
       }}>
-        <h3 style={{
+        <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100" style={{
           color: '#e2e8f0',
           margin: 0,
           fontSize: '14px',
@@ -61,8 +61,7 @@ export default function PromptEditor({ value, onChange }: PromptEditorProps) {
           }}>
             {tokenCount} tokens
           </span>
-          <button
-            onClick={handleCopy}
+          <button className="btn h-10 min-w-[96px]" onClick={handleCopy}
             style={{
               background: 'none',
               border: 'none',
@@ -86,14 +85,13 @@ export default function PromptEditor({ value, onChange }: PromptEditorProps) {
         </div>
       </div>
 
-      <textarea
-        value={localValue}
+      <textarea className="input text-sm min-h-40" value={localValue}
         onChange={handleChange}
         placeholder="Enter your prompt here..."
         style={{
           width: '100%',
-          minHeight: '120px',
-          maxHeight: '300px',
+          minHeight: '200px',
+          maxHeight: '480px',
           background: '#0f172a',
           border: '1px solid #334155',
           borderRadius: '8px',

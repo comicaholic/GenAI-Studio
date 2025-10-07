@@ -1,5 +1,6 @@
 // frontend/src/components/TopBar/ModelSelector.tsx
 import React from "react";
+import Switch from "@/components/ui/Switch";
 import axios from "axios";
 import { useModel } from "@/context/ModelContext";
 
@@ -146,7 +147,9 @@ export default function ModelSelector() {
         }}
         disabled={!selected}
       >
-        ⏏
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>
+        </svg>
       </button>
 
       <div ref={rootRef} style={styles.root}>
@@ -167,7 +170,7 @@ export default function ModelSelector() {
 
         {/* Popover */}
         {open && (
-          <div style={styles.popover}>
+          <div style={styles.popover} className="rb-bounce">
             <div style={styles.header}>
               <input
                 ref={inputRef}
@@ -176,14 +179,10 @@ export default function ModelSelector() {
                 onChange={e => setQuery(e.target.value)}
                 style={styles.search}
               />
-              <label style={styles.chkLabel}>
-                <input
-                  type="checkbox"
-                  checked={includeGroq}
-                  onChange={e => setIncludeGroq(e.target.checked)}
-                />
-                <span style={{ marginLeft: 6 }}>include Groq</span>
-              </label>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: "#cbd5e1" }}>Groq</span>
+                <Switch checked={includeGroq} onChange={setIncludeGroq} color="#10b981" />
+              </div>
             </div>
 
             {warning && <div style={styles.warning}>{warning}</div>}
@@ -209,6 +208,7 @@ export default function ModelSelector() {
                         setSelected(m); 
                         setOpen(false); 
                       }}
+                      className="rb-hover-lift rb-press"
                     >
                       <div style={styles.modelName}>{(m.label && m.label.trim()) ? m.label : prettifyModelId(m.id)}</div>
                       <div style={styles.modelId}>{m.id || ""}</div>
@@ -235,6 +235,7 @@ export default function ModelSelector() {
                         setSelected(m); 
                         setOpen(false); 
                       }}
+                      className="rb-hover-lift rb-press"
                     >
                       <div style={styles.modelName}>{(m.label && m.label.trim()) ? m.label : prettifyModelId(m.id)}</div>
                       <div style={styles.modelId}>{m.id || ""}</div>
@@ -252,25 +253,7 @@ export default function ModelSelector() {
         )}
       </div>
       
-      {/* Warning message */}
-      {warning && (
-        <div style={{
-          position: "absolute",
-          top: "100%",
-          left: 0,
-          right: 0,
-          background: "#fef3c7",
-          color: "#92400e",
-          padding: "8px 12px",
-          fontSize: "12px",
-          borderRadius: "4px",
-          marginTop: "4px",
-          zIndex: 1000,
-          border: "1px solid #f59e0b"
-        }}>
-          {warning}
-        </div>
-      )}
+      {/* Suppress noisy warning banner in selector; surface errors elsewhere if needed */}
 
     </div>
   );
@@ -287,26 +270,30 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     border: "1px solid #334155",
     background: "#1e293b",
     color: "#e2e8f0",
     fontSize: 16,
+    transition: "all 0.2s ease",
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)"
   },
   root: { position: "relative", display: "inline-block" },
   button: {
     display: "inline-flex",
     alignItems: "center",
-    gap: 8,
-    padding: "8px 12px",
+    gap: 12,
+    padding: "12px 16px",
     minWidth: 400,
-    borderRadius: 10,
+    borderRadius: 12,
     border: "1px solid #334155",
-    background: "#0b1220",
+    background: "#0f172a",
     color: "#e2e8f0",
     cursor: "pointer",
+    transition: "all 0.2s ease",
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)"
   },
   buttonText: {
     overflow: "hidden",
@@ -314,10 +301,12 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: "ellipsis",
     flex: 1,
     textAlign: "left",
+    fontSize: 14,
+    fontWeight: 500
   },
   popover: {
     position: "absolute",
-    top: "calc(100% + 8px)",
+    top: "calc(100% + 12px)",
     left: 0,
     zIndex: 1000,
     width: 600,
@@ -325,44 +314,53 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "auto",
     background: "#0b1220",
     color: "#e2e8f0",
-    border: "1px solid #1f2937",
-    borderRadius: 12,
-    boxShadow: "0 12px 40px rgba(0,0,0,.5)",
+    border: "1px solid #334155",
+    borderRadius: 16,
+    boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
   },
   header: {
     display: "grid",
     gridTemplateColumns: "1fr auto",
-    gap: 8,
+    gap: 12,
     alignItems: "center",
-    padding: "10px 12px",
-    borderBottom: "1px solid #1f2937",
+    padding: "16px 20px",
+    borderBottom: "1px solid #334155",
   },
   search: {
-    padding: "8px 10px",
+    padding: "10px 12px",
     border: "1px solid #334155",
-    borderRadius: 8,
-    background: "#0f172a",
+    borderRadius: 10,
+    background: "#1e293b",
     color: "#e2e8f0",
     outline: "none",
+    fontSize: 14,
+    transition: "all 0.2s ease"
   },
   chkLabel: { display: "flex", alignItems: "center", fontSize: 12, color: "#cbd5e1" },
-  warning: { padding: "8px 12px", color: "#fbbf24", borderBottom: "1px solid #1f2937" },
-  list: { padding: "6px 0" },
-  section: { padding: "8px 12px", fontSize: 12, color: "#93a2bd", textTransform: "uppercase" },
+  warning: { padding: "12px 16px", color: "#fbbf24", borderBottom: "1px solid #334155", fontSize: 13 },
+  list: { padding: "8px 0" },
+  section: { 
+    padding: "12px 20px", 
+    fontSize: 12, 
+    color: "#94a3b8", 
+    textTransform: "uppercase",
+    fontWeight: 600,
+    letterSpacing: "0.5px"
+  },
   row: { 
-    padding: "12px 16px", 
+    padding: "16px 20px", 
     cursor: "pointer", 
     display: "flex", 
     flexDirection: "column",
-    gap: 4,
-    borderBottom: "1px solid #1f2937",
-    transition: "background-color 0.2s"
+    gap: 6,
+    borderBottom: "1px solid #334155",
+    transition: "background-color 0.2s ease"
   },
   rowHover: {
     backgroundColor: "#1e293b"
   },
   modelName: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: 600,
     color: "#e2e8f0"
   },
@@ -372,11 +370,20 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "monospace"
   },
   meta: { 
-    fontSize: 11, 
+    fontSize: 12, 
     color: "#64748b",
     display: "flex",
-    gap: 8,
-    marginTop: 2
+    gap: 12,
+    marginTop: 4
   },
-  empty: { padding: "20px 12px", fontSize: 14, color: "#9ca3af", textAlign: "center" },
+  empty: { 
+    padding: "40px 20px", 
+    fontSize: 14, 
+    color: "#94a3b8", 
+    textAlign: "center",
+    background: "#1e293b",
+    margin: "8px 20px",
+    borderRadius: 12,
+    border: "1px solid #334155"
+  },
 };

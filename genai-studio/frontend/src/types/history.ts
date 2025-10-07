@@ -34,6 +34,9 @@ export interface SavedEvaluation {
   results?: Record<string, any>;
   startedAt: string;
   finishedAt?: string;
+  automationId?: string;
+  runId?: string;
+  promptId?: string;
 }
 
 export interface SavedChat {
@@ -45,6 +48,9 @@ export interface SavedChat {
   messagesSummary?: string;
   usedText?: UsedText;
   lastActivityAt: string;
+  automationId?: string;
+  runId?: string;
+  promptId?: string;
 }
 
 export interface EvaluationSelection {
@@ -58,5 +64,35 @@ export interface EvaluationSelection {
   usedText: UsedText;
   files: FileInfo;
   timestamp: string;
+}
+
+export interface AutomationRun {
+  id: string;
+  runId: string;
+  runName: string;
+  type: 'ocr' | 'prompt' | 'chat';
+  title: string;
+  model: ModelInfo;
+  parameters: Record<string, any>;
+  metrics?: string[];
+  usedText: UsedText;
+  files?: FileInfo;
+  results?: Record<string, any>;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+export interface SavedAutomation {
+  id: string;
+  name: string;
+  title: string;
+  type: 'ocr' | 'prompt' | 'chat';
+  model: ModelInfo;
+  runs: AutomationRun[];
+  status: 'pending' | 'running' | 'completed' | 'error';
+  createdAt: string;
+  completedAt?: string;
+  error?: string;
 }
 

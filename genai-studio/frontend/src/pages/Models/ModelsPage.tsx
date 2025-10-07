@@ -79,29 +79,64 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
         width: "90%",
         maxWidth: 1200,
         height: "80%",
-        background: "#0f172a",
+        background: "#0b1220",
         border: "1px solid #334155",
-        borderRadius: 12,
+        borderRadius: 16,
         display: "flex",
         flexDirection: "column",
+        boxShadow: "0 20px 60px rgba(0, 0, 0, 0.5)"
       }}>
         {/* Header */}
-      <div style={{
-          padding: 16,
+        <div style={{
+          padding: 24,
           borderBottom: "1px solid #334155",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
         }}>
-          <h2 style={{ margin: 0, color: "#e2e8f0" }}>Discover Models</h2>
-          <button
-            onClick={onClose}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ 
+              width: 40, 
+              height: 40, 
+              background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
+              borderRadius: 10,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center"
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                <path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/>
+              </svg>
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "#e2e8f0" }}>Discover Models</h2>
+              <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Find and download AI models from the community</p>
+            </div>
+          </div>
+          <button onClick={onClose}
             style={{
-              background: "none",
-              border: "none",
+              background: "transparent",
+              border: "1px solid #334155",
+              borderRadius: 8,
               color: "#94a3b8",
-              fontSize: 24,
+              fontSize: 20,
               cursor: "pointer",
+              width: 36,
+              height: 36,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 0.2s ease"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#1e293b";
+              e.currentTarget.style.borderColor = "#475569";
+              e.currentTarget.style.color = "#e2e8f0";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.borderColor = "#334155";
+              e.currentTarget.style.color = "#94a3b8";
             }}
           >
             ×
@@ -113,8 +148,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
           {/* Left Panel - Search */}
           <div style={{ width: "50%", padding: 16, borderRight: "1px solid #334155", overflow: "auto" }}>
             <div style={{ marginBottom: 16 }}>
-          <input
-                type="text"
+          <input className="input h-10 text-sm" type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search models..."
@@ -128,8 +162,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                   marginBottom: 12,
                 }}
               />
-              <select
-                value={sortBy}
+              <select className="select h-10 text-sm" value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 style={{
                   width: "100%",
@@ -148,7 +181,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
 
             {/* Search Results */}
             <div>
-              <h3 style={{ color: "#e2e8f0", marginBottom: 12 }}>Search Results</h3>
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100" style={{ color: "#e2e8f0", marginBottom: 12 }}>Search Results</h3>
               {isSearching && <div style={{ color: "#94a3b8", textAlign: "center" }}>Searching...</div>}
               {searchResults.map((model) => (
                 <div
@@ -199,7 +232,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
           <div style={{ width: "50%", padding: 16, overflow: "auto" }}>
             {selectedModel ? (
               <div>
-                <h3 style={{ color: "#e2e8f0", marginBottom: 16 }}>Model Information</h3>
+                <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100" style={{ color: "#e2e8f0", marginBottom: 16 }}>Model Information</h3>
                 <div style={{ marginBottom: 12 }}>
                   <strong style={{ color: "#e2e8f0" }}>Name:</strong>
                   <div style={{ color: "#94a3b8", marginTop: 4 }}>{selectedModel.label}</div>
@@ -249,8 +282,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                     </div>
                   </div>
                 )}
-                <button
-                  style={{
+                <button className="btn h-10 min-w-[96px]" style={{
                     padding: "8px 16px",
                     background: "#1e293b",
                     border: "1px solid #334155",
@@ -438,31 +470,74 @@ export default function ModelsPage() {
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
+    <div style={{ display: "flex", height: "100vh", background: "#0b1220" }}>
       <LeftRail />
-      <div style={{ padding: 24, marginLeft: 56, background: "#0f172a", minHeight: "100vh", color: "#e2e8f0", flex: 1, overflow: "auto" }}>
-        <h1 style={{ margin: "0 0 24px 0", color: "#e2e8f0" }}>My Models</h1>
+      <div style={{ padding: 24, marginLeft: 80, background: "#0b1220", minHeight: "100vh", color: "#e2e8f0", flex: 1, overflow: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32 }}>
+          <div style={{ 
+            width: 48, 
+            height: 48, 
+            background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
+            borderRadius: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "0 4px 12px rgba(59, 130, 246, 0.3)"
+          }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="white">
+              <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+            </svg>
+          </div>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: "#e2e8f0" }}>My Models</h1>
+            <p style={{ margin: 0, fontSize: 14, color: "#94a3b8" }}>Manage and discover AI models for your projects</p>
+          </div>
+        </div>
 
         {/* Directory Configuration */}
-        <div style={{ marginBottom: 32 }}>
-          <h2 style={{ color: "#e2e8f0", marginBottom: 12 }}>Models Directory</h2>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              type="text"
+        <div style={{ 
+          background: "#0f172a",
+          border: "1px solid #334155",
+          borderRadius: 16,
+          padding: 24,
+          marginBottom: 32,
+          boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <div style={{ 
+              width: 32, 
+              height: 32, 
+              background: "linear-gradient(135deg, #8b5cf6, #7c3aed)", 
+              borderRadius: 8,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center"
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                <path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/>
+              </svg>
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>Models Directory</h2>
+              <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Configure where your models are stored</p>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <input type="text"
               value={modelsDirectory}
               onChange={(e) => setModelsDirectory(e.target.value)}
               style={{
-                width: "400px",
+                flex: 1,
                 padding: 12,
                 border: "1px solid #334155",
                 borderRadius: 8,
                 background: "#1e293b",
                 color: "#e2e8f0",
+                fontSize: 14
               }}
             />
             <div ref={menuRef} style={{ position: "relative" }}>
-              <button
-                onClick={() => setShowMenu(!showMenu)}
+              <button onClick={() => setShowMenu(!showMenu)}
                 style={{
                   padding: "12px 16px",
                   border: "1px solid #334155",
@@ -470,6 +545,17 @@ export default function ModelsPage() {
                   background: "#1e293b",
                   color: "#e2e8f0",
                   cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  transition: "all 0.2s ease"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#334155";
+                  e.currentTarget.style.borderColor = "#475569";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "#1e293b";
+                  e.currentTarget.style.borderColor = "#334155";
                 }}
               >
                 ⋯
@@ -480,274 +566,337 @@ export default function ModelsPage() {
                     position: "absolute",
                     top: "100%",
                     right: 0,
-                    marginTop: 4,
+                    marginTop: 8,
                     minWidth: 200,
                     background: "#0b1220",
                     border: "1px solid #334155",
-                    borderRadius: 8,
-                    boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                    borderRadius: 12,
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
                     zIndex: 1000,
                     padding: 8,
                   }}
                 >
-                  <button
-                    onClick={() => {
+                  <button onClick={() => {
                       openFileExplorer();
                       setShowMenu(false);
                     }}
                     style={{
                       width: "100%",
-                      padding: "8px 12px",
+                      padding: "10px 12px",
                       border: "none",
                       background: "transparent",
                       color: "#e2e8f0",
                       cursor: "pointer",
                       textAlign: "left",
-                      borderRadius: 4,
+                      borderRadius: 6,
+                      fontSize: 13,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8
                     }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "#1e293b";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
-                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#1e293b"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                   >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/>
+                    </svg>
                     Browse Path
                   </button>
-                  <button
-                    onClick={() => {
+                  <button onClick={() => {
                       resetToDefault();
                       setShowMenu(false);
                     }}
                     style={{
                       width: "100%",
-                      padding: "8px 12px",
+                      padding: "10px 12px",
                       border: "none",
                       background: "transparent",
                       color: "#e2e8f0",
                       cursor: "pointer",
                       textAlign: "left",
-                      borderRadius: 4,
+                      borderRadius: 6,
+                      fontSize: 13,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8
                     }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "#1e293b";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
-                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#1e293b"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                   >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                    </svg>
                     Reset to Default
                   </button>
-                  <button
-                    onClick={() => {
+                  <button onClick={() => {
                       loadLocalModels();
                       setShowMenu(false);
                     }}
                     style={{
                       width: "100%",
-                      padding: "8px 12px",
+                      padding: "10px 12px",
                       border: "none",
                       background: "transparent",
                       color: "#e2e8f0",
                       cursor: "pointer",
                       textAlign: "left",
-                      borderRadius: 4,
+                      borderRadius: 6,
+                      fontSize: 13,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8
                     }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "#1e293b";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
-                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#1e293b"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                   >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/>
+                    </svg>
                     Refresh
                   </button>
-                  <button
-                    onClick={() => {
-                      openFileExplorer();
-                      setShowMenu(false);
-                    }}
-                    style={{
-                      width: "100%",
-                      padding: "8px 12px",
-                      border: "none",
-                      background: "transparent",
-                      color: "#e2e8f0",
-                      cursor: "pointer",
-                      textAlign: "left",
-                      borderRadius: 4,
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "#1e293b";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
-                    }}
-                  >
-                    Open in Explorer
-                  </button>
-        </div>
-      )}
+                </div>
+              )}
             </div>
-            <button
-              onClick={() => setIsDiscoverOpen(true)}
+            <button onClick={() => setIsDiscoverOpen(true)}
               style={{
                 padding: "12px 24px",
-                background: "#1e293b",
-                border: "1px solid #334155",
+                background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                border: "none",
                 borderRadius: 8,
-                color: "#e2e8f0",
+                color: "#fff",
                 cursor: "pointer",
-                fontSize: 16,
+                fontSize: 14,
+                fontWeight: 500,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                transition: "all 0.2s ease",
+                boxShadow: "0 2px 4px rgba(59, 130, 246, 0.3)"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-1px)";
+                e.currentTarget.style.boxShadow = "0 4px 8px rgba(59, 130, 246, 0.4)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = "0 2px 4px rgba(59, 130, 246, 0.3)";
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/>
+              </svg>
               Discover Models
             </button>
           </div>
         </div>
 
         {/* Models Table */}
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <h2 style={{ color: "#e2e8f0", margin: 0 }}>Downloaded Models</h2>
-            <input
-              type="text"
+        <div style={{ 
+          background: "#0f172a",
+          border: "1px solid #334155",
+          borderRadius: 16,
+          padding: 24,
+          boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ 
+                width: 32, 
+                height: 32, 
+                background: "linear-gradient(135deg, #10b981, #059669)", 
+                borderRadius: 8,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                  <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                </svg>
+              </div>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>Downloaded Models</h2>
+                <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>{filteredModels.length} models available</p>
+              </div>
+            </div>
+            <input type="text"
               placeholder="Filter models..."
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
               style={{
                 width: "300px",
-                padding: "8px 12px",
+                padding: "10px 12px",
                 border: "1px solid #334155",
-                borderRadius: 6,
+                borderRadius: 8,
                 background: "#1e293b",
                 color: "#e2e8f0",
                 fontSize: 14,
+                transition: "all 0.2s ease"
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = "#3b82f6";
+                e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = "#334155";
+                e.currentTarget.style.boxShadow = "none";
               }}
             />
           </div>
           {isLoading ? (
-            <div style={{ color: "#94a3b8", textAlign: "center", padding: 40 }}>
-              Loading models...
+            <div style={{ 
+              color: "#94a3b8", 
+              textAlign: "center", 
+              padding: 60,
+              background: "#1e293b",
+              borderRadius: 12,
+              border: "1px solid #334155"
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 500 }}>Loading models...</div>
+              <div style={{ fontSize: 13, marginTop: 8 }}>Scanning your models directory</div>
             </div>
           ) : filteredModels.length === 0 ? (
-            <div style={{ color: "#94a3b8", textAlign: "center", padding: 40 }}>
-              {localModels.length === 0 
-                ? "No models found. Use the Discover button to find and download models."
-                : "No models match your filter."
-              }
+            <div style={{ 
+              color: "#94a3b8", 
+              textAlign: "center", 
+              padding: 60,
+              background: "#1e293b",
+              borderRadius: 12,
+              border: "1px solid #334155"
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
+                {localModels.length === 0 
+                  ? "No models found"
+                  : "No models match your filter"
+                }
+              </div>
+              <div style={{ fontSize: 13 }}>
+                {localModels.length === 0 
+                  ? "Use the Discover button to find and download models."
+                  : "Try adjusting your search terms."
+                }
+              </div>
             </div>
           ) : (
-            <div style={{ overflow: "auto" }}>
+            <div style={{ overflow: "auto", borderRadius: 12, border: "1px solid #334155" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
+                <thead>
                   <tr style={{ background: "#1e293b" }}>
-                  <th style={{ width: 36, padding: 12, textAlign: "center", color: "#e2e8f0", border: "1px solid #334155" }}>
-                    <input
-                      type="checkbox"
-                      id="master-checkbox"
-                      checked={disabledIds.size === 0}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        if (disabledIds.size === 0) {
-                          // disable all rows **by key** (UI). Backend persistence will only include models with real ids.
-                          const allKeys = new Set(localModels.map(m => modelKey(m)));
-                          setDisabledIds(allKeys);
-                          persistEnabled(allKeys);
-                        } else {
-                          // enable all
-                          const empty = new Set<string>();
-                          setDisabledIds(empty);
-                          persistEnabled(empty);
-                        }
-                      }}
-                      title={disabledIds.size === 0 ? "Deselect All" : "Select All"}
-                    />
-                  </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th style={{ width: 50, padding: 16, textAlign: "center", color: "#e2e8f0", borderBottom: "1px solid #334155" }}>
+                      <input
+                        type="checkbox"
+                        id="master-checkbox"
+                        checked={disabledIds.size === 0}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          if (disabledIds.size === 0) {
+                            const allKeys = new Set(localModels.map(m => modelKey(m)));
+                            setDisabledIds(allKeys);
+                            persistEnabled(allKeys);
+                          } else {
+                            const empty = new Set<string>();
+                            setDisabledIds(empty);
+                            persistEnabled(empty);
+                          }
+                        }}
+                        title={disabledIds.size === 0 ? "Deselect All" : "Select All"}
+                        style={{ transform: "scale(1.2)" }}
+                      />
+                    </th>
+                    <th style={{ padding: 16, textAlign: "left", color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14, fontWeight: 600 }}>
                       Model
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th style={{ padding: 16, textAlign: "left", color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14, fontWeight: 600 }}>
                       Category
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th style={{ padding: 16, textAlign: "left", color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14, fontWeight: 600 }}>
                       Publisher
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th style={{ padding: 16, textAlign: "left", color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14, fontWeight: 600 }}>
                       Parameters
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th style={{ padding: 16, textAlign: "left", color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14, fontWeight: 600 }}>
                       Size
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th style={{ padding: 16, textAlign: "left", color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14, fontWeight: 600 }}>
                       Quantization
                     </th>
-                    <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", border: "1px solid #334155" }}>
+                    <th style={{ padding: 16, textAlign: "left", color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14, fontWeight: 600 }}>
                       Source
                     </th>
-            </tr>
-          </thead>
-          <tbody>
+                  </tr>
+                </thead>
+                <tbody>
                   {filteredModels.map((model, index) => {
                     const k = modelKey(model);
                     const modelChecked = !disabledIds.has(k);
-                    console.log(`Rendering checkbox for ${k}:`, modelChecked, 'disabledIds:', Array.from(disabledIds));
                     return (
-                  <tr key={k} style={{ background: index % 2 === 0 ? "#0f172a" : "#1e293b" }}>
-                    <td style={{ padding: 12, textAlign: "center", border: "1px solid #334155" }}>
-                      <input
-                        type="checkbox"
-                        id={`model-checkbox-${k}`}
-                        checked={modelChecked}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          console.log(`Checkbox clicked for ${k}, current checked:`, e.target.checked);
-                          toggleDisabled(k);
-                        }}
-                      />
-                    </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
-                        <div style={{ fontWeight: "bold" }}>{model.name || model.label}</div>
-                        <div style={{ fontSize: 12, color: "#94a3b8" }}>{model.id}</div>
-                      </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
-                        <span style={{
-                          padding: "4px 8px",
-                          borderRadius: 4,
-                          fontSize: 11,
-                          background: getCategoryColor(model.category || "Unknown"),
-                          color: "white"
-                        }}>
-                          {model.category || "Unknown"}
-                        </span>
-                      </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
-                        {model.publisher || "Unknown"}
-                      </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
-                        {model.params || "Unknown"}
-                      </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
-                        {model.size || "Unknown"}
-                      </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
-                        {model.quant || "N/A"}
-                      </td>
-                      <td style={{ padding: 12, color: "#e2e8f0", border: "1px solid #334155" }}>
-                        <span style={{
-                          padding: "2px 6px",
-                          borderRadius: 4,
-                          fontSize: 10,
-                          background: model.source === "groq" ? "#059669" : "#6b7280",
-                          color: "#fff",
-                        }}>
-                          {model.source === "groq" ? "Groq" : "Local"}
-                        </span>
-                  </td>
-                </tr>
+                      <tr key={k} style={{ 
+                        background: index % 2 === 0 ? "#0f172a" : "#1e293b",
+                        transition: "background-color 0.2s ease"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = "#334155";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = index % 2 === 0 ? "#0f172a" : "#1e293b";
+                      }}
+                      >
+                        <td style={{ padding: 16, textAlign: "center", borderBottom: "1px solid #334155" }}>
+                          <input
+                            type="checkbox"
+                            id={`model-checkbox-${k}`}
+                            checked={modelChecked}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              toggleDisabled(k);
+                            }}
+                            style={{ transform: "scale(1.2)" }}
+                          />
+                        </td>
+                        <td style={{ padding: 16, color: "#e2e8f0", borderBottom: "1px solid #334155" }}>
+                          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{model.name || model.label}</div>
+                          <div style={{ fontSize: 12, color: "#94a3b8", fontFamily: "monospace" }}>{model.id}</div>
+                        </td>
+                        <td style={{ padding: 16, color: "#e2e8f0", borderBottom: "1px solid #334155" }}>
+                          <span style={{
+                            padding: "6px 12px",
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 500,
+                            background: getCategoryColor(model.category || "Unknown"),
+                            color: "white"
+                          }}>
+                            {model.category || "Unknown"}
+                          </span>
+                        </td>
+                        <td style={{ padding: 16, color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14 }}>
+                          {model.publisher || "Unknown"}
+                        </td>
+                        <td style={{ padding: 16, color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14 }}>
+                          {model.params ? model.params.toLocaleString() : "Unknown"}
+                        </td>
+                        <td style={{ padding: 16, color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14 }}>
+                          {model.size || "Unknown"}
+                        </td>
+                        <td style={{ padding: 16, color: "#e2e8f0", borderBottom: "1px solid #334155", fontSize: 14 }}>
+                          {model.quant || "N/A"}
+                        </td>
+                        <td style={{ padding: 16, color: "#e2e8f0", borderBottom: "1px solid #334155" }}>
+                          <span style={{
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 500,
+                            background: model.source === "groq" ? "#059669" : "#6b7280",
+                            color: "#fff",
+                          }}>
+                            {model.source === "groq" ? "Groq" : "Local"}
+                          </span>
+                        </td>
+                      </tr>
                     );
                   })}
-          </tbody>
+                </tbody>
         </table>
             </div>
           )}

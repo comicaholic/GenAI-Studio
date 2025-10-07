@@ -1,6 +1,6 @@
 // frontend/src/services/history.ts
 import { api } from './api';
-import { SavedEvaluation, SavedChat, EvaluationSelection } from '@/types/history';
+import { SavedEvaluation, SavedChat, EvaluationSelection, SavedAutomation } from '@/types/history';
 
 export const historyService = {
   // Evaluations
@@ -58,6 +58,36 @@ export const historyService = {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }
+  },
+
+  // Automations
+  async getAutomations(): Promise<SavedAutomation[]> {
+    const response = await api.get('/history/automations');
+    return response.data.automations;
+  },
+
+  async getAutomation(id: string): Promise<SavedAutomation> {
+    const response = await api.get(`/history/automations/${id}`);
+    return response.data;
+  },
+
+  async saveAutomation(automation: SavedAutomation): Promise<void> {
+    await api.post('/history/automations', automation);
+  },
+
+  async deleteAutomation(id: string): Promise<void> {
+    await api.delete(`/history/automations/${id}`);
+  },
+
+  // Get aggregated automation results for home page
+  async getAutomationAggregates(): Promise<SavedAutomation[]> {
+    try {
+      const response = await api.get('/history/automations/aggregates');
+      return Array.isArray(response.data) ? response.data : [];
+    } catch (error) {
+      console.warn('Failed to fetch automation aggregates:', error);
+      return [];
+    }
+  },
 };
 

@@ -3,6 +3,25 @@ export interface Preset {
   id: string;
   title: string;
   body: string;
+  parameters?: {
+    temperature?: number;
+    max_tokens?: number;
+    top_p?: number;
+    top_k?: number;
+    system?: string;
+    seed?: number | null;
+  };
+  metrics?: {
+    rouge?: boolean;
+    bleu?: boolean;
+    f1?: boolean;
+    em?: boolean;
+    bertscore?: boolean;
+    perplexity?: boolean;
+    accuracy?: boolean;
+    precision?: boolean;
+    recall?: boolean;
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -11,7 +30,7 @@ export interface PresetStore {
   getPresets: () => Preset[];
   getPreset: (id: string) => Preset | undefined;
   savePreset: (preset: Omit<Preset, 'createdAt' | 'updatedAt'>) => void;
-  updatePreset: (id: string, updates: Partial<Pick<Preset, 'title' | 'body'>>) => void;
+  updatePreset: (id: string, updates: Partial<Pick<Preset, 'title' | 'body' | 'parameters' | 'metrics'>>) => void;
   deletePreset: (id: string) => void;
   clearPresets: () => void;
 }
@@ -29,13 +48,51 @@ class LocalStoragePresetStore implements PresetStore {
         id: 'default',
         title: 'Default',
         body: '',
+        parameters: {
+          temperature: 0.7,
+          max_tokens: 1024,
+          top_p: 1.0,
+          top_k: 40,
+        },
         createdAt: Date.now(),
         updatedAt: Date.now(),
       },
       {
         id: 'ocr-cleanup',
         title: 'OCR Cleanup',
-        body: 'Clean up OCR artifacts in {extracted text} and correct punctuation.',
+        body: '',
+        parameters: {
+          temperature: 0.2,
+          max_tokens: 512,
+          top_p: 1.0,
+          top_k: 40,
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      {
+        id: 'creative-writing',
+        title: 'Creative Writing',
+        body: 'Write creatively and engagingly about the following topic:',
+        parameters: {
+          temperature: 0.9,
+          max_tokens: 2048,
+          top_p: 0.9,
+          top_k: 50,
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      {
+        id: 'technical-analysis',
+        title: 'Technical Analysis',
+        body: 'Provide a detailed technical analysis of the following:',
+        parameters: {
+          temperature: 0.3,
+          max_tokens: 1500,
+          top_p: 0.8,
+          top_k: 30,
+        },
         createdAt: Date.now(),
         updatedAt: Date.now(),
       },
@@ -85,7 +142,7 @@ class LocalStoragePresetStore implements PresetStore {
     this.savePresets(filteredPresets);
   }
 
-  updatePreset(id: string, updates: Partial<Pick<Preset, 'title' | 'body'>>): void {
+  updatePreset(id: string, updates: Partial<Pick<Preset, 'title' | 'body' | 'parameters' | 'metrics'>>): void {
     const presets = this.getPresets();
     const index = presets.findIndex(p => p.id === id);
     if (index !== -1) {

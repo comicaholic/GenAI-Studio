@@ -60,8 +60,7 @@ export default function ResultTab({ currentRun, runHistory, isRunning }: ResultT
                   {formatDuration(currentRun.startedAt, currentRun.finishedAt)}
                 </span>
               )}
-              <button
-                onClick={() => handleCopy(currentRun.output)}
+              <button className="btn h-10 min-w-[96px]" onClick={() => handleCopy(currentRun.output)}
                 style={{
                   background: 'none',
                   border: 'none',
@@ -135,8 +134,7 @@ export default function ResultTab({ currentRun, runHistory, isRunning }: ResultT
       {/* Run History */}
       {runHistory.length > 0 && (
         <div>
-          <button
-            onClick={() => setShowHistory(!showHistory)}
+          <button className="btn h-10 min-w-[96px]" onClick={() => setShowHistory(!showHistory)}
             style={{
               background: 'none',
               border: 'none',

@@ -179,8 +179,7 @@ export default function UploadPanel({ resourceIds, onResourceIdsChange }: Upload
           <div style={{ color: '#94a3b8', fontSize: '11px' }}>
             {stats.count} files • {stats.totalSizeFormatted}
           </div>
-          <button
-            onClick={handleClearAll}
+          <button className="btn h-10 min-w-[96px]" onClick={handleClearAll}
             style={{
               background: 'none',
               border: 'none',
@@ -188,8 +187,7 @@ export default function UploadPanel({ resourceIds, onResourceIdsChange }: Upload
               cursor: 'pointer',
               fontSize: '11px',
               padding: '2px 4px',
-            }}
-          >
+            }}>
             Clear All
           </button>
         </div>
@@ -259,8 +257,7 @@ function ResourceItem({ resource, onRemove, onRename }: ResourceItemProps) {
       
       <div style={{ flex: 1, minWidth: 0 }}>
         {isRenaming ? (
-          <input
-            type="text"
+          <input className="input h-10 text-sm" type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onBlur={handleRenameSubmit}
@@ -300,8 +297,7 @@ function ResourceItem({ resource, onRemove, onRename }: ResourceItemProps) {
 
       {!isRenaming && (
         <div style={{ display: 'flex', gap: '4px' }}>
-          <button
-            onClick={() => setIsRenaming(true)}
+          <button className="btn h-10 min-w-[96px]" onClick={() => setIsRenaming(true)}
             style={{
               background: 'none',
               border: 'none',
@@ -314,8 +310,7 @@ function ResourceItem({ resource, onRemove, onRename }: ResourceItemProps) {
           >
             ✏️
           </button>
-          <button
-            onClick={onRemove}
+          <button className="btn h-10 min-w-[96px]" onClick={onRemove}
             style={{
               background: 'none',
               border: 'none',
@@ -324,8 +319,7 @@ function ResourceItem({ resource, onRemove, onRename }: ResourceItemProps) {
               fontSize: '10px',
               padding: '2px 4px',
             }}
-            title="Remove"
-          >
+            title="Remove">
             🗑️
           </button>
         </div>
