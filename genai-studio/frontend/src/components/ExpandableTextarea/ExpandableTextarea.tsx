@@ -17,8 +17,8 @@ export default function ExpandableTextarea({
   const controlled = value !== undefined;
   const current = controlled ? value! : local;
 
-  // height state (default 220px, up to 800px) — taller for sidebar use
-  const [height, setHeight] = React.useState(220);
+  // height state (default 300px, up to 800px) — taller for sidebar use
+  const [height, setHeight] = React.useState(245);
   const [hover, setHover] = React.useState(false);
 
   return (

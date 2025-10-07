@@ -107,7 +107,7 @@ export default function SettingsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.get("/settings");
+        const res = await api.get("/settings/settings");
         // merge so we never render undefined sub-objects
         setSettings({ ...defaultSettings, ...(res.data || {}) });
       } catch (err: any) {
@@ -137,8 +137,11 @@ export default function SettingsPage() {
 
   const saveSettings = async () => {
     try {
-      await api.post("/settings", settings); // backend persists & writes .env as needed
+      await api.post("/settings/settings", settings); // backend persists & writes .env as needed
       showSuccess("Settings Saved", "Your settings have been saved successfully.");
+      
+      // Trigger a refresh of models in other components
+      window.dispatchEvent(new Event("models:changed"));
     } catch (err: any) {
       showError("Save Failed", err?.message || "Failed to save settings.");
     }
@@ -150,11 +153,17 @@ export default function SettingsPage() {
       return;
     }
     try {
-      const res = await api.post("/groq/test", { apiKey: settings.groq.apiKey });
+      // send key explicitly in body; backend expects { apiKey }
+      const res = await api.post("/settings/groq/test", { apiKey: settings.groq.apiKey });
       setSettings((prev) => ({ ...prev, groq: { ...prev.groq, connected: !!res.data?.connected } }));
       res.data?.connected
         ? showSuccess("Groq Connected", `OK${res.data?.models_count ? ` — ${res.data.models_count} models` : ""}.`)
         : showError("Groq Failed", res.data?.error || "Connection failed.");
+      
+      // Trigger a refresh of models if connection is successful
+      if (res.data?.connected) {
+        window.dispatchEvent(new Event("models:changed"));
+      }
     } catch (e: any) {
       showError("Groq Failed", e?.message || "Connection failed.");
     }
@@ -329,216 +338,525 @@ export default function SettingsPage() {
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateRows: "56px 1fr", height: "100vh" }}>
-      {/* top spacer to match other pages’ fixed header height */}
-      <header style={{ height: 56, borderBottom: "1px solid #1f2a3a", background: "#0a0f1a" }} />
+    <div style={{ display: "flex", height: "100vh", background: "#0b1220" }}>
+      <LeftRail />
+      <div style={{ 
+        marginLeft: 80, 
+        flex: 1, 
+        background: "#0b1220", 
+        color: "#e2e8f0",
+        display: "flex",
+        minHeight: 0
+      }}>
+        {/* Modern sidebar navigation */}
+        <aside style={{
+          width: 280,
+          background: "#0f172a",
+          borderRight: "1px solid #334155",
+          padding: 24,
+          display: "flex",
+          flexDirection: "column",
+          gap: 16
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+            <div style={{ 
+              width: 40, 
+              height: 40, 
+              background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
+              borderRadius: 10,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 4px 12px rgba(59, 130, 246, 0.3)"
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                <path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.22,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.22,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.68 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/>
+              </svg>
+            </div>
+            <div>
+              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "#e2e8f0" }}>Settings</h1>
+              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>Configure your application</p>
+            </div>
+          </div>
 
-      <div style={{ display: "flex", minHeight: 0 }}>
-        {/* non-scrolling left nav */}
-        <LeftRail />
-
-        {/* sticky tabs + scrollable content */}
-        <div
-          style={{
-            marginLeft: 56,
-            display: "grid",
-            gridTemplateColumns: "240px 1fr",
-            width: "100%",
-            minWidth: 0,
-            background: "#0f172a",
-            color: "#e2e8f0",
-          }}
-        >
-          {/* tabs (sticky) */}
-          <aside
-            style={{
-              position: "sticky",
-              top: 56,
-              alignSelf: "start",
-              height: "calc(100vh - 56px)",
-              borderRight: "1px solid #1f2a3a",
-              background: "#0b1220",
-              padding: 12,
-              display: "grid",
-              gap: 8,
-            }}
-          >
+          {/* Navigation tabs */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {[
-              { id: "ui", label: "UI & Appearance" },
-              { id: "paths", label: "File Paths" },
-              { id: "presets", label: "Presets" },
-              { id: "groq", label: "Groq API" },
-              { id: "huggingface", label: "Hugging Face" },
+              { 
+                id: "ui", 
+                label: "UI & Appearance", 
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                  </svg>
+                )
+              },
+              { 
+                id: "paths", 
+                label: "File Paths", 
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/>
+                  </svg>
+                )
+              },
+              { 
+                id: "presets", 
+                label: "Presets", 
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.22,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.22,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.68 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/>
+                  </svg>
+                )
+              },
+              { 
+                id: "groq", 
+                label: "Groq API", 
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
+                  </svg>
+                )
+              },
+              { 
+                id: "huggingface", 
+                label: "Hugging Face", 
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12,2C6.48,2 2,6.48 2,12C2,17.52 6.48,22 12,22C17.52,22 22,17.52 22,12C22,6.48 17.52,2 12,2M12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                  </svg>
+                )
+              },
             ].map((t) => (
               <button
                 key={t.id}
                 onClick={() => setActiveTab(t.id as any)}
                 style={{
+                  width: "100%",
+                  padding: "12px 16px",
+                  borderRadius: 12,
+                  border: "1px solid #334155",
+                  background: activeTab === (t.id as any) 
+                    ? "linear-gradient(135deg, #3b82f6, #1d4ed8)" 
+                    : "transparent",
+                  color: activeTab === (t.id as any) ? "#ffffff" : "#e2e8f0",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: 500,
                   display: "flex",
                   alignItems: "center",
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: 10,
-                  border: "1px solid #2b3443",
-                  background: activeTab === (t.id as any) ? "#132035" : "#0f172a",
-                  color: "#e2e8f0",
-                  cursor: "pointer",
-                  fontSize: 13,
+                  gap: 12,
+                  transition: "all 0.2s ease",
+                  textAlign: "left"
+                }}
+                onMouseEnter={(e) => {
+                  if (activeTab !== (t.id as any)) {
+                    e.currentTarget.style.background = "#1e293b";
+                    e.currentTarget.style.borderColor = "#475569";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (activeTab !== (t.id as any)) {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.borderColor = "#334155";
+                  }
                 }}
               >
+                {t.icon}
                 {t.label}
               </button>
             ))}
+          </div>
 
-            <div style={{ marginTop: "auto", display: "grid", gap: 8 }}>
-              <button
-                onClick={saveSettings}
-                style={{
-                  height: 36,
-                  borderRadius: 8,
-                  background: "#2563eb",
-                  border: "1px solid #1f2a3a",
-                  color: "white",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                }}
-              >
-                Save changes
-              </button>
-            </div>
-          </aside>
+          {/* Save button */}
+          <div style={{ marginTop: "auto", paddingTop: 16 }}>
+            <button
+              onClick={saveSettings}
+              style={{
+                width: "100%",
+                padding: "12px 16px",
+                borderRadius: 12,
+                background: "linear-gradient(135deg, #10b981, #059669)",
+                border: "none",
+                color: "#ffffff",
+                cursor: "pointer",
+                fontSize: 14,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                transition: "all 0.2s ease",
+                boxShadow: "0 2px 4px rgba(16, 185, 129, 0.3)"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-1px)";
+                e.currentTarget.style.boxShadow = "0 4px 8px rgba(16, 185, 129, 0.4)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = "0 2px 4px rgba(16, 185, 129, 0.3)";
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M17,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3M19,19H5V5H16.17L19,7.83V19M12,12A3,3 0 0,0 9,15A3,3 0 0,0 12,18A3,3 0 0,0 15,15A3,3 0 0,0 12,12M6,6H15V10H6V6Z"/>
+              </svg>
+              Save Changes
+            </button>
+          </div>
+        </aside>
 
-          {/* content (only this scrolls) */}
-          <main
-            style={{
-              height: "calc(100vh - 56px)",
-              overflow: "auto",
-              padding: 16,
-              display: "grid",
-              gap: 16,
-            }}
-          >
+        {/* Main content area */}
+        <main style={{
+          flex: 1,
+          padding: 24,
+          overflow: "auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 24
+        }}>
             {/* UI */}
             {activeTab === "ui" && (
-              <section style={card}>
-                <h2 style={h2}>UI & Appearance</h2>
-
-                <div style={group}>
-                  <label style={label}>Theme</label>
-                  <select
-                    value={settings.ui.theme}
-                    onChange={(e) => updateSetting("ui.theme", e.target.value)}
-                    style={select}
-                  >
-                    <option value="dark">Dark</option>
-                    <option value="light">Light</option>
-                  </select>
-                </div>
-
-                <div style={group}>
-                  <label style={label}>Background</label>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {[
-                      { k: "gradient", label: "Gradient" },
-                      { k: "grid", label: "Grid" },
-                      { k: "noise", label: "Noise" },
-                    ].map((opt) => (
-                      <button
-                        key={opt.k}
-                        onClick={() => setBgTheme(opt.k)}
-                        className={`rb-glare rb-press ${bgTheme === opt.k ? "rb-pulse-bg" : ""}`}
-                        style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #334155", background: bgTheme === opt.k ? "#1e293b" : "#0f172a", color: "#e2e8f0" }}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
+              <div style={{
+                background: "#0f172a",
+                border: "1px solid #334155",
+                borderRadius: 16,
+                padding: 24,
+                boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+                  <div style={{ 
+                    width: 32, 
+                    height: 32, 
+                    background: "linear-gradient(135deg, #8b5cf6, #7c3aed)", 
+                    borderRadius: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                  }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                      <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>UI & Appearance</h2>
+                    <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Customize the look and feel of your application</p>
                   </div>
                 </div>
 
-                <div style={group}>
-                  <label style={label}>Default Landing Page</label>
-                  <select
-                    value={settings.ui.defaultLandingPage}
-                    onChange={(e) => updateSetting("ui.defaultLandingPage", e.target.value)}
-                    style={select}
-                  >
-                    <option value="/">Home</option>
-                    <option value="/ocr">OCR Evaluation</option>
-                    <option value="/prompt">Prompt Evaluation</option>
-                    <option value="/chat">Chat</option>
-                    <option value="/models">Models</option>
-                    <option value="/analytics">Analytics</option>
-                  </select>
-                </div>
+                <div style={{ display: "grid", gap: 20 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Theme</label>
+                    <select
+                      value={settings.ui.theme}
+                      onChange={(e) => updateSetting("ui.theme", e.target.value)}
+                      style={{
+                        padding: "12px 16px",
+                        border: "1px solid #334155",
+                        borderRadius: 10,
+                        background: "#1e293b",
+                        color: "#e2e8f0",
+                        fontSize: 14,
+                        outline: "none",
+                        transition: "all 0.2s ease"
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = "#3b82f6";
+                        e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = "#334155";
+                        e.currentTarget.style.boxShadow = "none";
+                      }}
+                    >
+                      <option value="dark">Dark</option>
+                      <option value="light">Light</option>
+                    </select>
+                  </div>
 
-                <div style={group}>
-                  <label style={label}>Background State Management</label>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Background Style</label>
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      {[
+                        { 
+                          k: "gradient", 
+                          label: "Gradient", 
+                          icon: (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                            </svg>
+                          )
+                        },
+                        { 
+                          k: "grid", 
+                          label: "Grid", 
+                          icon: (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M3,3V11H11V3H3M9,9H5V5H9V9M13,3V11H21V3H13M19,9H15V5H19V9M3,13V21H11V13H3M9,19H5V15H9V19M13,13V21H21V13H13M19,19H15V15H19V19Z"/>
+                            </svg>
+                          )
+                        },
+                        { 
+                          k: "noise", 
+                          label: "Noise", 
+                          icon: (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                            </svg>
+                          )
+                        },
+                      ].map((opt) => (
+                        <button
+                          key={opt.k}
+                          onClick={() => setBgTheme(opt.k)}
+                          style={{ 
+                            padding: "12px 16px", 
+                            borderRadius: 10, 
+                            border: "1px solid #334155", 
+                            background: bgTheme === opt.k 
+                              ? "linear-gradient(135deg, #3b82f6, #1d4ed8)" 
+                              : "#1e293b", 
+                            color: bgTheme === opt.k ? "#ffffff" : "#e2e8f0",
+                            fontSize: 14,
+                            fontWeight: 500,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            transition: "all 0.2s ease"
+                          }}
+                          onMouseEnter={(e) => {
+                            if (bgTheme !== opt.k) {
+                              e.currentTarget.style.background = "#334155";
+                              e.currentTarget.style.borderColor = "#475569";
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (bgTheme !== opt.k) {
+                              e.currentTarget.style.background = "#1e293b";
+                              e.currentTarget.style.borderColor = "#334155";
+                            }
+                          }}
+                        >
+                          {opt.icon}
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Default Landing Page</label>
+                    <select
+                      value={settings.ui.defaultLandingPage}
+                      onChange={(e) => updateSetting("ui.defaultLandingPage", e.target.value)}
+                      style={{
+                        padding: "12px 16px",
+                        border: "1px solid #334155",
+                        borderRadius: 10,
+                        background: "#1e293b",
+                        color: "#e2e8f0",
+                        fontSize: 14,
+                        outline: "none",
+                        transition: "all 0.2s ease"
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = "#3b82f6";
+                        e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = "#334155";
+                        e.currentTarget.style.boxShadow = "none";
+                      }}
+                    >
+                      <option value="/">Home</option>
+                      <option value="/ocr">OCR Evaluation</option>
+                      <option value="/prompt">Prompt Evaluation</option>
+                      <option value="/chat">Chat</option>
+                      <option value="/models">Models</option>
+                      <option value="/analytics">Analytics</option>
+                    </select>
+                  </div>
+
+                  <div style={{ 
+                    display: "flex", 
+                    alignItems: "center", 
+                    gap: 12,
+                    padding: "16px",
+                    background: "#1e293b",
+                    borderRadius: 10,
+                    border: "1px solid #334155"
+                  }}>
                     <input
                       type="checkbox"
                       checked={settings.ui.backgroundStateManagement}
                       onChange={(e) => updateSetting("ui.backgroundStateManagement", e.target.checked)}
-                      style={{ margin: 0 }}
+                      style={{ 
+                        width: 18, 
+                        height: 18, 
+                        accentColor: "#3b82f6",
+                        cursor: "pointer"
+                      }}
                     />
-                    <span style={{ fontSize: 13, color: "#cbd5e1" }}>
-                      Keep pages running when navigating.
-                    </span>
+                    <div>
+                      <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Background State Management</div>
+                      <div style={{ color: "#94a3b8", fontSize: 13 }}>Keep pages running when navigating between sections</div>
+                    </div>
                   </div>
                 </div>
-              </section>
+              </div>
             )}
 
             {/* Paths */}
             {activeTab === "paths" && (
-              <section style={card}>
-                <h2 style={h2}>File Paths</h2>
-
-                <h3 style={h3}>OCR Evaluation</h3>
-                <div style={group}>
-                  <label style={sublabel}>Source Input Folder</label>
-                  <RowPath
-                    value={settings.paths.ocrSource}
-                    onChange={(v) => updateSetting("paths.ocrSource", v)}
-                    onBrowse={() => browseForFolder("ocrSource")}
-                  />
-                </div>
-                <div style={group}>
-                  <label style={sublabel}>Reference Input Folder</label>
-                  <RowPath
-                    value={settings.paths.ocrReference}
-                    onChange={(v) => updateSetting("paths.ocrReference", v)}
-                    onBrowse={() => browseForFolder("ocrReference")}
-                  />
-                </div>
-
-                <h3 style={h3}>Prompt Evaluation</h3>
-                <div style={group}>
-                  <label style={sublabel}>Source Input Folder</label>
-                  <RowPath
-                    value={settings.paths.promptSource}
-                    onChange={(v) => updateSetting("paths.promptSource", v)}
-                    onBrowse={() => browseForFolder("promptSource")}
-                  />
-                </div>
-                <div style={group}>
-                  <label style={sublabel}>Reference Input Folder</label>
-                  <RowPath
-                    value={settings.paths.promptReference}
-                    onChange={(v) => updateSetting("paths.promptReference", v)}
-                    onBrowse={() => browseForFolder("promptReference")}
-                  />
+              <div style={{
+                background: "#0f172a",
+                border: "1px solid #334155",
+                borderRadius: 16,
+                padding: 24,
+                boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+                  <div style={{ 
+                    width: 32, 
+                    height: 32, 
+                    background: "linear-gradient(135deg, #10b981, #059669)", 
+                    borderRadius: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                  }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                      <path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>File Paths</h2>
+                    <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Configure where your files are stored and accessed</p>
+                  </div>
                 </div>
 
-                <h3 style={h3}>Chat Downloads</h3>
-                <div style={group}>
-                  <label style={sublabel}>Chats Folder</label>
-                  <RowPath
-                    value={settings.paths.chatDownloadPath}
-                    onChange={(v) => updateSetting("paths.chatDownloadPath", v)}
-                    onBrowse={() => browseForFolder("chatDownloadPath")}
-                  />
+                <div style={{ display: "grid", gap: 24 }}>
+                  {/* OCR Evaluation */}
+                  <div style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <div style={{ 
+                        width: 24, 
+                        height: 24, 
+                        background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
+                        borderRadius: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                          <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                        </svg>
+                      </div>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>OCR Evaluation</h3>
+                    </div>
+                    <div style={{ display: "grid", gap: 16 }}>
+                      <div>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Source Input Folder</label>
+                        <RowPath
+                          value={settings.paths.ocrSource}
+                          onChange={(v) => updateSetting("paths.ocrSource", v)}
+                          onBrowse={() => browseForFolder("ocrSource")}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Reference Input Folder</label>
+                        <RowPath
+                          value={settings.paths.ocrReference}
+                          onChange={(v) => updateSetting("paths.ocrReference", v)}
+                          onBrowse={() => browseForFolder("ocrReference")}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Prompt Evaluation */}
+                  <div style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <div style={{ 
+                        width: 24, 
+                        height: 24, 
+                        background: "linear-gradient(135deg, #8b5cf6, #7c3aed)", 
+                        borderRadius: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                          <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                        </svg>
+                      </div>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>Prompt Evaluation</h3>
+                    </div>
+                    <div style={{ display: "grid", gap: 16 }}>
+                      <div>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Source Input Folder</label>
+                        <RowPath
+                          value={settings.paths.promptSource}
+                          onChange={(v) => updateSetting("paths.promptSource", v)}
+                          onBrowse={() => browseForFolder("promptSource")}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Reference Input Folder</label>
+                        <RowPath
+                          value={settings.paths.promptReference}
+                          onChange={(v) => updateSetting("paths.promptReference", v)}
+                          onBrowse={() => browseForFolder("promptReference")}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Chat Downloads */}
+                  <div style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <div style={{ 
+                        width: 24, 
+                        height: 24, 
+                        background: "linear-gradient(135deg, #f59e0b, #d97706)", 
+                        borderRadius: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                          <path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
+                        </svg>
+                      </div>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>Chat Downloads</h3>
+                    </div>
+                    <div>
+                      <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Chats Folder</label>
+                      <RowPath
+                        value={settings.paths.chatDownloadPath}
+                        onChange={(v) => updateSetting("paths.chatDownloadPath", v)}
+                        onBrowse={() => browseForFolder("chatDownloadPath")}
+                      />
+                    </div>
+                  </div>
                 </div>
-              </section>
+              </div>
             )}
 
             {/* Presets */}
@@ -648,8 +966,7 @@ export default function SettingsPage() {
                 </div>
               </section>
             )}
-          </main>
-        </div>
+        </main>
       </div>
 
       {/* Preset Editor Modal */}
@@ -683,10 +1000,59 @@ function RowPath({
   onBrowse: () => void;
 }) {
   return (
-    <div style={{ display: "flex", gap: 8 }}>
-      <input value={value} onChange={(e) => onChange(e.target.value)} style={{ ...input, flex: 1 }} />
-      <button style={btnRow} onClick={onBrowse}>
-        Browse…
+    <div style={{ display: "flex", gap: 12 }}>
+      <input 
+        value={value} 
+        onChange={(e) => onChange(e.target.value)} 
+        style={{ 
+          flex: 1,
+          padding: "12px 16px",
+          border: "1px solid #334155",
+          borderRadius: 10,
+          background: "#0f172a",
+          color: "#e2e8f0",
+          fontSize: 14,
+          outline: "none",
+          transition: "all 0.2s ease"
+        }}
+        onFocus={(e) => {
+          e.currentTarget.style.borderColor = "#3b82f6";
+          e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+        }}
+        onBlur={(e) => {
+          e.currentTarget.style.borderColor = "#334155";
+          e.currentTarget.style.boxShadow = "none";
+        }}
+      />
+      <button 
+        onClick={onBrowse}
+        style={{
+          padding: "12px 16px",
+          border: "1px solid #334155",
+          background: "#1e293b",
+          color: "#e2e8f0",
+          borderRadius: 10,
+          cursor: "pointer",
+          fontSize: 14,
+          fontWeight: 500,
+          transition: "all 0.2s ease",
+          display: "flex",
+          alignItems: "center",
+          gap: 8
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "#334155";
+          e.currentTarget.style.borderColor = "#475569";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "#1e293b";
+          e.currentTarget.style.borderColor = "#334155";
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/>
+        </svg>
+        Browse
       </button>
     </div>
   );

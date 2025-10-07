@@ -227,7 +227,7 @@ export default function PromptPresetBox({
               onClick={saveAsNew}
               style={{ border: "1px solid #16a34a", padding: "6px 10px", borderRadius: 8, background: "#16a34a", color: "#fff" }}
             >
-              Save new preset
+              Save
             </button>
           </>
         )}
@@ -260,7 +260,7 @@ export default function PromptPresetBox({
               color: "#e2e8f0",
             }}
           >
-            Commit changes
+            Commit
           </button>
           <button
             onClick={() => {

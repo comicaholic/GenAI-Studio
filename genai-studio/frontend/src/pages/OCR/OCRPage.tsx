@@ -1,5 +1,6 @@
 // src/pages/OCR/OCRPage.tsx
 import React, { useMemo, useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import LeftRail from "@/components/LeftRail/LeftRail";
 
 import FileDrop from "@/components/FileDrop/FileDrop";
@@ -8,7 +9,7 @@ import PromptPresetBox from "@/components/PresetPanel/PromptPresetBox";
 import PresetManager from "@/components/PresetPanel/PresetManager";
 import ParamsPanel, { ModelParams } from "@/components/RightPanel/ParamsPanel";
 import MetricsPanel, { DEFAULT_METRICS, MetricState } from "@/components/RightPanel/MetricsPanel";
-import { ocrPresetStore } from "@/stores/presetStore";
+import { ocrPresetStore, Preset } from "@/stores/presetStore";
 import { extractOCR, OCRExtractResponse } from "@/services/ocr";
 import { computeMetrics, downloadCSV, downloadPDF } from "@/services/eval";
 import { chatComplete } from "@/services/llm";
@@ -20,7 +21,9 @@ import { completeLLM } from "@/services/llm";
 import { useNotifications } from "@/components/Notification/Notification";
 import { useBackgroundState } from "@/stores/backgroundState";
 import { historyService } from "@/services/history";
-import LayoutShell from "@/components/LayoutShell/LayoutShell";
+import LayoutShell from "@/components/Layout/LayoutShell";
+import AutomationModal, { AutomationConfig } from "@/components/AutomationModal/AutomationModal";
+import { automationStore } from "@/stores/automationStore";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.2, max_tokens: 512, top_p: 1.0, top_k: 40 };
 
@@ -49,7 +52,7 @@ export default function OCRPage() {
   // right panel state
   const [textareaContent, setTextareaContent] = useState(() => {
     const savedPrompt = localStorage.getItem("ocr-prompt");
-    return savedPrompt || "Clean up OCR artifacts in {extracted text} and correct punctuation.";
+    return savedPrompt || "";
   });
 
   // Save prompt to localStorage whenever it changes
@@ -59,10 +62,38 @@ export default function OCRPage() {
   };
 
   // Handle preset changes
-  const handlePresetChange = (preset: { body?: string }) => {
+  const handlePresetChange = (preset: { title: string; body: string; id: string; parameters?: Preset['parameters']; metrics?: Preset['metrics'] }) => {
     const presetText = preset.body || "";
     setTextareaContent(presetText);
     localStorage.setItem("ocr-prompt", presetText);
+    
+    // Apply parameters if they exist
+    if (preset.parameters) {
+      setParams(prev => ({
+        ...prev,
+        temperature: preset.parameters?.temperature ?? prev.temperature,
+        max_tokens: preset.parameters?.max_tokens ?? prev.max_tokens,
+        top_p: preset.parameters?.top_p ?? prev.top_p,
+        top_k: preset.parameters?.top_k ?? prev.top_k,
+      }));
+    }
+    
+    // Apply metrics if they exist
+    if (preset.metrics) {
+      setMetricsState(prev => ({
+        ...prev,
+        ...preset.metrics
+      }));
+    }
+  };
+
+  // Handle tab switching - preserve current content
+  const handleTabSwitch = (newTab: "prompt" | "parameters" | "metrics") => {
+    // Save current prompt content before switching tabs
+    if (activeRightTab === "prompt") {
+      localStorage.setItem("ocr-prompt", textareaContent);
+    }
+    setActiveRightTab(newTab);
   };
 
   const [params, setParams] = useState<ModelParams>(DEFAULT_PARAMS);
@@ -82,6 +113,56 @@ export default function OCRPage() {
   const [refText, setRefText] = useState("");
   const [llmOut, setLlmOut] = useState("");
   const [metrics, setMetrics] = useState<string[]>([]); // not used directly, kept for compatibility
+  
+  // Automation state
+  const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
+  const [automationResults, setAutomationResults] = useState<Record<string, any>>({});
+  
+  // Prompt enlarge modal state
+  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+
+  // Allow loading an evaluation from navigation state (HomePage "Load")
+  const location = useLocation();
+  useEffect(() => {
+    const state: any = location.state;
+    const evalToLoad = state?.loadEvaluation;
+    if (evalToLoad?.type === "ocr") {
+      try {
+        const used = evalToLoad.usedText || {};
+        setOcrText(used.ocrText ?? "");
+        setReference(used.referenceText ?? "");
+        setTextareaContent(used.promptText ?? textareaContent);
+        // If the evaluation already had results, show them immediately
+        if (evalToLoad.results && typeof evalToLoad.results === "object") {
+          setScores(evalToLoad.results as any);
+        }
+        // Try to load original files as well (if available)
+        const srcName: string | undefined = evalToLoad.files?.sourceFileName;
+        const refName: string | undefined = evalToLoad.files?.referenceFileName;
+        if (srcName) {
+          (async () => {
+            try {
+              const res = await api.get(`/files/load`, { params: { kind: "source", name: srcName }, responseType: "blob" });
+              const file = new File([res.data], srcName);
+              await onSourceUpload(file);
+            } catch {}
+          })();
+        }
+        if (refName) {
+          (async () => {
+            try {
+              const data = await loadReferenceByName(refName);
+              setRefFileName(data.filename);
+              setReference(data.text);
+              setRefText(data.text ?? "");
+            } catch {}
+          })();
+        }
+      } catch {}
+    }
+  // run only once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const meta = useMemo(
     () => ({
@@ -224,6 +305,11 @@ export default function OCRPage() {
     return list;
   }, [metricsState]);
 
+  // When metrics selection changes, clear prior scores so the user can recompute
+  useEffect(() => {
+    setScores(null);
+  }, [metricsState]);
+
   const onEvaluate = async () => {
     if (!selected) {
       showError("Model Required", "Select a model first.");
@@ -292,14 +378,14 @@ export default function OCRPage() {
         meta,
       });
 
-      const m = res?.scores ?? res?.scores ?? res?.data?.scores ?? res?.data ?? (res as any) ?? {};
+      const m = res?.scores ?? (res as any) ?? {};
       setScores(m);
 
       // Save evaluation to history
       const evaluation = {
         id: crypto.randomUUID(),
         type: "ocr" as const,
-        title: `OCR Evaluation - ${new Date().toLocaleDateString()}`,
+        title: `OCR Evaluation - ${new Date().toLocaleDateString('en-GB')}`,
         model: { id: selected.id, provider: selected.provider },
         parameters: params,
         metrics: selectedMetrics,
@@ -362,6 +448,117 @@ export default function OCRPage() {
     URL.revokeObjectURL(url);
   };
 
+  // Automation functionality
+  const handleAutomationStart = async (config: AutomationConfig) => {
+    if (!selected) {
+      showError("Model Required", "Select a model first.");
+      return;
+    }
+    if (!ocr?.text) {
+      showError("OCR Required", "Please extract OCR text first.");
+      return;
+    }
+    if (!reference) {
+      showError("Reference Required", "Please provide reference text first.");
+      return;
+    }
+
+    const automationId = automationStore.startAutomation('ocr', config);
+    setBusy("Running automation...");
+
+    try {
+      const results: Record<string, any> = {};
+
+      for (let i = 0; i < config.runs.length; i++) {
+        const run = config.runs[i];
+        
+        // Update progress
+        automationStore.updateProgress(automationId, { currentRunIndex: i });
+
+        try {
+          // Build LLM output for this run
+          const injected = renderPrompt(run.prompt, ocr.text, reference);
+          const output = await chatComplete(
+            selected.id,
+            [
+              { role: "system", content: "You are a helpful assistant." },
+              { role: "user", content: injected },
+            ],
+            run.parameters
+          );
+
+          // Compute metrics
+          const selectedMetrics = Object.keys(run.metrics).filter(key => (run.metrics as any)[key]);
+          const res = await computeMetrics({
+            prediction: output || "",
+            reference,
+            metrics: selectedMetrics,
+            meta: {
+              model: selected.id,
+              params: run.parameters,
+              source_file: srcFileName,
+              reference_file: refFileName,
+            },
+          });
+
+          results[run.id] = {
+            runName: run.name,
+            prompt: run.prompt,
+            parameters: run.parameters,
+            metrics: run.metrics,
+            output,
+            scores: res.scores ?? res,
+          };
+
+          // Save individual evaluation to history
+          try {
+            const evaluation = {
+              id: crypto.randomUUID(),
+              type: "ocr" as const,
+              title: `${config.name} - ${run.name}`,
+              model: { id: selected.id, provider: selected.provider },
+              parameters: run.parameters,
+              metrics: selectedMetrics,
+              usedText: {
+                ocrText: ocr.text,
+                referenceText: reference,
+                promptText: injected,
+              },
+              files: {
+                sourceFileName: srcFileName,
+                referenceFileName: refFileName,
+              },
+              results: res.scores ?? res,
+              startedAt: new Date().toISOString(),
+              finishedAt: new Date().toISOString(),
+              automationId: config.id,
+              runId: run.id,
+            };
+            await historyService.saveEvaluation(evaluation);
+          } catch (e) {
+            console.warn("Failed to save evaluation:", e);
+          }
+
+        } catch (error: any) {
+          results[run.id] = {
+            runName: run.name,
+            error: error?.message ?? String(error),
+          };
+        }
+      }
+
+      setAutomationResults(results);
+      automationStore.completeAutomation(automationId);
+      showSuccess("Automation Complete", `Completed ${config.runs.length} runs successfully!`);
+
+    } catch (error: any) {
+      automationStore.completeAutomation(automationId, error?.message ?? String(error));
+      showError("Automation Failed", "Automation failed: " + (error?.message ?? String(error)));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   // ----- left quick-load lists -----
   useEffect(() => {
     (async () => {
@@ -377,8 +574,7 @@ export default function OCRPage() {
   }, []);
 
   const [activeRightTab, setActiveRightTab] = useState<"prompt" | "parameters" | "metrics">("prompt");
-  const handleTabSwitch = (newTab: "prompt" | "parameters" | "metrics") => setActiveRightTab(newTab);
-  const getCurrentPromptText = () => textareaContent || "Clean up OCR artifacts in {extracted text} and correct punctuation.";
+  const getCurrentPromptText = () => textareaContent || "";
 
   // ----- UI fragments -----
   const left = (
@@ -512,74 +708,271 @@ export default function OCRPage() {
   );
 
   const right = (
-    <div style={{ display: "grid", gap: 16 }}>
-      {/* Tab Navigation */}
-      <div style={{ display: "flex", borderBottom: "1px solid #334155" }}>
-        <button
-          className="btn h-10 min-w-[96px]"
-          onClick={() => handleTabSwitch("prompt")}
-          style={{
-            padding: "8px 12px",
-            border: "none",
-            background: activeRightTab === "prompt" ? "#1e293b" : "transparent",
-            color: activeRightTab === "prompt" ? "#e2e8f0" : "#94a3b8",
-            cursor: "pointer",
-            fontSize: 14,
-            borderBottom: activeRightTab === "prompt" ? "2px solid #60a5fa" : "2px solid transparent",
-          }}
-        >
-          Prompt
-        </button>
-        <button
-          className="btn h-10 min-w-[96px]"
-          onClick={() => handleTabSwitch("parameters")}
-          style={{
-            padding: "8px 12px",
-            border: "none",
-            background: activeRightTab === "parameters" ? "#1e293b" : "transparent",
-            color: activeRightTab === "parameters" ? "#e2e8f0" : "#94a3b8",
-            cursor: "pointer",
-            fontSize: 14,
-            borderBottom: activeRightTab === "parameters" ? "2px solid #60a5fa" : "2px solid transparent",
-          }}
-        >
-          Parameters
-        </button>
-        <button
-          className="btn h-10 min-w-[96px]"
-          onClick={() => handleTabSwitch("metrics")}
-          style={{
-            padding: "8px 12px",
-            border: "none",
-            background: activeRightTab === "metrics" ? "#1e293b" : "transparent",
-            color: activeRightTab === "metrics" ? "#e2e8f0" : "#94a3b8",
-            cursor: "pointer",
-            fontSize: 14,
-            borderBottom: activeRightTab === "metrics" ? "2px solid #60a5fa" : "2px solid transparent",
-          }}
-        >
-          Metrics
-        </button>
+    <div style={{ display: "grid", gap: 20 }}>
+      {/* Enhanced Tab Navigation — Modern segmented control */}
+      <div style={{
+        display: "flex",
+        background: "#0f172a",
+        border: "1px solid #334155",
+        borderRadius: 12,
+        padding: 6,
+        gap: 2,
+        position: "sticky",
+        top: 0,
+        zIndex: 10,
+        boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+      }}>
+        {([
+          { key: "prompt", label: "Prompt", icon: (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+            </svg>
+          )},
+          { key: "parameters", label: "Parameters", icon: (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.82,11.69,4.82,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+            </svg>
+          )},
+          { key: "metrics", label: "Metrics", icon: (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+            </svg>
+          )},
+        ] as const).map(t => (
+          <button
+            key={t.key}
+            onClick={() => handleTabSwitch(t.key)}
+            role="tab"
+            aria-selected={activeRightTab === t.key}
+            aria-controls={`tabpanel-${t.key}`}
+            style={{
+              flex: 1,
+              padding: "12px 16px",
+              borderRadius: 8,
+              border: "none",
+              background: activeRightTab === t.key 
+                ? "linear-gradient(135deg, #1e293b 0%, #334155 100%)" 
+                : "transparent",
+              color: activeRightTab === t.key ? "#ffffff" : "#94a3b8",
+              fontSize: 14,
+              fontWeight: activeRightTab === t.key ? 600 : 500,
+              cursor: "pointer",
+              transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              position: "relative",
+              overflow: "hidden",
+            }}
+            onMouseEnter={(e) => {
+              if (activeRightTab !== t.key) {
+                e.currentTarget.style.background = "#1e293b";
+                e.currentTarget.style.color = "#e2e8f0";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (activeRightTab !== t.key) {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = "#94a3b8";
+              }
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.outline = "2px solid #3b82f6";
+              e.currentTarget.style.outlineOffset = "2px";
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.outline = "none";
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center" }}>{t.icon}</span>
+            <span>{t.label}</span>
+            {activeRightTab === t.key && (
+              <div style={{
+                position: "absolute",
+                bottom: 0,
+                left: "50%",
+                transform: "translateX(-50%)",
+                width: "60%",
+                height: 2,
+                background: "linear-gradient(90deg, #3b82f6, #8b5cf6)",
+                borderRadius: 1,
+              }} />
+            )}
+          </button>
+        ))}
       </div>
 
-      {/* Tab Content */}
+      {/* Enhanced Tab Content */}
       {activeRightTab === "prompt" && (
-        <div>
-          <PromptPresetBox onPromptChange={handlePromptChange} value={getCurrentPromptText()} presetStore={ocrPresetStore} />
+        <div 
+          id="tabpanel-prompt"
+          role="tabpanel"
+          aria-labelledby="tab-prompt"
+          style={{
+            background: "#0f172a",
+            border: "1px solid #334155",
+            borderRadius: 12,
+            padding: 20,
+            boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+          }}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <PresetManager 
+              onPresetChange={handlePresetChange} 
+              autoApplyOnMount={false} 
+              presetStore={ocrPresetStore}
+              currentContent={textareaContent}
+              currentParameters={params}
+              currentMetrics={metricsState}
+            />
+          </div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <label 
+                htmlFor="prompt-textarea"
+                style={{ 
+                  fontSize: 14, 
+                  fontWeight: 600, 
+                  color: "#e2e8f0"
+                }}
+              >
+                Prompt Template
+              </label>
+              <button
+                onClick={() => setIsPromptModalOpen(true)}
+                style={{
+                  padding: "6px 8px",
+                  background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                  border: "none",
+                  color: "#ffffff",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                  e.currentTarget.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.15)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                </svg>
+                Enlarge
+              </button>
+            </div>
+            <ExpandableTextarea 
+              editable 
+              value={getCurrentPromptText()} 
+              onChange={handlePromptChange}
+            />
+            <div style={{ 
+              fontSize: 12, 
+              color: "#94a3b8", 
+              marginTop: 8,
+              padding: 8,
+              background: "#0f172a",
+              borderRadius: 6,
+              border: "1px solid #334155"
+            }}>
+              <strong>Template Variables:</strong> Use <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3 }}>{'{extracted text}'}</code>, <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3 }}>{'{reference}'}</code>, <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3 }}>{'{pdf_text}'}</code>, or <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3 }}>{'{source_text}'}</code> in your prompt.
+            </div>
+          </div>
         </div>
       )}
 
       {activeRightTab === "parameters" && (
-        <div>
-          <PresetManager onPresetChange={handlePresetChange} autoApplyOnMount={false} presetStore={ocrPresetStore} />
-          <ParamsPanel params={params} onChange={setParams} />
+        <div 
+          id="tabpanel-parameters"
+          role="tabpanel"
+          aria-labelledby="tab-parameters"
+          style={{
+            background: "#0f172a",
+            border: "1px solid #334155",
+            borderRadius: 12,
+            padding: 20,
+            boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+          }}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <PresetManager 
+              onPresetChange={handlePresetChange} 
+              autoApplyOnMount={false} 
+              presetStore={ocrPresetStore}
+              currentContent={textareaContent}
+              currentParameters={params}
+              currentMetrics={metricsState}
+            />
+          </div>
+          <div>
+            <h4 style={{ 
+              fontSize: 16, 
+              fontWeight: 600, 
+              color: "#e2e8f0", 
+              marginBottom: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 8
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.82,11.69,4.82,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+              </svg>
+              Model Parameters
+            </h4>
+            <ParamsPanel params={params} onChange={setParams} />
+          </div>
         </div>
       )}
 
       {activeRightTab === "metrics" && (
-        <div>
-          <PresetManager onPresetChange={handlePresetChange} autoApplyOnMount={false} presetStore={ocrPresetStore} />
-          <MetricsPanel metrics={metricsState} onChange={setMetricsState} />
+        <div 
+          id="tabpanel-metrics"
+          role="tabpanel"
+          aria-labelledby="tab-metrics"
+          style={{
+            background: "#0f172a",
+            border: "1px solid #334155",
+            borderRadius: 12,
+            padding: 20,
+            boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+          }}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <PresetManager 
+              onPresetChange={handlePresetChange} 
+              autoApplyOnMount={false} 
+              presetStore={ocrPresetStore}
+              currentContent={textareaContent}
+              currentParameters={params}
+              currentMetrics={metricsState}
+            />
+          </div>
+          <div>
+            <h4 style={{ 
+              fontSize: 16, 
+              fontWeight: 600, 
+              color: "#e2e8f0", 
+              marginBottom: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 8
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+              </svg>
+              Evaluation Metrics
+            </h4>
+            <MetricsPanel metrics={metricsState} onChange={setMetricsState} />
+          </div>
         </div>
       )}
     </div>
@@ -587,30 +980,163 @@ export default function OCRPage() {
 
   const renderFormView = () => (
     <>
-      <section style={{ display: "grid", gap: 8 }}>
-        <h3 style={{ margin: 0, color: "#e2e8f0" }}>OCR Extracted Text</h3>
-        <ExpandableTextarea value={ocr?.text ?? ""} />
+      <section style={{ 
+        display: "flex", 
+        flexDirection: "column", 
+        gap: 12,
+        background: "#0f172a",
+        border: "1px solid #334155",
+        borderRadius: 12,
+        padding: 20,
+        boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ 
+            width: 40, 
+            height: 40, 
+            background: "linear-gradient(135deg, #3b82f6, #8b5cf6)", 
+            borderRadius: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 18
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+              <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 18, fontWeight: 600 }}>OCR Extracted Text</h3>
+            <p style={{ margin: 0, color: "#94a3b8", fontSize: 14 }}>
+              {ocr ? `${ocr.page_count} page${ocr.page_count !== 1 ? 's' : ''} processed` : "No document processed yet"}
+            </p>
+          </div>
+        </div>
+        <ExpandableTextarea 
+          value={ocr?.text ?? ""} 
+        />
       </section>
 
-      <section style={{ display: "grid", gap: 8, marginTop: 16 }}>
+      <section style={{ 
+        display: "flex", 
+        flexDirection: "column", 
+        gap: 12,
+        background: "#0f172a",
+        border: "1px solid #334155",
+        borderRadius: 12,
+        padding: 20,
+        boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+      }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <h3 style={{ margin: 0, color: "#e2e8f0" }}>LLM Output</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ 
+              width: 40, 
+              height: 40, 
+              background: "linear-gradient(135deg, #10b981, #059669)", 
+              borderRadius: 10,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 18
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
+              </svg>
+            </div>
+            <div>
+              <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 18, fontWeight: 600 }}>LLM Output</h3>
+              <p style={{ margin: 0, color: "#94a3b8", fontSize: 14 }}>
+                {llmOutput ? `${llmOutput.length} characters` : "No output generated yet"}
+              </p>
+            </div>
+          </div>
+          
         </div>
-        <ExpandableTextarea editable value={llmOutput} onChange={setLlmOutput} />
-        <div style={{ display: "flex", gap: 8 }}>
+        <ExpandableTextarea 
+          editable 
+          value={llmOutput} 
+          onChange={setLlmOutput}
+          
+        />
+        <div>
           <button
-            className="btn h-10 min-w-[96px]"
             onClick={buildLlmOutput}
-            style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}
+            disabled={busy === "Calling LLM…"}
+            style={{ 
+              padding: "12px 20px", 
+              background: busy === "Calling LLM…" 
+                ? "#6b7280" 
+                : "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
+              border: "none", 
+              color: "#ffffff", 
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: busy === "Calling LLM…" ? "not-allowed" : "pointer",
+              transition: "all 0.2s ease",
+              boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+            onMouseEnter={(e) => {
+              if (busy !== "Calling LLM…") {
+                e.currentTarget.style.transform = "translateY(-1px)";
+                e.currentTarget.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.15)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (busy !== "Calling LLM…") {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.1)";
+              }
+            }}
           >
-            Build LLM Output
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
+            </svg>
+            {busy === "Calling LLM…" ? "Processing..." : "Build LLM Output"}
           </button>
         </div>
       </section>
 
-      <section style={{ display: "grid", gap: 8, marginTop: 16 }}>
-        <h3 style={{ margin: 0, color: "#e2e8f0" }}>Reference Text</h3>
-        <ExpandableTextarea editable value={reference} onChange={setReference} />
+      <section style={{ 
+        display: "flex", 
+        flexDirection: "column", 
+        gap: 12,
+        background: "#0f172a",
+        border: "1px solid #334155",
+        borderRadius: 12,
+        padding: 20,
+        boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ 
+            width: 40, 
+            height: 40, 
+            background: "linear-gradient(135deg, #f59e0b, #d97706)", 
+            borderRadius: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 18
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+              <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 18, fontWeight: 600 }}>Reference Text</h3>
+            <p style={{ margin: 0, color: "#94a3b8", fontSize: 14 }}>
+              {reference ? `${reference.length} characters` : "No reference text provided"}
+            </p>
+          </div>
+        </div>
+        <ExpandableTextarea 
+          editable 
+          value={reference} 
+          onChange={setReference}
+        />
       </section>
     </>
   );
@@ -651,7 +1177,7 @@ export default function OCRPage() {
   );
 
   return (
-    <LayoutShell title="OCR Evaluation" left={left} right={right}>
+    <LayoutShell title="OCR Evaluation" left={left} right={right} rightWidth={400}>
       {busy && (
         <div style={{
           background: "#1e293b",
@@ -668,44 +1194,427 @@ export default function OCRPage() {
       {viewMode === "compare-two" && renderCompareTwoView()}
 
       {scores && (
-        <section style={{ marginTop: 16 }}>
-          <h3 style={{ margin: "0 0 8px 0", color: "#e2e8f0" }}>Evaluation Results</h3>
+        <section style={{ 
+          marginTop: 24,
+          background: "#0f172a",
+          border: "1px solid #334155",
+          borderRadius: 12,
+          padding: 20,
+          boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <div style={{ 
+              width: 40, 
+              height: 40, 
+              background: "linear-gradient(135deg, #8b5cf6, #7c3aed)", 
+              borderRadius: 10,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 18
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+              </svg>
+            </div>
+            <div>
+              <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 18, fontWeight: 600 }}>Evaluation Results</h3>
+              <p style={{ margin: 0, color: "#94a3b8", fontSize: 14 }}>
+                {Object.keys(scores).length} metric{Object.keys(scores).length !== 1 ? 's' : ''} computed
+              </p>
+            </div>
+          </div>
           <div style={{ display: "grid", gap: 8 }}>
             {Object.entries(scores).map(([key, value]) => (
-              <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", background: "#1e293b", borderRadius: 4 }}>
-                <span style={{ color: "#e2e8f0" }}>{key}</span>
-                <span style={{ color: "#e2e8f0", fontFamily: "monospace" }}>{typeof value === "number" ? value.toFixed(4) : String(value)}</span>
+              <div key={key} style={{ 
+                display: "flex", 
+                justifyContent: "space-between", 
+                alignItems: "center",
+                padding: "12px 16px", 
+                background: "#1e293b", 
+                borderRadius: 8,
+                border: "1px solid #334155",
+                transition: "all 0.2s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#334155";
+                e.currentTarget.style.transform = "translateY(-1px)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "#1e293b";
+                e.currentTarget.style.transform = "translateY(0)";
+              }}
+              >
+                <span style={{ 
+                  color: "#e2e8f0", 
+                  fontSize: 14,
+                  fontWeight: 500,
+                  textTransform: "capitalize"
+                }}>
+                  {key.replace(/_/g, ' ')}
+                </span>
+                <span style={{ 
+                  color: "#e2e8f0", 
+                  fontFamily: "monospace",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  background: "#0f172a",
+                  padding: "4px 8px",
+                  borderRadius: 4,
+                  border: "1px solid #475569"
+                }}>
+                  {typeof value === "number" ? value.toFixed(4) : String(value)}
+                </span>
               </div>
             ))}
           </div>
         </section>
       )}
 
-      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+      <div style={{ 
+        display: "flex", 
+        gap: 12, 
+        marginTop: 24,
+        padding: 20,
+        background: "#0f172a",
+        border: "1px solid #334155",
+        borderRadius: 12,
+        boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+      }}>
         <button
-          className="btn h-10 min-w-[96px]"
           onClick={onEvaluate}
-          style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6 }}
+          disabled={busy === "Computing metrics..."}
+          style={{ 
+            padding: "12px 20px", 
+            background: busy === "Computing metrics..." 
+              ? "#6b7280" 
+              : "linear-gradient(135deg, #10b981, #059669)", 
+            border: "none", 
+            color: "#ffffff", 
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: busy === "Computing metrics..." ? "not-allowed" : "pointer",
+            transition: "all 0.2s ease",
+            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
         >
-          Run Evaluation
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: 8 }}>
+            <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+          </svg>
+          {busy === "Computing metrics..." ? "Computing..." : "Run Evaluation"}
         </button>
         <button
-          className="btn h-10 min-w-[96px]"
+          onClick={() => setIsAutomationModalOpen(true)}
+          style={{ 
+            padding: "12px 20px", 
+            background: "linear-gradient(135deg, #7c3aed, #6d28d9)", 
+            border: "none", 
+            color: "#ffffff", 
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: "all 0.2s ease",
+            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: 8 }}>
+            <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
+          </svg>
+          Run Automation
+        </button>
+        <button
           onClick={onDownloadCSV}
           disabled={!scores}
-          style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}
+          style={{ 
+            padding: "12px 20px", 
+            background: !scores 
+              ? "#6b7280" 
+              : "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
+            border: "none", 
+            color: "#ffffff", 
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: !scores ? "not-allowed" : "pointer",
+            transition: "all 0.2s ease",
+            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
         >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: 8 }}>
+            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+          </svg>
           Download CSV
         </button>
         <button
-          className="btn h-10 min-w-[96px]"
           onClick={onDownloadPDF}
           disabled={!scores}
-          style={{ padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, opacity: !scores ? 0.6 : 1 }}
+          style={{ 
+            padding: "12px 20px", 
+            background: !scores 
+              ? "#6b7280" 
+              : "linear-gradient(135deg, #ef4444, #dc2626)", 
+            border: "none", 
+            color: "#ffffff", 
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: !scores ? "not-allowed" : "pointer",
+            transition: "all 0.2s ease",
+            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
         >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: 8 }}>
+            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+          </svg>
           Download PDF
         </button>
       </div>
+
+      {/* Automation Results */}
+      {Object.keys(automationResults).length > 0 && (
+        <section style={{ marginTop: 24 }}>
+          <h3 style={{ margin: "0 0 16px 0", color: "#e2e8f0" }}>Automation Results</h3>
+          <div style={{ display: "grid", gap: 16 }}>
+            {Object.entries(automationResults).map(([runId, result]) => (
+              <div key={runId} style={{ 
+                border: "1px solid #334155", 
+                borderRadius: 8, 
+                padding: 16, 
+                background: "#0f172a" 
+              }}>
+                <h4 style={{ margin: "0 0 12px 0", color: "#e2e8f0" }}>{result.runName}</h4>
+                {result.error ? (
+                  <div style={{ color: "#ef4444", fontSize: 14 }}>Error: {result.error}</div>
+                ) : (
+                  <>
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Output:</div>
+                      <div style={{ 
+                        background: "#1e293b", 
+                        padding: 8, 
+                        borderRadius: 4, 
+                        fontSize: 13, 
+                        color: "#e2e8f0",
+                        maxHeight: 100,
+                        overflow: "auto"
+                      }}>
+                        {result.output}
+                      </div>
+                    </div>
+                    {result.scores && (
+                      <div>
+                        <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Scores:</div>
+                        <div style={{ display: "grid", gap: 4 }}>
+                          {Object.entries(result.scores).map(([key, value]) => (
+                            <div key={key} style={{ 
+                              display: "flex", 
+                              justifyContent: "space-between", 
+                              padding: "4px 8px", 
+                              background: "#1e293b", 
+                              borderRadius: 4 
+                            }}>
+                              <span style={{ color: "#e2e8f0", fontSize: 12 }}>{key}</span>
+                              <span style={{ color: "#e2e8f0", fontFamily: "monospace", fontSize: 12 }}>
+                                {typeof value === "number" ? value.toFixed(4) : String(value)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Automation Modal */}
+      <AutomationModal
+        isOpen={isAutomationModalOpen}
+        onClose={() => setIsAutomationModalOpen(false)}
+        onStart={handleAutomationStart}
+        presetStore={ocrPresetStore}
+        defaultPrompt={textareaContent}
+        kind="ocr"
+      />
+      {/* Prompt Enlarge Modal */}
+      {isPromptModalOpen && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0, 0, 0, 0.8)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+          onClick={() => setIsPromptModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "90vw",
+              maxWidth: "1000px",
+              height: "80vh",
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: 12,
+              padding: 24,
+              color: "#e2e8f0",
+              display: "flex",
+              flexDirection: "column",
+              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "#e2e8f0" }}>
+                Edit Prompt Template
+              </h2>
+              <button
+                onClick={() => setIsPromptModalOpen(false)}
+                style={{
+                  padding: "8px",
+                  background: "transparent",
+                  border: "1px solid #334155",
+                  color: "#94a3b8",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  fontSize: 18,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 32,
+                  height: 32,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#334155";
+                  e.currentTarget.style.color = "#e2e8f0";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.color = "#94a3b8";
+                }}
+              >
+                ×
+              </button>
+            </div>
+            
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label style={{ 
+                  display: "block", 
+                  fontSize: 14, 
+                  fontWeight: 600, 
+                  color: "#e2e8f0", 
+                  marginBottom: 8 
+                }}>
+                  Prompt Template
+                </label>
+                <textarea
+                  value={getCurrentPromptText()}
+                  onChange={(e) => handlePromptChange(e.target.value)}
+                  style={{
+                    width: "100%",
+                    height: "60vh",
+                    border: "1px solid #475569",
+                    borderRadius: 8,
+                    background: "#1e293b",
+                    color: "#e2e8f0",
+                    padding: 16,
+                    fontSize: 14,
+                    fontFamily: "monospace",
+                    resize: "vertical",
+                    boxSizing: "border-box",
+                  }}
+                  placeholder="Enter your prompt template here..."
+                />
+              </div>
+              
+              <div style={{ 
+                fontSize: 12, 
+                color: "#94a3b8", 
+                padding: 12,
+                background: "#0f172a",
+                borderRadius: 6,
+                border: "1px solid #334155"
+              }}>
+                <strong>Template Variables:</strong> Use <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3 }}>{'{extracted text}'}</code>, <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3 }}>{'{reference}'}</code>, <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3 }}>{'{pdf_text}'}</code>, or <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3 }}>{'{source_text}'}</code> in your prompt.
+              </div>
+            </div>
+            
+            <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+              <button
+                onClick={() => setIsPromptModalOpen(false)}
+                style={{
+                  padding: "12px 24px",
+                  background: "linear-gradient(135deg, #10b981, #059669)",
+                  border: "none",
+                  color: "#ffffff",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                  e.currentTarget.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.15)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              >
+                Save & Close
+              </button>
+              <button
+                onClick={() => setIsPromptModalOpen(false)}
+                style={{
+                  padding: "12px 24px",
+                  background: "transparent",
+                  border: "1px solid #334155",
+                  color: "#94a3b8",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#334155";
+                  e.currentTarget.style.color = "#e2e8f0";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.color = "#94a3b8";
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </LayoutShell>
   );
 }

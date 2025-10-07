@@ -27,7 +27,7 @@ export default function MetricsTab({ currentRun }: MetricsTabProps) {
   };
 
   const formatTimestamp = (timestamp: number) => {
-    return new Date(timestamp).toLocaleString();
+    return new Date(timestamp).toLocaleDateString('en-GB');
   };
 
   const metrics = [

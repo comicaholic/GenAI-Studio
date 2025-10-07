@@ -46,7 +46,13 @@ class ChatIn(BaseModel):
 @router.post("/complete")
 def complete(body: CompleteIn):
     if body.provider == "groq":
+        # Try to get API key from environment first, then from config
         key = os.getenv("GROQ_API_KEY")
+        if not key:
+            from app.services.config import load_config
+            cfg = load_config()
+            key = cfg.get("groq", {}).get("apiKey", "")
+        
         if not key:
             raise HTTPException(400, "GROQ_API_KEY not set")
 
@@ -105,7 +111,14 @@ def chat(body: ChatIn):
     """
     # For now, we'll use Groq for all chat completions
     # In the future, this could route to local models based on model_id
+    
+    # Try to get API key from environment first, then from config
     key = os.getenv("GROQ_API_KEY")
+    if not key:
+        from app.services.config import load_config
+        cfg = load_config()
+        key = cfg.get("groq", {}).get("apiKey", "")
+    
     print(f"GROQ_API_KEY loaded: {bool(key)}")
     if key:
         print(f"GROQ_API_KEY length: {len(key)}")

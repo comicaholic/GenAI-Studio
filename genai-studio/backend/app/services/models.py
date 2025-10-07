@@ -87,9 +87,28 @@ def get_groq_models():
       GET https://api.groq.com/openai/v1/models
     """
     from app.services.model_classifier import classify_models
+    from app.services.config import load_config
     
+    # Try to get API key from environment first, then from config
     key = os.getenv("GROQ_API_KEY")
+    print(f"Environment GROQ_API_KEY present: {bool(key)}")
+    if not key:
+        # Fallback to config file
+        print("Environment key not found, reading from config file")
+        cfg = load_config()
+        key = cfg.get("groq", {}).get("apiKey", "")
+        print(f"Config file key present: {bool(key)}")
+    else:
+        print("Using environment variable for API key")
+    
     print(f"Getting Groq models, API key present: {bool(key)}")
+    if key:
+        print(f"API key length: {len(key)}")
+        print(f"API key starts with: {key[:10]}...")
+        print(f"API key ends with: ...{key[-10:]}")
+
+    if not key:
+        return {"error": "GROQ_API_KEY not set"}, []
 
     url = "https://api.groq.com/openai/v1/models"
     headers = {"Authorization": f"Bearer {key}"}
@@ -130,10 +149,10 @@ def get_groq_models():
         print(f"Response status: {e.response.status_code}")
         print(f"Response text: {e.response.text}")
         # Keep the app usable and surface a clear message in the UI
-        
+        return {"error": f"HTTP {getattr(e.response,'status_code', '?')}"}, []
     except Exception as e:
         print(f"Groq models API error: {e}")
-        
+        return {"error": str(e)}, []
 
 def scan_models_dir():
     from app.services.config import load_config

@@ -3,7 +3,12 @@ from .base import LLMProvider
 
 class GroqProvider(LLMProvider):
     def __init__(self):
+        # Try to get API key from environment first, then from config
         self.key = os.getenv("GROQ_API_KEY")
+        if not self.key:
+            from app.services.config import load_config
+            cfg = load_config()
+            self.key = cfg.get("groq", {}).get("apiKey", "")
         self.session = requests.Session()
 
     def list_models(self):

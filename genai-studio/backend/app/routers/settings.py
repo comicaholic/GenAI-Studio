@@ -4,8 +4,55 @@ from pathlib import Path
 from ..services.config import load_config, save_config, resolve_paths, _to_abs
 import requests
 import os
+import re
+from dotenv import load_dotenv
 
 router = APIRouter(tags=["settings"])
+
+# Path to .env file
+BACKEND_DIR = Path(__file__).resolve().parents[2]  # backend/
+ENV_PATH = BACKEND_DIR / ".env"
+
+def update_env_file(key: str, value: str):
+    """Update or add a key-value pair in the .env file"""
+    if not ENV_PATH.exists():
+        ENV_PATH.write_text(f"# Environment variables for GenAI Studio\n# This file is automatically managed by the settings page\n\n")
+    
+    content = ENV_PATH.read_text(encoding="utf-8")
+    
+    # Pattern to match the key (with optional = and value)
+    pattern = rf"^{re.escape(key)}\s*=.*$"
+    
+    if re.search(pattern, content, re.MULTILINE):
+        # Update existing key
+        content = re.sub(pattern, f"{key}={value}", content, flags=re.MULTILINE)
+    else:
+        # Add new key
+        content += f"\n{key}={value}"
+    
+    ENV_PATH.write_text(content, encoding="utf-8")
+
+def load_env_file():
+    """Load environment variables from .env file"""
+    if not ENV_PATH.exists():
+        return {}
+    
+    env_vars = {}
+    content = ENV_PATH.read_text(encoding="utf-8")
+    
+    for line in content.split('\n'):
+        line = line.strip()
+        if line and not line.startswith('#') and '=' in line:
+            key, value = line.split('=', 1)
+            env_vars[key.strip()] = value.strip()
+    
+    return env_vars
+
+def reload_env_file():
+    """Reload environment variables from .env file"""
+    if ENV_PATH.exists():
+        load_dotenv(dotenv_path=ENV_PATH, override=True)
+        print("Reloaded environment variables from .env file")
 
 class PathsIn(BaseModel):
     source_dir: str
@@ -84,6 +131,21 @@ def get_settings():
                 if subkey not in cfg[key]:
                     cfg[key][subkey] = subvalue
     
+    # Load environment variables from .env file and set them
+    env_vars = load_env_file()
+    for key, value in env_vars.items():
+        if value:  # Only set non-empty values
+            os.environ[key] = value
+    
+    # Set environment variables from config if they exist and aren't already set
+    if "groq" in cfg and "apiKey" in cfg["groq"] and cfg["groq"]["apiKey"]:
+        if not os.getenv("GROQ_API_KEY"):
+            os.environ["GROQ_API_KEY"] = cfg["groq"]["apiKey"]
+    
+    if "huggingface" in cfg and "token" in cfg["huggingface"] and cfg["huggingface"]["token"]:
+        if not os.getenv("HUGGINGFACE_TOKEN"):
+            os.environ["HUGGINGFACE_TOKEN"] = cfg["huggingface"]["token"]
+    
     return cfg
 
 @router.post("/settings")
@@ -93,6 +155,22 @@ def save_settings(settings: SettingsIn):
     
     # Update settings
     cfg.update(settings.dict())
+    
+    # Set environment variables for API keys and write to .env file
+    if "groq" in settings.dict() and "apiKey" in settings.groq:
+        api_key = settings.groq["apiKey"]
+        os.environ["GROQ_API_KEY"] = api_key
+        update_env_file("GROQ_API_KEY", api_key)
+        print(f"Updated GROQ_API_KEY in environment: {bool(api_key)}")
+    
+    if "huggingface" in settings.dict() and "token" in settings.huggingface:
+        token = settings.huggingface["token"]
+        os.environ["HUGGINGFACE_TOKEN"] = token
+        update_env_file("HUGGINGFACE_TOKEN", token)
+        print(f"Updated HUGGINGFACE_TOKEN in environment: {bool(token)}")
+    
+    # Reload environment variables from .env file to ensure all services pick up changes
+    reload_env_file()
     
     # Ensure directories exist
     paths = cfg.get("paths", {})

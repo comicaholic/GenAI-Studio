@@ -184,14 +184,21 @@ function CircleCompare({
 }
 
 /* small stylized stat card */
-function StatCard({ title, value, subtitle, color = colors.primary }: { title: string; value: string | number; subtitle?: string; color?: string }) {
+function StatCard({ title, value, subtitle, color = "#3b82f6" }: { title: string; value: string | number; subtitle?: string; color?: string }) {
   return (
-    <div style={{ padding: 20, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 12, boxShadow: "0 6px 20px rgba(2,6,23,0.6)" }}>
+    <div style={{ 
+      padding: 24, 
+      background: "#0f172a", 
+      border: "1px solid #334155", 
+      borderRadius: 16, 
+      boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+      transition: "all 0.2s ease"
+    }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12 }}>
         <div>
-          <div style={{ fontSize: 13, color: colors.muted, marginBottom: 6 }}>{title}</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color }}>{value}</div>
-          {subtitle && <div style={{ fontSize: 12, color: colors.muted, marginTop: 6 }}>{subtitle}</div>}
+          <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 8, fontWeight: 500 }}>{title}</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color, marginBottom: 4 }}>{value}</div>
+          {subtitle && <div style={{ fontSize: 12, color: "#94a3b8" }}>{subtitle}</div>}
         </div>
       </div>
     </div>
@@ -201,9 +208,15 @@ function StatCard({ title, value, subtitle, color = colors.primary }: { title: s
 /* Chart card wrapper */
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ padding: 20, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 12, boxShadow: "0 6px 20px rgba(2,6,23,0.6)" }}>
-      <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ margin: 0, color: colors.text, fontSize: 16 }}>{title}</h3>
+    <div style={{ 
+      padding: 24, 
+      background: "#0f172a", 
+      border: "1px solid #334155", 
+      borderRadius: 16, 
+      boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)" 
+    }}>
+      <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 18, fontWeight: 600 }}>{title}</h3>
       </div>
       <div style={{ width: "100%", height: 360 }}>{children}</div>
     </div>
@@ -430,21 +443,62 @@ export default function AnalyticsPage() {
 
   /* -------------------- Render -------------------- */
   return (
-    <div style={{ display: "flow", height: "100vh", minHeight: "0", overflow: "hidden", background: colors.bg }}>
-      <LeftRail />
-      <LayoutShell>
-        <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto", height: "100%", color: colors.text }}>
-          {/* Header */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 22 }}>
-            <div>
-              <h1 style={{ margin: 0, color: colors.text, fontSize: 28, fontWeight: 800 }}>Analytics</h1>
-              <p style={{ margin: "6px 0 0 0", color: colors.muted }}>Real-time application & API metrics</p>
+    <LayoutShell title="Analytics">
+      <div style={{ 
+        width: "100%", 
+        maxWidth: 1400, 
+        margin: "0 auto", 
+        color: "#e2e8f0",
+        padding: "24px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 24
+      }}>
+          {/* Modern Header */}
+          <div style={{ 
+            display: "flex", 
+            justifyContent: "space-between", 
+            alignItems: "center", 
+            gap: 24,
+            padding: "24px",
+            background: "#0f172a",
+            border: "1px solid #334155",
+            borderRadius: 16,
+            boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <div style={{ 
+                width: 48, 
+                height: 48, 
+                background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
+                borderRadius: 12,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "0 4px 12px rgba(59, 130, 246, 0.3)"
+              }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="white">
+                  <path d="M16,6L18.29,8.29L13.41,13.17L9.41,9.17L2,16.59L3.41,18L9.41,12L13.41,16L19.71,9.71L22,12V6H16Z"/>
+                </svg>
+              </div>
+              <div>
+                <h1 style={{ margin: 0, color: "#e2e8f0", fontSize: 28, fontWeight: 700 }}>Analytics</h1>
+                <p style={{ margin: "4px 0 0 0", color: "#94a3b8", fontSize: 14 }}>Real-time application & API metrics</p>
+              </div>
             </div>
 
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              <div style={{ padding: 12, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 10, textAlign: "center" }}>
-                <div style={{ fontSize: 12, color: colors.muted }}>Uptime</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: colors.secondary }}>
+            <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+              {/* Uptime Card */}
+              <div style={{ 
+                padding: "16px 20px", 
+                background: "#1e293b", 
+                border: "1px solid #334155", 
+                borderRadius: 12, 
+                textAlign: "center",
+                minWidth: 120
+              }}>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4, fontWeight: 500 }}>Uptime</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#10b981" }}>
                   {uptime
                     ? (() => {
                         const s = uptime.uptime_seconds;
@@ -459,11 +513,30 @@ export default function AnalyticsPage() {
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {/* Controls */}
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <select
                   value={timeFilter}
                   onChange={(e) => setTimeFilter(e.target.value as any)}
-                  style={{ padding: "8px 12px", borderRadius: 8, background: colors.panel, color: colors.text, border: `1px solid ${colors.slate}` }}
+                  style={{ 
+                    padding: "10px 16px", 
+                    borderRadius: 10, 
+                    background: "#1e293b", 
+                    color: "#e2e8f0", 
+                    border: "1px solid #334155",
+                    fontSize: 14,
+                    fontWeight: 500,
+                    outline: "none",
+                    transition: "all 0.2s ease"
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = "#3b82f6";
+                    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = "#334155";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
                 >
                   <option value="1h">Last 1h</option>
                   <option value="6h">Last 6h</option>
@@ -474,66 +547,162 @@ export default function AnalyticsPage() {
                 <button
                   onClick={() => loadAll()}
                   style={{
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    background: colors.primary,
-                    color: "#fff",
+                    padding: "10px 16px",
+                    borderRadius: 10,
+                    background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                    color: "#ffffff",
                     border: "none",
                     cursor: "pointer",
-                    fontWeight: 700,
+                    fontWeight: 600,
+                    fontSize: 14,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    transition: "all 0.2s ease",
+                    boxShadow: "0 2px 4px rgba(59, 130, 246, 0.3)"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-1px)";
+                    e.currentTarget.style.boxShadow = "0 4px 8px rgba(59, 130, 246, 0.4)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow = "0 2px 4px rgba(59, 130, 246, 0.3)";
                   }}
                 >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/>
+                  </svg>
                   Refresh
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Top Tabs */}
-          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+          {/* Modern Tab Navigation */}
+          <div style={{ 
+            display: "flex", 
+            background: "#0f172a", 
+            borderRadius: 12, 
+            padding: 6,
+            border: "1px solid #334155",
+            gap: 4
+          }}>
             <button
               onClick={() => setActiveTab("application")}
               style={{
-                padding: "10px 18px",
-                borderRadius: 10,
-                background: activeTab === "application" ? colors.primary : colors.panel,
-                color: colors.text,
-                border: `1px solid ${colors.slate}`,
-                fontWeight: activeTab === "application" ? 800 : 600,
+                flex: 1,
+                padding: "12px 20px",
+                borderRadius: 8,
+                border: "none",
+                background: activeTab === "application" 
+                  ? "linear-gradient(135deg, #3b82f6, #1d4ed8)" 
+                  : "transparent",
+                color: activeTab === "application" ? "#ffffff" : "#94a3b8",
                 cursor: "pointer",
+                fontSize: 14,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                transition: "all 0.2s ease"
+              }}
+              onMouseEnter={(e) => {
+                if (activeTab !== "application") {
+                  e.currentTarget.style.background = "#1e293b";
+                  e.currentTarget.style.color = "#e2e8f0";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (activeTab !== "application") {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.color = "#94a3b8";
+                }
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+              </svg>
               Application
             </button>
             <button
               onClick={() => setActiveTab("groq")}
               style={{
-                padding: "10px 18px",
-                borderRadius: 10,
-                background: activeTab === "groq" ? colors.primary : colors.panel,
-                color: colors.text,
-                border: `1px solid ${colors.slate}`,
-                fontWeight: activeTab === "groq" ? 800 : 600,
+                flex: 1,
+                padding: "12px 20px",
+                borderRadius: 8,
+                border: "none",
+                background: activeTab === "groq" 
+                  ? "linear-gradient(135deg, #3b82f6, #1d4ed8)" 
+                  : "transparent",
+                color: activeTab === "groq" ? "#ffffff" : "#94a3b8",
                 cursor: "pointer",
+                fontSize: 14,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                transition: "all 0.2s ease"
+              }}
+              onMouseEnter={(e) => {
+                if (activeTab !== "groq") {
+                  e.currentTarget.style.background = "#1e293b";
+                  e.currentTarget.style.color = "#e2e8f0";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (activeTab !== "groq") {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.color = "#94a3b8";
+                }
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
+              </svg>
               Groq API
             </button>
           </div>
 
           {/* Sub tabs for application */}
           {activeTab === "application" && (
-            <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+            <div style={{ 
+              display: "flex", 
+              background: "#0f172a", 
+              borderRadius: 10, 
+              padding: 4,
+              border: "1px solid #334155",
+              gap: 4,
+              width: "fit-content"
+            }}>
               <button
                 onClick={() => setActiveSubTab("system")}
                 style={{
-                  padding: "8px 14px",
+                  padding: "10px 16px",
                   borderRadius: 8,
-                  background: activeSubTab === "system" ? colors.secondary : colors.panel,
-                  color: colors.text,
-                  border: `1px solid ${colors.slate}`,
-                  fontWeight: activeSubTab === "system" ? 700 : 600,
+                  border: "none",
+                  background: activeSubTab === "system" 
+                    ? "linear-gradient(135deg, #10b981, #059669)" 
+                    : "transparent",
+                  color: activeSubTab === "system" ? "#ffffff" : "#94a3b8",
                   cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  transition: "all 0.2s ease"
+                }}
+                onMouseEnter={(e) => {
+                  if (activeSubTab !== "system") {
+                    e.currentTarget.style.background = "#1e293b";
+                    e.currentTarget.style.color = "#e2e8f0";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (activeSubTab !== "system") {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "#94a3b8";
+                  }
                 }}
               >
                 System
@@ -541,13 +710,29 @@ export default function AnalyticsPage() {
               <button
                 onClick={() => setActiveSubTab("trends")}
                 style={{
-                  padding: "8px 14px",
+                  padding: "10px 16px",
                   borderRadius: 8,
-                  background: activeSubTab === "trends" ? colors.secondary : colors.panel,
-                  color: colors.text,
-                  border: `1px solid ${colors.slate}`,
-                  fontWeight: activeSubTab === "trends" ? 700 : 600,
+                  border: "none",
+                  background: activeSubTab === "trends" 
+                    ? "linear-gradient(135deg, #10b981, #059669)" 
+                    : "transparent",
+                  color: activeSubTab === "trends" ? "#ffffff" : "#94a3b8",
                   cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  transition: "all 0.2s ease"
+                }}
+                onMouseEnter={(e) => {
+                  if (activeSubTab !== "trends") {
+                    e.currentTarget.style.background = "#1e293b";
+                    e.currentTarget.style.color = "#e2e8f0";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (activeSubTab !== "trends") {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "#94a3b8";
+                  }
                 }}
               >
                 Trends
@@ -555,13 +740,29 @@ export default function AnalyticsPage() {
               <button
                 onClick={() => setActiveSubTab("evaluations")}
                 style={{
-                  padding: "8px 14px",
+                  padding: "10px 16px",
                   borderRadius: 8,
-                  background: activeSubTab === "evaluations" ? colors.secondary : colors.panel,
-                  color: colors.text,
-                  border: `1px solid ${colors.slate}`,
-                  fontWeight: activeSubTab === "evaluations" ? 700 : 600,
+                  border: "none",
+                  background: activeSubTab === "evaluations" 
+                    ? "linear-gradient(135deg, #10b981, #059669)" 
+                    : "transparent",
+                  color: activeSubTab === "evaluations" ? "#ffffff" : "#94a3b8",
                   cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  transition: "all 0.2s ease"
+                }}
+                onMouseEnter={(e) => {
+                  if (activeSubTab !== "evaluations") {
+                    e.currentTarget.style.background = "#1e293b";
+                    e.currentTarget.style.color = "#e2e8f0";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (activeSubTab !== "evaluations") {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "#94a3b8";
+                  }
                 }}
               >
                 Evaluations
@@ -828,8 +1029,7 @@ export default function AnalyticsPage() {
               )}
             </>
           )}
-        </div>
-      </LayoutShell>
-    </div>
+      </div>
+    </LayoutShell>
   );
 }

@@ -2,16 +2,25 @@ import os, requests
 from typing import Dict, List, Tuple
 
 GROQ_BASE = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-GROQ_KEY  = os.getenv("GROQ_API_KEY", "")
+
+def _get_groq_key() -> str:
+    """Get Groq API key from environment or config"""
+    key = os.getenv("GROQ_API_KEY", "")
+    if not key:
+        from app.services.config import load_config
+        cfg = load_config()
+        key = cfg.get("groq", {}).get("apiKey", "")
+    return key
+
+def _headers() -> Dict[str, str]:
+    return {"Authorization": f"Bearer {_get_groq_key()}", "Content-Type": "application/json"}
 
 TIMEOUT = 60
 
-def _headers() -> Dict[str, str]:
-    return {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-
 def list_groq_models() -> List[Dict]:
     """Return Groq-compatible models."""
-    if not GROQ_KEY:
+    key = _get_groq_key()
+    if not key:
         # keep a stub so the UI boots, but call will fail if used
         return [{"id":"stub:echo", "label":"Stub • Echo (no GROQ_API_KEY)", "tags":["stub"]}]
     try:
@@ -45,7 +54,8 @@ def chat_complete(model_id: str, messages, **params) -> str:
         content = "\n\n".join([m.get("content","") for m in messages])
         return f"[STUB ECHO]\n{content[:4000]}"
 
-    if not GROQ_KEY:
+    key = _get_groq_key()
+    if not key:
         raise RuntimeError("GROQ_API_KEY not set")
 
     body = {
