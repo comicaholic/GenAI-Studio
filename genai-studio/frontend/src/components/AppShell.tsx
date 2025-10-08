@@ -1,5 +1,4 @@
 import React, { PropsWithChildren, useState } from 'react'
-import ModelSelector from './TopBar/ModelSelector'
 
 export default function AppShell({
   children,

@@ -36,9 +36,6 @@ origins = [
     "http://127.0.0.1:5173",
     "http://localhost",    
     "http://127.0.0.1",
-    # Docker frontend access
-    "http://frontend:5173",
-    "http://frontend",
 ]
 
 app.add_middleware(

@@ -346,7 +346,7 @@ export default function SettingsPage() {
         background: "#0b1220", 
         color: "#e2e8f0",
         display: "flex",
-        minHeight: 845
+        minHeight: 0
       }}>
         {/* Modern sidebar navigation */}
         <aside style={{
@@ -510,7 +510,7 @@ export default function SettingsPage() {
         <main style={{
           flex: 1,
           padding: 24,
-          overflow: "hidden",
+          overflow: "auto",
           display: "flex",
           flexDirection: "column",
           gap: 24
