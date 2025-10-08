@@ -12,6 +12,7 @@ router = APIRouter(prefix="/history", tags=["history"])
 DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 EVALS_FILE = DATA_DIR / "evaluations.json"
 CHATS_FILE = DATA_DIR / "chats.json"
+AUTOMATIONS_FILE = DATA_DIR / "automations.json"
 
 # Ensure data directory exists
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,22 @@ class SavedChat(BaseModel):
     usedText: Optional[UsedText] = None
     lastActivityAt: datetime
 
+class AutomationRun(BaseModel):
+    id: str
+    startedAt: datetime
+    completedAt: Optional[datetime] = None
+    status: str
+    results: Optional[Dict[str, Any]] = None
+
+class SavedAutomation(BaseModel):
+    id: str
+    name: str
+    model: ModelInfo
+    parameters: Dict[str, Any]
+    runs: List[AutomationRun] = []
+    status: str = "unknown"
+    completedAt: Optional[datetime] = None
+
 # Helper functions
 def load_evaluations() -> List[SavedEvaluation]:
     """Load evaluations from file"""
@@ -96,6 +113,26 @@ def save_chats(chats: List[SavedChat]) -> None:
             json.dump([chat.dict() for chat in chats], f, indent=2, default=str)
     except Exception as e:
         print(f"Error saving chats: {e}")
+
+def load_automations() -> List[SavedAutomation]:
+    """Load automations from file"""
+    if not AUTOMATIONS_FILE.exists():
+        return []
+    try:
+        with open(AUTOMATIONS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return [SavedAutomation(**item) for item in data]
+    except Exception as e:
+        print(f"Error loading automations: {e}")
+        return []
+
+def save_automations(automations: List[SavedAutomation]) -> None:
+    """Save automations to file"""
+    try:
+        with open(AUTOMATIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump([automation.dict() for automation in automations], f, indent=2, default=str)
+    except Exception as e:
+        print(f"Error saving automations: {e}")
 
 # API Endpoints
 @router.get("/evals")
@@ -202,6 +239,61 @@ def delete_chat(chat_id: str):
         chats = [chat for chat in chats if chat.id != chat_id]
         save_chats(chats)
         return {"message": "Chat deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Automation endpoints
+@router.get("/automations")
+def get_automations():
+    """Get all saved automations"""
+    try:
+        automations = load_automations()
+        return {"automations": [automation.dict() for automation in automations]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/automations/{automation_id}")
+def get_automation(automation_id: str):
+    """Get a specific automation by ID"""
+    try:
+        automations = load_automations()
+        automation = next((automation for automation in automations if automation.id == automation_id), None)
+        if not automation:
+            raise HTTPException(status_code=404, detail="Automation not found")
+        return automation.dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/automations")
+def create_automation(automation: SavedAutomation):
+    """Create a new automation record"""
+    try:
+        automations = load_automations()
+        automations.append(automation)
+        save_automations(automations)
+        return {"id": automation.id, "message": "Automation saved successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/automations/{automation_id}")
+def delete_automation(automation_id: str):
+    """Delete an automation"""
+    try:
+        automations = load_automations()
+        automations = [automation for automation in automations if automation.id != automation_id]
+        save_automations(automations)
+        return {"message": "Automation deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/automations/aggregates")
+def get_automation_aggregates():
+    """Get aggregated automation results for home page"""
+    try:
+        automations = load_automations()
+        return [automation.dict() for automation in automations]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
