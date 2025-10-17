@@ -17,7 +17,7 @@
     "chat": []
   },
   "groq": {
-    "apiKey": "",
+    "apiKey": "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",
     "connected": true
   },
   "huggingface": {

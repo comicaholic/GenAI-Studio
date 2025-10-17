@@ -487,12 +487,22 @@ export default function OCRPage() {
             run.parameters
           );
 
-          // Compute metrics
-          const selectedMetrics = Object.keys(run.metrics).filter(key => (run.metrics as any)[key]);
+          // Compute metrics - only compute selected metrics
+          const runSelectedMetrics: string[] = [];
+          if (run.metrics.rouge) runSelectedMetrics.push("rouge");
+          if (run.metrics.bleu) runSelectedMetrics.push("bleu");
+          if (run.metrics.f1) runSelectedMetrics.push("f1");
+          if (run.metrics.em) runSelectedMetrics.push("em");
+          if (run.metrics.bertscore) runSelectedMetrics.push("bertscore");
+          if (run.metrics.perplexity) runSelectedMetrics.push("perplexity");
+          if (run.metrics.accuracy) runSelectedMetrics.push("accuracy");
+          if (run.metrics.precision) runSelectedMetrics.push("precision");
+          if (run.metrics.recall) runSelectedMetrics.push("recall");
+          
           const res = await computeMetrics({
             prediction: output || "",
             reference,
-            metrics: selectedMetrics,
+            metrics: runSelectedMetrics,
             meta: {
               model: selected.id,
               params: run.parameters,
@@ -518,7 +528,7 @@ export default function OCRPage() {
               title: `${config.name} - ${run.name}`,
               model: { id: selected.id, provider: selected.provider },
               parameters: run.parameters,
-              metrics: selectedMetrics,
+              metrics: runSelectedMetrics,
               usedText: {
                 ocrText: ocr.text,
                 referenceText: reference,

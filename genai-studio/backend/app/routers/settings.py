@@ -119,6 +119,10 @@ def get_settings():
         "huggingface": {
             "token": "",
             "connected": False
+        },
+        "localModels": {
+            "selectedGpu": "auto",
+            "availableGpus": ["auto", "cpu", "cuda:0", "cuda:1", "mps"]
         }
     }
     
@@ -130,6 +134,19 @@ def get_settings():
             for subkey, subvalue in value.items():
                 if subkey not in cfg[key]:
                     cfg[key][subkey] = subvalue
+    
+    # Load presets from presets file
+    try:
+        from .presets import load_presets
+        presets_data = load_presets()
+        cfg["presets"] = {
+            "ocr": [preset["name"] for preset in presets_data.get("ocr", [])],
+            "prompt": [preset["name"] for preset in presets_data.get("prompt", [])],
+            "chat": [preset["name"] for preset in presets_data.get("chat", [])]
+        }
+    except Exception as e:
+        print(f"Warning: Could not load presets: {e}")
+        # Keep default empty presets if loading fails
     
     # Load environment variables from .env file and set them
     env_vars = load_env_file()
@@ -145,6 +162,16 @@ def get_settings():
     if "huggingface" in cfg and "token" in cfg["huggingface"] and cfg["huggingface"]["token"]:
         if not os.getenv("HUGGINGFACE_TOKEN"):
             os.environ["HUGGINGFACE_TOKEN"] = cfg["huggingface"]["token"]
+    
+    # Validate connection status based on actual API key presence
+    # Only mark as connected if there's actually an API key
+    if "groq" in cfg:
+        groq_api_key = cfg["groq"].get("apiKey", "") or os.getenv("GROQ_API_KEY", "")
+        cfg["groq"]["connected"] = bool(groq_api_key.strip())
+    
+    if "huggingface" in cfg:
+        hf_token = cfg["huggingface"].get("token", "") or os.getenv("HUGGINGFACE_TOKEN", "")
+        cfg["huggingface"]["connected"] = bool(hf_token.strip())
     
     return cfg
 
@@ -172,6 +199,15 @@ def save_settings(settings: SettingsIn):
     # Reload environment variables from .env file to ensure all services pick up changes
     reload_env_file()
     
+    # Re-validate connection status after saving settings
+    if "groq" in cfg:
+        groq_api_key = cfg["groq"].get("apiKey", "") or os.getenv("GROQ_API_KEY", "")
+        cfg["groq"]["connected"] = bool(groq_api_key.strip())
+    
+    if "huggingface" in cfg:
+        hf_token = cfg["huggingface"].get("token", "") or os.getenv("HUGGINGFACE_TOKEN", "")
+        cfg["huggingface"]["connected"] = bool(hf_token.strip())
+    
     # Ensure directories exist
     paths = cfg.get("paths", {})
     for path_key in ["ocrSource", "ocrReference", "promptSource", "promptReference", "chatDownloadPath"]:
@@ -195,10 +231,32 @@ def test_groq_connection(request: dict):
         response = requests.get("https://api.groq.com/openai/v1/models", headers=headers, timeout=10)
         
         if response.status_code == 200:
+            # Update the connection status in config
+            cfg = load_config()
+            if "groq" not in cfg:
+                cfg["groq"] = {}
+            cfg["groq"]["connected"] = True
+            cfg["groq"]["apiKey"] = api_key
+            save_config(cfg)
+            
             return {"connected": True, "models_count": len(response.json().get("data", []))}
         else:
+            # Update the connection status in config
+            cfg = load_config()
+            if "groq" not in cfg:
+                cfg["groq"] = {}
+            cfg["groq"]["connected"] = False
+            save_config(cfg)
+            
             return {"connected": False, "error": f"HTTP {response.status_code}"}
     except Exception as e:
+        # Update the connection status in config
+        cfg = load_config()
+        if "groq" not in cfg:
+            cfg["groq"] = {}
+        cfg["groq"]["connected"] = False
+        save_config(cfg)
+        
         return {"connected": False, "error": str(e)}
 
 @router.post("/huggingface/test")
@@ -215,8 +273,31 @@ def test_huggingface_connection(request: dict):
         
         if response.status_code == 200:
             user_info = response.json()
+            
+            # Update the connection status in config
+            cfg = load_config()
+            if "huggingface" not in cfg:
+                cfg["huggingface"] = {}
+            cfg["huggingface"]["connected"] = True
+            cfg["huggingface"]["token"] = token
+            save_config(cfg)
+            
             return {"connected": True, "username": user_info.get("name", "Unknown")}
         else:
+            # Update the connection status in config
+            cfg = load_config()
+            if "huggingface" not in cfg:
+                cfg["huggingface"] = {}
+            cfg["huggingface"]["connected"] = False
+            save_config(cfg)
+            
             return {"connected": False, "error": f"HTTP {response.status_code}"}
     except Exception as e:
+        # Update the connection status in config
+        cfg = load_config()
+        if "huggingface" not in cfg:
+            cfg["huggingface"] = {}
+        cfg["huggingface"]["connected"] = False
+        save_config(cfg)
+        
         return {"connected": False, "error": str(e)}

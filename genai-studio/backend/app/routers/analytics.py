@@ -107,7 +107,66 @@ def get_system_metrics():
         disk_used_gb = disk.used / (1024**3)
         disk_total_gb = disk.total / (1024**3)
         
-        return {
+        # GPU usage (try to get GPU info if available)
+        gpu_percent = None
+        gpu_system_percent = None
+        gpu_name = None
+        gpu_temperature = None
+        gpu_memory_used_gb = None
+        gpu_memory_total_gb = None
+        
+        try:
+            # Try to import and use GPUtil if available
+            import GPUtil
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                gpu = gpus[0]  # Use first GPU
+                gpu_percent = gpu.load * 100
+                gpu_system_percent = gpu.memoryUtil * 100
+                gpu_name = gpu.name
+                gpu_temperature = gpu.temperature
+                gpu_memory_used_gb = round(gpu.memoryUsed / 1024, 2)  # Convert MB to GB
+                gpu_memory_total_gb = round(gpu.memoryTotal / 1024, 2)  # Convert MB to GB
+                print(f"GPU detected via GPUtil: {gpu_name}, Load: {gpu_percent:.1f}%, Memory: {gpu_system_percent:.1f}%, Temp: {gpu_temperature}°C")
+        except ImportError:
+            # GPUtil not available, try nvidia-ml-py
+            try:
+                import pynvml
+                pynvml.nvmlInit()
+                device_count = pynvml.nvmlDeviceGetCount()
+                if device_count > 0:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    gpu_percent = util.gpu
+                    gpu_system_percent = util.memory
+                    
+                    # Get additional GPU info
+                    name_bytes = pynvml.nvmlDeviceGetName(handle)
+                    gpu_name = name_bytes.decode('utf-8') if isinstance(name_bytes, bytes) else str(name_bytes)
+                    
+                    try:
+                        gpu_temperature = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                    except:
+                        gpu_temperature = None
+                    
+                    try:
+                        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                        gpu_memory_used_gb = round(mem_info.used / (1024**3), 2)
+                        gpu_memory_total_gb = round(mem_info.total / (1024**3), 2)
+                    except:
+                        gpu_memory_used_gb = None
+                        gpu_memory_total_gb = None
+                    
+                    print(f"GPU detected via pynvml: {gpu_name}, GPU: {gpu_percent}%, Memory: {gpu_system_percent}%, Temp: {gpu_temperature}°C")
+            except ImportError:
+                print("No GPU monitoring libraries available (GPUtil or pynvml)")
+                # Don't use mock data - return None to indicate no GPU data
+            except Exception as e:
+                print(f"Error accessing GPU via pynvml: {e}")
+        except Exception as e:
+            print(f"Error accessing GPU via GPUtil: {e}")
+        
+        result = {
             "cpu": {
                 "percent": cpu_percent,
                 "count": cpu_count
@@ -124,6 +183,27 @@ def get_system_metrics():
             },
             "timestamp": datetime.now().isoformat()
         }
+        
+        # Add GPU data if available
+        if gpu_percent is not None:
+            gpu_data = {
+                "percent": round(gpu_percent, 2),
+                "system_percent": round(gpu_system_percent, 2)
+            }
+            
+            # Add additional GPU info if available
+            if gpu_name:
+                gpu_data["name"] = gpu_name
+            if gpu_temperature is not None:
+                gpu_data["temperature"] = gpu_temperature
+            if gpu_memory_used_gb is not None:
+                gpu_data["memory_used_gb"] = gpu_memory_used_gb
+            if gpu_memory_total_gb is not None:
+                gpu_data["memory_total_gb"] = gpu_memory_total_gb
+            
+            result["gpu"] = gpu_data
+        
+        return result
     except Exception as e:
         return {"error": str(e)}
 
@@ -135,14 +215,34 @@ def get_performance_trends():
         trends = []
         now = datetime.now()
         
+        # Check if we have real GPU data available
+        has_gpu_data = False
+        try:
+            import GPUtil
+            gpus = GPUtil.getGPUs()
+            has_gpu_data = len(gpus) > 0
+        except ImportError:
+            try:
+                import pynvml
+                pynvml.nvmlInit()
+                has_gpu_data = pynvml.nvmlDeviceGetCount() > 0
+            except ImportError:
+                pass
+        
         for i in range(24):
             timestamp = now - timedelta(hours=i)
-            trends.append({
+            trend_data = {
                 "timestamp": timestamp.isoformat(),
                 "cpu_percent": max(0, min(100, 30 + (i % 12) * 5 + (i % 3) * 10)),
                 "memory_percent": max(0, min(100, 40 + (i % 8) * 7 + (i % 5) * 8)),
                 "disk_percent": max(0, min(100, 50 + (i % 6) * 3 + (i % 4) * 5))
-            })
+            }
+            
+            # Only add GPU data if we have real GPU monitoring available
+            if has_gpu_data:
+                trend_data["gpu_percent"] = max(0, min(100, 25 + (i % 10) * 6 + (i % 7) * 4))
+            
+            trends.append(trend_data)
         
         return {
             "trends": list(reversed(trends)),

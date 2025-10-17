@@ -1,0 +1,177 @@
+{
+  "ocr": [
+    {
+      "name": "Basic OCR",
+      "content": {
+        "prompt": "Extract text from this image accurately.",
+        "context": "OCR task for document processing",
+        "params": {
+          "temperature": 0.1,
+          "max_tokens": 1000,
+          "top_p": 0.9,
+          "top_k": 40
+        },
+        "metrics": {
+          "rouge": true,
+          "bleu": true,
+          "f1": true,
+          "em": false,
+          "em_avg": false,
+          "bertscore": false,
+          "perplexity": false,
+          "accuracy": true,
+          "accuracy_avg": false,
+          "precision": false,
+          "precision_avg": false,
+          "recall": false,
+          "recall_avg": false
+        }
+      }
+    },
+    {
+      "name": "Advanced OCR",
+      "content": {
+        "prompt": "Extract all text from this image with high accuracy, preserving formatting and structure.",
+        "context": "Advanced OCR for complex documents",
+        "params": {
+          "temperature": 0.05,
+          "max_tokens": 2000,
+          "top_p": 0.95,
+          "top_k": 50
+        },
+        "metrics": {
+          "rouge": true,
+          "bleu": true,
+          "f1": true,
+          "em": true,
+          "em_avg": true,
+          "bertscore": true,
+          "perplexity": false,
+          "accuracy": true,
+          "accuracy_avg": true,
+          "precision": true,
+          "precision_avg": true,
+          "recall": true,
+          "recall_avg": true
+        }
+      }
+    }
+  ],
+  "prompt": [
+    {
+      "name": "Creative Writing",
+      "content": {
+        "prompt": "Write a creative story based on the following prompt:",
+        "context": "Creative writing task",
+        "params": {
+          "temperature": 0.8,
+          "max_tokens": 500,
+          "top_p": 0.9,
+          "top_k": 50
+        },
+        "metrics": {
+          "rouge": true,
+          "bleu": false,
+          "f1": false,
+          "em": false,
+          "em_avg": false,
+          "bertscore": true,
+          "perplexity": true,
+          "accuracy": false,
+          "accuracy_avg": false,
+          "precision": false,
+          "precision_avg": false,
+          "recall": false,
+          "recall_avg": false
+        }
+      }
+    },
+    {
+      "name": "Code Generation",
+      "content": {
+        "prompt": "Generate clean, efficient code for the following task:",
+        "context": "Code generation task",
+        "params": {
+          "temperature": 0.2,
+          "max_tokens": 1000,
+          "top_p": 0.9,
+          "top_k": 40
+        },
+        "metrics": {
+          "rouge": true,
+          "bleu": true,
+          "f1": true,
+          "em": true,
+          "em_avg": false,
+          "bertscore": false,
+          "perplexity": false,
+          "accuracy": true,
+          "accuracy_avg": false,
+          "precision": true,
+          "precision_avg": false,
+          "recall": true,
+          "recall_avg": false
+        }
+      }
+    }
+  ],
+  "chat": [
+    {
+      "name": "General Assistant",
+      "content": {
+        "prompt": "You are a helpful AI assistant. Answer questions clearly and concisely.",
+        "context": "General purpose chat assistant",
+        "params": {
+          "temperature": 0.7,
+          "max_tokens": 300,
+          "top_p": 0.9,
+          "top_k": 50
+        },
+        "metrics": {
+          "rouge": true,
+          "bleu": false,
+          "f1": false,
+          "em": false,
+          "em_avg": false,
+          "bertscore": true,
+          "perplexity": false,
+          "accuracy": false,
+          "accuracy_avg": false,
+          "precision": false,
+          "precision_avg": false,
+          "recall": false,
+          "recall_avg": false
+        }
+      }
+    },
+    {
+      "name": "Technical Expert",
+      "content": {
+        "prompt": "You are a technical expert. Provide detailed, accurate technical information.",
+        "context": "Technical consultation chat",
+        "params": {
+          "temperature": 0.3,
+          "max_tokens": 500,
+          "top_p": 0.9,
+          "top_k": 40
+        },
+        "metrics": {
+          "rouge": true,
+          "bleu": true,
+          "f1": true,
+          "em": true,
+          "em_avg": false,
+          "bertscore": true,
+          "perplexity": false,
+          "accuracy": true,
+          "accuracy_avg": false,
+          "precision": true,
+          "precision_avg": false,
+          "recall": true,
+          "recall_avg": false
+        }
+      }
+    }
+  ]
+}
+

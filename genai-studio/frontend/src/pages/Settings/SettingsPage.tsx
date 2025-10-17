@@ -4,6 +4,7 @@ import LeftRail from "@/components/LeftRail/LeftRail";
 import { api } from "@/services/api";
 import { useNotifications } from "@/components/Notification/Notification";
 import PresetEditor from "@/components/PresetEditor/PresetEditor";
+import { usePageState } from "@/stores/pageState";
 
 /** ------------------------------
  *  Types & defaults (robust to partial backend payloads)
@@ -33,6 +34,10 @@ type Settings = {
   huggingface: {
     token: string;
     connected: boolean;
+  };
+  localModels: {
+    selectedGpu: string;
+    availableGpus: string[];
   };
 };
 
@@ -79,6 +84,7 @@ const defaultSettings: Settings = {
   presets: { ocr: [], prompt: [], chat: [] },
   groq: { apiKey: "", connected: false },
   huggingface: { token: "", connected: false },
+  localModels: { selectedGpu: "auto", availableGpus: ["auto", "cpu", "cuda:0", "cuda:1", "mps"] },
 };
 
 /** ------------------------------
@@ -86,10 +92,11 @@ const defaultSettings: Settings = {
  *  ------------------------------ */
 export default function SettingsPage() {
   const { showSuccess, showError, showInfo } = useNotifications();
+  const { setBackgroundStateEnabled, backgroundStateEnabled } = usePageState();
 
   // state
   const [settings, setSettings] = useState<Settings>(defaultSettings);
-  const [activeTab, setActiveTab] = useState<"ui" | "paths" | "presets" | "groq" | "huggingface">("ui");
+  const [activeTab, setActiveTab] = useState<"ui" | "paths" | "presets" | "groq" | "huggingface" | "localModels">("ui");
   const [isLoading, setIsLoading] = useState(true);
 
   // preset editor state
@@ -109,15 +116,20 @@ export default function SettingsPage() {
       try {
         const res = await api.get("/settings/settings");
         // merge so we never render undefined sub-objects
-        setSettings({ ...defaultSettings, ...(res.data || {}) });
+        const loadedSettings = { ...defaultSettings, ...(res.data || {}) };
+        setSettings(loadedSettings);
+        
+        // Sync background state management setting with page state store
+        setBackgroundStateEnabled(loadedSettings.ui.backgroundStateManagement);
       } catch (err: any) {
         console.error("Failed to load settings:", err);
         setSettings(defaultSettings);
+        setBackgroundStateEnabled(defaultSettings.ui.backgroundStateManagement);
       } finally {
         setIsLoading(false);
       }
     })();
-  }, []);
+  }, [setBackgroundStateEnabled]);
 
   /** helpers */
   const updateSetting = (path: string, value: any) => {
@@ -131,6 +143,12 @@ export default function SettingsPage() {
         cur = cur[k];
       }
       cur[keys[keys.length - 1]] = value;
+      
+      // Sync background state management setting with page state store
+      if (path === "ui.backgroundStateManagement") {
+        setBackgroundStateEnabled(value);
+      }
+      
       return next as Settings;
     });
   };
@@ -424,6 +442,15 @@ export default function SettingsPage() {
                 icon: (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12,2C6.48,2 2,6.48 2,12C2,17.52 6.48,22 12,22C17.52,22 22,17.52 22,12C22,6.48 17.52,2 12,2M12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                  </svg>
+                )
+              },
+              { 
+                id: "localModels", 
+                label: "Local Models", 
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
                   </svg>
                 )
               },
@@ -933,6 +960,92 @@ export default function SettingsPage() {
                   </div>
                 </div>
               </section>
+            )}
+
+            {/* Local Models */}
+            {activeTab === "localModels" && (
+              <div style={{
+                background: "#0f172a",
+                border: "1px solid #334155",
+                borderRadius: 16,
+                padding: 24,
+                boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+                  <div style={{ 
+                    width: 32, 
+                    height: 32, 
+                    background: "linear-gradient(135deg, #f59e0b, #d97706)", 
+                    borderRadius: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                  }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                      <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>Local Models</h2>
+                    <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Configure GPU settings for local model inference</p>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 20 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>GPU Selection</label>
+                    <select
+                      value={settings.localModels.selectedGpu}
+                      onChange={(e) => updateSetting("localModels.selectedGpu", e.target.value)}
+                      style={{
+                        padding: "12px 16px",
+                        border: "1px solid #334155",
+                        borderRadius: 10,
+                        background: "#1e293b",
+                        color: "#e2e8f0",
+                        fontSize: 14,
+                        outline: "none",
+                        transition: "all 0.2s ease"
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = "#3b82f6";
+                        e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = "#334155";
+                        e.currentTarget.style.boxShadow = "none";
+                      }}
+                    >
+                      {settings.localModels.availableGpus.map((gpu) => (
+                        <option key={gpu} value={gpu}>
+                          {gpu === "auto" ? "Auto-detect (Recommended)" : 
+                           gpu === "cpu" ? "CPU Only" :
+                           gpu === "mps" ? "Apple Silicon (MPS)" :
+                           gpu.startsWith("cuda:") ? `NVIDIA GPU ${gpu.split(":")[1]}` : gpu}
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+                      Select the GPU device for local model inference. "Auto-detect" will automatically choose the best available GPU.
+                    </div>
+                  </div>
+
+                  <div style={{ 
+                    padding: "16px",
+                    background: "#1e293b",
+                    borderRadius: 10,
+                    border: "1px solid #334155"
+                  }}>
+                    <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500, marginBottom: 8 }}>GPU Information</div>
+                    <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.5 }}>
+                      <div>• <strong>Auto-detect:</strong> Automatically selects the best available GPU</div>
+                      <div>• <strong>CPU:</strong> Forces CPU-only inference (slower but more compatible)</div>
+                      <div>• <strong>CUDA:</strong> NVIDIA GPU acceleration (requires CUDA-compatible GPU)</div>
+                      <div>• <strong>MPS:</strong> Apple Silicon GPU acceleration (Mac only)</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* Hugging Face */}

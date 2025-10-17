@@ -1,5 +1,5 @@
 // src/pages/PromptEval/PromptEvalPage.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import LeftRail from '@/components/LeftRail/LeftRail';
 
@@ -292,7 +292,7 @@ export default function PromptEvalPage() {
       const res = await computeMetrics({
         prediction: llmOutput || currentRun?.output || "",
         reference,
-        metrics: Object.keys(metricsState).filter(key => (metricsState as any)[key]),
+        metrics: selectedMetrics,
         meta: {
           model: selected.id,
           params,
@@ -311,7 +311,7 @@ export default function PromptEvalPage() {
           title: `Prompt Evaluation - ${new Date().toLocaleDateString('en-GB')}`,
           model: { id: selected.id, provider: selected.provider },
           parameters: params,
-          metrics: Object.keys(metricsState).filter(key => (metricsState as any)[key]),
+          metrics: selectedMetrics,
           usedText: {
             promptText: draft.prompt,
             context: draft.context,
@@ -349,6 +349,21 @@ export default function PromptEvalPage() {
       setBusy(null);
     }
   }, [selected, draft?.prompt, reference, llmOutput, currentRun, metricsState, params, promptFileName, refFileName]);
+
+  // Create selectedMetrics useMemo for consistent metric filtering
+  const selectedMetrics = useMemo(() => {
+    const list: string[] = [];
+    if (metricsState.rouge) list.push("rouge");
+    if (metricsState.bleu) list.push("bleu");
+    if (metricsState.f1) list.push("f1");
+    if (metricsState.em) list.push("em");
+    if (metricsState.bertscore) list.push("bertscore");
+    if (metricsState.perplexity) list.push("perplexity");
+    if (metricsState.accuracy) list.push("accuracy");
+    if (metricsState.precision) list.push("precision");
+    if (metricsState.recall) list.push("recall");
+    return list;
+  }, [metricsState]);
 
   // When metrics toggle changes, clear prior scores to allow rerunning with new metrics
   useEffect(() => {
@@ -409,12 +424,22 @@ export default function PromptEvalPage() {
             output += chunk;
           }
 
-          // Compute metrics
-          const selectedMetrics = Object.keys(run.metrics).filter(key => (run.metrics as any)[key]);
+          // Compute metrics - only compute selected metrics
+          const runSelectedMetrics: string[] = [];
+          if (run.metrics.rouge) runSelectedMetrics.push("rouge");
+          if (run.metrics.bleu) runSelectedMetrics.push("bleu");
+          if (run.metrics.f1) runSelectedMetrics.push("f1");
+          if (run.metrics.em) runSelectedMetrics.push("em");
+          if (run.metrics.bertscore) runSelectedMetrics.push("bertscore");
+          if (run.metrics.perplexity) runSelectedMetrics.push("perplexity");
+          if (run.metrics.accuracy) runSelectedMetrics.push("accuracy");
+          if (run.metrics.precision) runSelectedMetrics.push("precision");
+          if (run.metrics.recall) runSelectedMetrics.push("recall");
+          
           const res = await computeMetrics({
             prediction: output,
             reference,
-            metrics: selectedMetrics,
+            metrics: runSelectedMetrics,
             meta: {
               model: selected.id,
               params: run.parameters,
@@ -440,7 +465,7 @@ export default function PromptEvalPage() {
               title: `${config.name} - ${run.name}`,
               model: { id: selected.id, provider: selected.provider },
               parameters: run.parameters,
-              metrics: selectedMetrics,
+              metrics: runSelectedMetrics,
               usedText: {
                 promptText: run.prompt,
                 context: draft.context,

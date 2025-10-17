@@ -48,7 +48,7 @@ export default function ModelSelector() {
   const [localModels, setLocalModels] = React.useState<ModelInfo[]>([]);
   const [groqModels, setGroqModels] = React.useState<ModelInfo[]>([]);
   const [includeGroq, setIncludeGroq] = React.useState(true);
-  const [groqConnected, setGroqConnected] = React.useState(true);
+  const [groqConnected, setGroqConnected] = React.useState(false);
   const [warning, setWarning] = React.useState<string | null>(null);
   const [disabledIds, setDisabledIds] = React.useState<Set<string>>(new Set());
 

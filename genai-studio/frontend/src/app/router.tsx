@@ -12,6 +12,7 @@ import CustomPagesIndex from "@/pages/Custom/CustomPagesIndex";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import BackgroundOperationsIndicator from "@/components/BackgroundOperations/BackgroundOperationsIndicator";
 import ModelSelector from '@/components/TopBar/ModelSelector';
+import BackgroundPages from '@/components/BackgroundPages/BackgroundPages';
 
 
 // If you have a ModelSelector, import it here and render in the header.
@@ -87,7 +88,9 @@ function AppShell() {
         {/* Main scroll container — only THIS scrolls */}
         <main className="col-start-1 col-end-3 min-w-0 h-full overflow-y-auto">
           <div className="px-4 py-5">
-            <Outlet />
+            <BackgroundPages>
+              <Outlet />
+            </BackgroundPages>
           </div>
         </main>
       </div>

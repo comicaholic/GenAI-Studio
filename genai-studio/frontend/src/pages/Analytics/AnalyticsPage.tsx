@@ -43,6 +43,7 @@ interface PerformanceTrend {
   cpu_percent?: number;
   memory_percent?: number;
   disk_percent?: number;
+  gpu_percent?: number;
 }
 
 interface GroqAnalytics {
@@ -357,6 +358,7 @@ export default function AnalyticsPage() {
           cpu: (t.cpu_percent ?? 0),
           memory: (t.memory_percent ?? 0),
           disk: (t.disk_percent ?? 0),
+          gpu: (t.gpu_percent ?? 0),
         })),
     [performanceTrends]
   );
@@ -837,7 +839,7 @@ export default function AnalyticsPage() {
                           cpu: clampPct((trend.cpu ?? 0) * 1),
                           memory: clampPct((trend.memory ?? 0) * 1),
                           disk: clampPct((trend.disk ?? 0) * 1),
-                          gpu: clampPct((trend.cpu ?? 0) * 0.6),
+                          gpu: clampPct((trend.gpu ?? 0) * 1),
                         }))}
                       >
                         <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
