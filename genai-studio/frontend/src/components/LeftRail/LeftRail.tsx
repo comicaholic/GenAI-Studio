@@ -31,7 +31,7 @@ export default function LeftRail() {
           }}
         >
           <img 
-            src="/src/components/logo/GenAi_Studio_logo.png" 
+            src="/assets/GenAi_Studio_logo.png" 
             alt="GenAI Studio Logo" 
             style={styles.logoImage}
           />

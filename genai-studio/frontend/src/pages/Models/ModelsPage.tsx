@@ -367,12 +367,12 @@ export default function ModelsPage() {
   const loadLocalModels = async () => {
     setIsLoading(true);
     try {
-      const response = await api.get("/models/classified");
+      const response = await api.get("/api/models/classified");
       setLocalModels(response.data.models || []);
     } catch (error: any) {
       // Fallback to regular scan if classified endpoint fails
       try {
-        const fallbackResponse = await api.get("/models/scan");
+        const fallbackResponse = await api.get("/api/models/scan");
         setLocalModels(fallbackResponse.data.local || []);
       } catch (fallbackError: any) {
         console.log("Models API not available yet:", fallbackError.message);
@@ -399,7 +399,7 @@ export default function ModelsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.get("/models/visibility");
+        const { data } = await api.get("/api/models/visibility");
         const arr: string[] | null = data.enabled_ids ?? null;
         if (arr === null) {
           setDisabledIds(new Set()); // all enabled
@@ -423,7 +423,7 @@ export default function ModelsPage() {
     try {
       // Convert disabled -> enabled for the API
       if (disabledKeys.size === 0) {
-        await api.post("/models/visibility", { enabled_ids: null });
+        await api.post("/api/models/visibility", { enabled_ids: null });
       } else {
         const withIds = localModels.filter(m => m.id);
         const allIds = new Set(withIds.map(m => m.id!));
@@ -434,7 +434,7 @@ export default function ModelsPage() {
             .map(m => m.id!)
         );
         const enabledIds = Array.from(allIds).filter(id => !disabledIds.has(id));
-        await api.post("/models/visibility", { enabled_ids: enabledIds });
+        await api.post("/api/models/visibility", { enabled_ids: enabledIds });
       }
       window.dispatchEvent(new Event("models:visibility-changed"));
     } catch {}

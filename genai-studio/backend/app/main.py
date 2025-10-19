@@ -61,17 +61,18 @@ app.include_router(chat.router,      prefix="/api/chat",       tags=["chat"])
 app.include_router(custom.router,    prefix="/api/custom",     tags=["custom"])
 app.include_router(history.router,   prefix="/api",            tags=["history"])
 
-# --- SPA static serving for production builds ---
-_dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../frontend/dist"))
-_assets_dir = os.path.join(_dist_dir, "assets")
-if os.path.isdir(_assets_dir):
-    app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+# --- SPA static serving for production builds (only when not in Docker) ---
+if not os.getenv("DOCKER"):
+    _dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../frontend/dist"))
+    _assets_dir = os.path.join(_dist_dir, "assets")
+    if os.path.isdir(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
-@app.get("/{full_path:path}")
-def spa(full_path: str):
-    """Serve index.html for any non-API path to support client-side routing."""
-    index_path = os.path.join(_dist_dir, "index.html")
-    if os.path.isfile(index_path):
-        return FileResponse(index_path)
-    # If dist is missing, return a simple hint
-    return {"detail": "Run 'npm run build' in frontend/."}
+    @app.get("/{full_path:path}")
+    def spa(full_path: str):
+        """Serve index.html for any non-API path to support client-side routing."""
+        index_path = os.path.join(_dist_dir, "index.html")
+        if os.path.isfile(index_path):
+            return FileResponse(index_path)
+        # If dist is missing, return a simple hint
+        return {"detail": "Run 'npm run build' in frontend/."}

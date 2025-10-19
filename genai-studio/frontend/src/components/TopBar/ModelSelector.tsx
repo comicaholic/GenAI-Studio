@@ -59,7 +59,9 @@ export default function ModelSelector() {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   const normalize = (raw: any, provider: Provider): ModelInfo => {
-    const id = raw?.id || raw?.name || raw?.model_id || raw?.model || "";
+    // Handle classified models structure where id is in original_data
+    const originalData = raw?.original_data || raw;
+    const id = originalData?.id || raw?.id || raw?.name || raw?.model_id || raw?.model || "";
     const label = (raw?.label && String(raw.label).trim())
       ? String(raw.label)
       : (raw?.name || prettifyModelId(id));
