@@ -23,6 +23,9 @@ export interface ChatRun {
   prompts: ChatPrompt[];
   status: 'pending' | 'running' | 'completed' | 'error';
   error?: string;
+  // Optional per-run model override
+  modelId?: string;
+  modelProvider?: string;
 }
 
 export interface ChatAutomationConfig {

@@ -137,10 +137,12 @@ def save_automations(automations: List[SavedAutomation]) -> None:
 # API Endpoints
 @router.get("/evals")
 def get_evaluations():
-    """Get all saved evaluations"""
+    """Get all saved evaluations, excluding those from automations"""
     try:
         evaluations = load_evaluations()
-        return {"evaluations": [eval.dict() for eval in evaluations]}
+        # Filter out evaluations that are part of automations
+        standalone_evaluations = [eval for eval in evaluations if not hasattr(eval, 'automationId') or not eval.automationId]
+        return {"evaluations": [eval.dict() for eval in standalone_evaluations]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -50,22 +50,41 @@ async function request<T = any>(
     fetchInit.body = JSON.stringify(opts.body);
   }
 
-  const res = await fetch(url, fetchInit);
-  if (!res.ok) {
-    const text = await res.text().catch(() => `${res.status} ${res.statusText}`);
-    throw new Error(text || `${res.status} ${res.statusText}`);
-  }
+  // Robust retry mechanism for backend cold start (e.g., conda env)
+  const maxAttempts = 8; // Increased from 3 to handle slower backend startup
+  let lastErr: any = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, fetchInit);
+      if (!res.ok) {
+        const text = await res.text().catch(() => `${res.status} ${res.statusText}`);
+        throw new Error(text || `${res.status} ${res.statusText}`);
+      }
 
-  const rt: ResponseType = opts?.responseType ?? 'json';
-  if (rt === 'blob') {
-    
-    return { data: await res.blob() as any };
-  } else if (rt === 'text') {
-    
-    return { data: await res.text() as any };
-  } else {
-    return { data: (await res.json()) as T };
+      const rt: ResponseType = opts?.responseType ?? 'json';
+      if (rt === 'blob') {
+        return { data: await res.blob() as any };
+      } else if (rt === 'text') {
+        return { data: await res.text() as any };
+      } else {
+        return { data: (await res.json()) as T };
+      }
+    } catch (err: any) {
+      lastErr = err;
+      // Only retry on network errors / refused connections
+      const msg = String(err?.message || err);
+      const isConnRefused = msg.includes('ECONNREFUSED') || msg.includes('Failed to fetch') || msg.includes('NetworkError');
+      if (attempt < maxAttempts && isConnRefused) {
+        // Progressive backoff: 200ms, 500ms, 1s, 2s, 3s, 5s, 8s
+        const delayMs = attempt <= 2 ? 200 * attempt : Math.min(500 * Math.pow(1.5, attempt - 2), 8000);
+        console.log(`API request failed (attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms:`, url);
+        await new Promise(r => setTimeout(r, delayMs));
+        continue;
+      }
+      throw err;
+    }
   }
+  throw lastErr;
 }
 
 export const api = {
@@ -87,4 +106,52 @@ export async function postForBlob(
 ): Promise<Blob> {
   const { data } = await api.post<Blob>(path, body, { responseType: 'blob', init });
   return data;
+}
+
+/**
+ * Wait for backend to be ready by checking health endpoint
+ * Uses exponential backoff to avoid flooding the backend with requests
+ */
+export async function waitForBackend(maxWaitMs = 30000): Promise<boolean> {
+  const startTime = Date.now();
+  let attempt = 0;
+  let lastLogTime = 0;
+  
+  while (Date.now() - startTime < maxWaitMs) {
+    attempt++;
+    
+    try {
+      // Use a direct fetch with a short timeout to avoid hanging
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+      
+      const response = await fetch('/api/health', { 
+        method: 'GET',
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        console.log('✅ Backend is ready');
+        return true;
+      }
+    } catch (err: any) {
+      // Only log every 10 seconds to minimize noise
+      const now = Date.now();
+      const elapsed = now - startTime;
+      
+      if (now - lastLogTime > 10000) {
+        console.log(`⏳ Waiting for backend... (${Math.round(elapsed/1000)}s elapsed)`);
+        lastLogTime = now;
+      }
+    }
+    
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s (max 16s)
+    const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 16000);
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+  
+  console.warn('⚠️ Backend did not become ready within timeout, proceeding anyway');
+  return false;
 }

@@ -17,5 +17,5 @@ psutil
 gpustat
 GPUtil
 pynvml
-
+torch
 

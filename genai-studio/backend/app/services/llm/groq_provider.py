@@ -31,7 +31,7 @@ class GroqProvider(LLMProvider):
             "model": params.get("model_id"),
             "messages": [{"role":"user","content":prompt}],
             "temperature": params.get("temperature", 0.2),
-            "max_tokens": params.get("max_tokens", 512)
+            "max_tokens": params.get("max_tokens", 1024)
         }
         
         try:

@@ -66,7 +66,7 @@ def chat_complete(model_id: str, messages, **params) -> str:
         "messages": messages,
         "temperature": params.get("temperature", 0.2),
         "top_p": params.get("top_p", 1.0),
-        "max_tokens": params.get("max_tokens", 512),
+        "max_tokens": params.get("max_tokens", 1024),
     }
     
     try:

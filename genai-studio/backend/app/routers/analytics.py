@@ -939,8 +939,9 @@ def get_throughput_metrics(timeframe: str = "24h"):
 def get_evaluation_metrics(timeframe: str = "24h"):
     """Get evaluation metrics and trends"""
     try:
-        # Load real evaluation data
-        evaluations = load_evaluations()
+        # Load real evaluation data, excluding automation evaluations
+        all_evaluations = load_evaluations()
+        evaluations = [eval for eval in all_evaluations if not hasattr(eval, 'automationId') or not eval.automationId]
         
         if not evaluations:
             return {
@@ -1135,8 +1136,9 @@ def get_evaluation_metrics(timeframe: str = "24h"):
 def get_user_analytics(timeframe: str = "24h"):
     """Get user analytics and collaboration metrics"""
     try:
-        # Load real data from history files
-        evaluations = load_evaluations()
+        # Load real data from history files, excluding automation evaluations
+        all_evaluations = load_evaluations()
+        evaluations = [eval for eval in all_evaluations if not hasattr(eval, 'automationId') or not eval.automationId]
         chats = load_chats()
         
         # Filter by timeframe
