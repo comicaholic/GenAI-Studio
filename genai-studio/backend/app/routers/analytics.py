@@ -2,6 +2,7 @@ from fastapi import APIRouter
 import psutil
 import time
 import json
+import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -11,8 +12,14 @@ router = APIRouter()
 # Application start time for uptime calculation
 APP_START_TIME = datetime.now()
 
+# Background task for system metrics recording
+_metrics_task = None
+
 # Groq usage tracking
-GROQ_USAGE_FILE = Path("data/groq_usage.json")
+GROQ_USAGE_FILE = Path(__file__).resolve().parents[2] / "data" / "groq_usage.json"
+SYSTEM_METRICS_FILE = Path(__file__).resolve().parents[2] / "data" / "system_metrics.json"
+EVALUATIONS_FILE = Path(__file__).resolve().parents[2] / "data" / "evaluations.json"
+CHATS_FILE = Path(__file__).resolve().parents[2] / "data" / "chats.json"
 
 def load_groq_usage() -> List[Dict]:
     """Load Groq usage data from file"""
@@ -33,6 +40,121 @@ def save_groq_usage(usage_data: List[Dict]):
             json.dump(usage_data, f, indent=2)
     except Exception as e:
         print(f"Error saving Groq usage: {e}")
+
+def load_system_metrics() -> List[Dict]:
+    """Load system metrics data from file"""
+    if not SYSTEM_METRICS_FILE.exists():
+        return []
+    try:
+        with open(SYSTEM_METRICS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading system metrics: {e}")
+        return []
+
+def save_system_metrics(metrics_data: List[Dict]):
+    """Save system metrics data to file"""
+    SYSTEM_METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(SYSTEM_METRICS_FILE, "w", encoding="utf-8") as f:
+            json.dump(metrics_data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving system metrics: {e}")
+
+def record_system_metrics():
+    """Record current system metrics"""
+    try:
+        # Get current system metrics
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # Try to get GPU metrics
+        gpu_percent = None
+        try:
+            import GPUtil
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                gpu_percent = gpus[0].load * 100
+        except ImportError:
+            try:
+                import pynvml
+                pynvml.nvmlInit()
+                device_count = pynvml.nvmlDeviceGetCount()
+                if device_count > 0:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    gpu_percent = util.gpu
+            except ImportError:
+                pass
+        
+        metric_record = {
+            "timestamp": datetime.now().isoformat(),
+            "cpu_percent": cpu_percent,
+            "memory_percent": memory.percent,
+            "disk_percent": (disk.used / disk.total) * 100,
+            "gpu_percent": gpu_percent
+        }
+        
+        # Load existing data and add new record
+        metrics_data = load_system_metrics()
+        metrics_data.append(metric_record)
+        
+        # Keep only last 1000 records (about 16 hours at 1-minute intervals)
+        if len(metrics_data) > 1000:
+            metrics_data = metrics_data[-1000:]
+        
+        save_system_metrics(metrics_data)
+        return metric_record
+    except Exception as e:
+        print(f"Error recording system metrics: {e}")
+        return None
+
+def load_evaluations() -> List[Dict]:
+    """Load evaluations data from file"""
+    if not EVALUATIONS_FILE.exists():
+        return []
+    try:
+        with open(EVALUATIONS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading evaluations: {e}")
+        return []
+
+def load_chats() -> List[Dict]:
+    """Load chats data from file"""
+    if not CHATS_FILE.exists():
+        return []
+    try:
+        with open(CHATS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading chats: {e}")
+        return []
+
+async def background_metrics_recorder():
+    """Background task to record system metrics every minute"""
+    while True:
+        try:
+            record_system_metrics()
+            await asyncio.sleep(60)  # Record every minute
+        except Exception as e:
+            print(f"Error in background metrics recording: {e}")
+            await asyncio.sleep(60)
+
+def start_metrics_recording():
+    """Start the background metrics recording task"""
+    global _metrics_task
+    if _metrics_task is None or _metrics_task.done():
+        _metrics_task = asyncio.create_task(background_metrics_recorder())
+        print("Started background system metrics recording")
+
+def stop_metrics_recording():
+    """Stop the background metrics recording task"""
+    global _metrics_task
+    if _metrics_task and not _metrics_task.done():
+        _metrics_task.cancel()
+        print("Stopped background system metrics recording")
 
 def record_groq_usage(model: str, tokens_used: int, cost_usd: float, duration_ms: int, success: bool = True):
     """Record a Groq API usage event"""
@@ -91,6 +213,12 @@ def get_uptime():
 def get_system_metrics():
     """Get system performance metrics"""
     try:
+        # Start background recording if not already running
+        start_metrics_recording()
+        
+        # Record current metrics for historical tracking
+        record_system_metrics()
+        
         # CPU usage
         cpu_percent = psutil.cpu_percent(interval=1)
         cpu_count = psutil.cpu_count()
@@ -211,42 +339,50 @@ def get_system_metrics():
 def get_performance_trends():
     """Get performance trends data"""
     try:
-        # Generate mock performance data for the last 24 hours
-        trends = []
-        now = datetime.now()
+        # Load real system metrics data
+        metrics_data = load_system_metrics()
         
-        # Check if we have real GPU data available
-        has_gpu_data = False
-        try:
-            import GPUtil
-            gpus = GPUtil.getGPUs()
-            has_gpu_data = len(gpus) > 0
-        except ImportError:
-            try:
-                import pynvml
-                pynvml.nvmlInit()
-                has_gpu_data = pynvml.nvmlDeviceGetCount() > 0
-            except ImportError:
-                pass
-        
-        for i in range(24):
-            timestamp = now - timedelta(hours=i)
-            trend_data = {
-                "timestamp": timestamp.isoformat(),
-                "cpu_percent": max(0, min(100, 30 + (i % 12) * 5 + (i % 3) * 10)),
-                "memory_percent": max(0, min(100, 40 + (i % 8) * 7 + (i % 5) * 8)),
-                "disk_percent": max(0, min(100, 50 + (i % 6) * 3 + (i % 4) * 5))
+        if not metrics_data:
+            # If no historical data, record current metrics and return empty trends
+            record_system_metrics()
+            return {
+                "trends": [],
+                "period": "24h",
+                "note": "No historical data available yet. Metrics will be recorded going forward."
             }
-            
-            # Only add GPU data if we have real GPU monitoring available
-            if has_gpu_data:
-                trend_data["gpu_percent"] = max(0, min(100, 25 + (i % 10) * 6 + (i % 7) * 4))
-            
-            trends.append(trend_data)
+        
+        # Filter data for the last 24 hours
+        now = datetime.now()
+        start_time = now - timedelta(hours=24)
+        
+        filtered_data = [
+            record for record in metrics_data
+            if datetime.fromisoformat(record["timestamp"]) >= start_time
+        ]
+        
+        # If we have less than 24 hours of data, pad with available data
+        if len(filtered_data) < 24:
+            # Use all available data
+            trends = filtered_data
+        else:
+            # Sample every hour for the last 24 hours
+            trends = []
+        for i in range(24):
+                target_time = now - timedelta(hours=i)
+                # Find the closest record to this hour
+                closest_record = min(
+                    filtered_data,
+                    key=lambda x: abs((datetime.fromisoformat(x["timestamp"]) - target_time).total_seconds())
+                )
+                trends.append(closest_record)
+        
+        # Sort by timestamp (oldest first)
+        trends.sort(key=lambda x: x["timestamp"])
         
         return {
-            "trends": list(reversed(trends)),
-            "period": "24h"
+            "trends": trends,
+            "period": "24h",
+            "data_points": len(trends)
         }
     except Exception as e:
         return {"error": str(e)}
@@ -522,87 +658,167 @@ def get_throughput_metrics(timeframe: str = "24h"):
 def get_evaluation_metrics(timeframe: str = "24h"):
     """Get evaluation metrics and trends"""
     try:
-        # Mock data for now - in a real implementation, this would query evaluation results
-        return {
-            "total_evaluations": 12,  # Realistic count based on actual usage
-            "average_pass_rate": 0.78,
-            "rouge_scores": [
-                {"project": "project1", "score": 0.85, "timestamp": datetime.now().isoformat()},
-                {"project": "project2", "score": 0.72, "timestamp": datetime.now().isoformat()},
-            ],
-            "bleu_scores": [
-                {"project": "project1", "score": 0.78, "timestamp": datetime.now().isoformat()},
-                {"project": "project2", "score": 0.65, "timestamp": datetime.now().isoformat()},
-            ],
-            "f1_scores": [
-                {"project": "project1", "score": 0.82, "timestamp": datetime.now().isoformat()},
-                {"project": "project2", "score": 0.68, "timestamp": datetime.now().isoformat()},
-            ],
-            "exact_match_scores": [
-                {"project": "project1", "score": 0.45, "timestamp": datetime.now().isoformat()},
-                {"project": "project2", "score": 0.38, "timestamp": datetime.now().isoformat()},
-            ],
-            "bertscore_scores": [
-                {"project": "project1", "score": 0.89, "timestamp": datetime.now().isoformat()},
-                {"project": "project2", "score": 0.76, "timestamp": datetime.now().isoformat()},
-            ],
-            "perplexity_scores": [
-                {"project": "project1", "score": 15.2, "timestamp": datetime.now().isoformat()},
-                {"project": "project2", "score": 22.8, "timestamp": datetime.now().isoformat()},
-            ],
-            "accuracy_scores": [
-                {"project": "project1", "score": 0.85, "timestamp": datetime.now().isoformat()},
-                {"project": "project2", "score": 0.72, "timestamp": datetime.now().isoformat()},
-            ],
-            "precision_scores": [
-                {"project": "project1", "score": 0.88, "timestamp": datetime.now().isoformat()},
-                {"project": "project2", "score": 0.75, "timestamp": datetime.now().isoformat()},
-            ],
-            "recall_scores": [
-                {"project": "project1", "score": 0.82, "timestamp": datetime.now().isoformat()},
-                {"project": "project2", "score": 0.69, "timestamp": datetime.now().isoformat()},
-            ],
-            "model_comparison": {
-                "llama-3.1-8b": {
-                    "evaluations": 4,
-                    "avg_rouge": 0.78,
-                    "avg_bleu": 0.72,
-                    "avg_f1": 0.75,
-                    "avg_em": 0.42,
-                    "avg_bertscore": 0.82,
-                    "avg_perplexity": 18.5,
-                    "avg_accuracy": 0.78,
-                    "avg_precision": 0.81,
-                    "avg_recall": 0.75,
-                    "pass_rate": 0.82
-                },
-                "llama-3.1-70b": {
-                    "evaluations": 3,
-                    "avg_rouge": 0.85,
-                    "avg_bleu": 0.78,
-                    "avg_f1": 0.81,
-                    "avg_em": 0.48,
-                    "avg_bertscore": 0.89,
-                    "avg_perplexity": 12.3,
-                    "avg_accuracy": 0.85,
-                    "avg_precision": 0.88,
-                    "avg_recall": 0.82,
-                    "pass_rate": 0.89
-                },
-                "mixtral-8x7b": {
-                    "evaluations": 5,
-                    "avg_rouge": 0.82,
-                    "avg_bleu": 0.75,
-                    "avg_f1": 0.78,
-                    "avg_em": 0.45,
-                    "avg_bertscore": 0.85,
-                    "avg_perplexity": 16.7,
-                    "avg_accuracy": 0.81,
-                    "avg_precision": 0.84,
-                    "avg_recall": 0.78,
-                    "pass_rate": 0.85
-                }
+        # Load real evaluation data
+        evaluations = load_evaluations()
+        
+        if not evaluations:
+            return {
+                "total_evaluations": 0,
+                "average_pass_rate": 0.0,
+                "rouge_scores": [],
+                "bleu_scores": [],
+                "f1_scores": [],
+                "exact_match_scores": [],
+                "bertscore_scores": [],
+                "perplexity_scores": [],
+                "accuracy_scores": [],
+                "precision_scores": [],
+                "recall_scores": [],
+                "model_comparison": {},
+                "note": "No evaluation data available yet."
             }
+        
+        # Filter by timeframe
+        start_time = get_timeframe_filter(timeframe)
+        filtered_evaluations = [
+            eval for eval in evaluations
+            if datetime.fromisoformat(eval.get("startedAt", eval.get("timestamp", "1970-01-01T00:00:00"))) >= start_time
+        ]
+        
+        if not filtered_evaluations:
+        return {
+                "total_evaluations": 0,
+                "average_pass_rate": 0.0,
+                "rouge_scores": [],
+                "bleu_scores": [],
+                "f1_scores": [],
+                "exact_match_scores": [],
+                "bertscore_scores": [],
+                "perplexity_scores": [],
+                "accuracy_scores": [],
+                "precision_scores": [],
+                "recall_scores": [],
+                "model_comparison": {},
+                "note": f"No evaluations found in the last {timeframe}."
+            }
+        
+        # Extract scores from results
+        rouge_scores = []
+        bleu_scores = []
+        f1_scores = []
+        exact_match_scores = []
+        bertscore_scores = []
+        perplexity_scores = []
+        accuracy_scores = []
+        precision_scores = []
+        recall_scores = []
+        
+        model_stats = {}
+        
+        for eval in filtered_evaluations:
+            results = eval.get("results", {})
+            model_id = eval.get("model", {}).get("id", "unknown")
+            timestamp = eval.get("startedAt", eval.get("timestamp", datetime.now().isoformat()))
+            
+            # Initialize model stats if not exists
+            if model_id not in model_stats:
+                model_stats[model_id] = {
+                    "evaluations": 0,
+                    "rouge_scores": [],
+                    "bleu_scores": [],
+                    "f1_scores": [],
+                    "em_scores": [],
+                    "bertscore_scores": [],
+                    "perplexity_scores": [],
+                    "accuracy_scores": [],
+                    "precision_scores": [],
+                    "recall_scores": []
+                }
+            
+            model_stats[model_id]["evaluations"] += 1
+            
+            # Extract individual scores
+            if "rouge" in results:
+                score = results["rouge"]
+                rouge_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["rouge_scores"].append(score)
+            
+            if "bleu" in results:
+                score = results["bleu"]
+                bleu_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["bleu_scores"].append(score)
+            
+            if "f1" in results:
+                score = results["f1"]
+                f1_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["f1_scores"].append(score)
+            
+            if "em" in results:
+                score = results["em"]
+                exact_match_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["em_scores"].append(score)
+            
+            if "bertscore" in results:
+                score = results["bertscore"]
+                bertscore_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["bertscore_scores"].append(score)
+            
+            if "perplexity" in results:
+                score = results["perplexity"]
+                perplexity_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["perplexity_scores"].append(score)
+            
+            if "accuracy" in results:
+                score = results["accuracy"]
+                accuracy_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["accuracy_scores"].append(score)
+            
+            if "precision" in results:
+                score = results["precision"]
+                precision_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["precision_scores"].append(score)
+            
+            if "recall" in results:
+                score = results["recall"]
+                recall_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["recall_scores"].append(score)
+        
+        # Calculate model comparison statistics
+        model_comparison = {}
+        for model_id, stats in model_stats.items():
+            if stats["evaluations"] > 0:
+                model_comparison[model_id] = {
+                    "evaluations": stats["evaluations"],
+                    "avg_rouge": sum(stats["rouge_scores"]) / len(stats["rouge_scores"]) if stats["rouge_scores"] else 0,
+                    "avg_bleu": sum(stats["bleu_scores"]) / len(stats["bleu_scores"]) if stats["bleu_scores"] else 0,
+                    "avg_f1": sum(stats["f1_scores"]) / len(stats["f1_scores"]) if stats["f1_scores"] else 0,
+                    "avg_em": sum(stats["em_scores"]) / len(stats["em_scores"]) if stats["em_scores"] else 0,
+                    "avg_bertscore": sum(stats["bertscore_scores"]) / len(stats["bertscore_scores"]) if stats["bertscore_scores"] else 0,
+                    "avg_perplexity": sum(stats["perplexity_scores"]) / len(stats["perplexity_scores"]) if stats["perplexity_scores"] else 0,
+                    "avg_accuracy": sum(stats["accuracy_scores"]) / len(stats["accuracy_scores"]) if stats["accuracy_scores"] else 0,
+                    "avg_precision": sum(stats["precision_scores"]) / len(stats["precision_scores"]) if stats["precision_scores"] else 0,
+                    "avg_recall": sum(stats["recall_scores"]) / len(stats["recall_scores"]) if stats["recall_scores"] else 0,
+                    "pass_rate": 0.8  # Default pass rate, could be calculated from actual pass/fail data
+                }
+        
+        # Calculate average pass rate (simplified - assumes evaluations with results are "passed")
+        total_evaluations = len(filtered_evaluations)
+        evaluations_with_results = len([e for e in filtered_evaluations if e.get("results")])
+        average_pass_rate = evaluations_with_results / total_evaluations if total_evaluations > 0 else 0
+        
+        return {
+            "total_evaluations": total_evaluations,
+            "average_pass_rate": round(average_pass_rate, 4),
+            "rouge_scores": rouge_scores[-10:],  # Last 10 scores
+            "bleu_scores": bleu_scores[-10:],
+            "f1_scores": f1_scores[-10:],
+            "exact_match_scores": exact_match_scores[-10:],
+            "bertscore_scores": bertscore_scores[-10:],
+            "perplexity_scores": perplexity_scores[-10:],
+            "accuracy_scores": accuracy_scores[-10:],
+            "precision_scores": precision_scores[-10:],
+            "recall_scores": recall_scores[-10:],
+            "model_comparison": model_comparison
         }
         
     except Exception as e:
@@ -612,26 +828,104 @@ def get_evaluation_metrics(timeframe: str = "24h"):
 def get_user_analytics(timeframe: str = "24h"):
     """Get user analytics and collaboration metrics"""
     try:
-        # Mock data for now - in a real implementation, this would query user activity
+        # Load real data from history files
+        evaluations = load_evaluations()
+        chats = load_chats()
+        
+        # Filter by timeframe
+        start_time = get_timeframe_filter(timeframe)
+        
+        filtered_evaluations = [
+            eval for eval in evaluations
+            if datetime.fromisoformat(eval.get("startedAt", eval.get("timestamp", "1970-01-01T00:00:00"))) >= start_time
+        ]
+        
+        filtered_chats = [
+            chat for chat in chats
+            if datetime.fromisoformat(chat.get("lastActivityAt", chat.get("createdAt", "1970-01-01T00:00:00"))) >= start_time
+        ]
+        
+        # Calculate user activity metrics
+        total_evaluations = len(filtered_evaluations)
+        total_chats = len(filtered_chats)
+        
+        # Count unique users (simplified - using model IDs as user proxies)
+        evaluation_users = set()
+        chat_users = set()
+        
+        for eval in filtered_evaluations:
+            model_id = eval.get("model", {}).get("id", "unknown")
+            evaluation_users.add(model_id)
+        
+        for chat in filtered_chats:
+            model_id = chat.get("model", {}).get("id", "unknown")
+            chat_users.add(model_id)
+        
+        # Combine unique users
+        all_users = evaluation_users.union(chat_users)
+        total_users = len(all_users)
+        active_users = len([user for user in all_users if user != "unknown"])
+        
+        # Calculate evaluations by user (using model as proxy)
+        evaluations_by_user = {}
+        for eval in filtered_evaluations:
+            model_id = eval.get("model", {}).get("id", "unknown")
+            if model_id not in evaluations_by_user:
+                evaluations_by_user[model_id] = 0
+            evaluations_by_user[model_id] += 1
+        
+        # Sort by evaluation count and take top users
+        sorted_users = sorted(evaluations_by_user.items(), key=lambda x: x[1], reverse=True)
+        top_users = {user: count for user, count in sorted_users[:8]}
+        
+        # Calculate collaboration metrics (simplified)
+        shared_projects = len(set(eval.get("title", "") for eval in filtered_evaluations))
+        reused_presets = len(set(eval.get("parameters", {}).get("preset", "") for eval in filtered_evaluations if eval.get("parameters", {}).get("preset")))
+        team_evaluations = len([eval for eval in filtered_evaluations if eval.get("automationId")])  # Automated evaluations as team work
+        
         return {
-            "total_users": 15,
-            "active_users": 8,
-            "evaluations_by_user": {
-                "user1": 245,
-                "user2": 189,
-                "user3": 156,
-                "user4": 134,
-                "user5": 98,
-                "user6": 87,
-                "user7": 76,
-                "user8": 65
-            },
+            "total_users": total_users,
+            "active_users": active_users,
+            "evaluations_by_user": top_users,
             "collaboration_metrics": {
-                "shared_projects": 23,
-                "reused_presets": 156,
-                "team_evaluations": 89
+                "shared_projects": shared_projects,
+                "reused_presets": reused_presets,
+                "team_evaluations": team_evaluations
+            },
+            "activity_summary": {
+                "total_evaluations": total_evaluations,
+                "total_chats": total_chats,
+                "timeframe": timeframe
             }
         }
         
     except Exception as e:
         return {"error": str(e)}
+
+@router.post("/metrics/start")
+def start_recording():
+    """Start background system metrics recording"""
+    try:
+        start_metrics_recording()
+        return {"status": "started", "message": "Background metrics recording started"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.post("/metrics/stop")
+def stop_recording():
+    """Stop background system metrics recording"""
+    try:
+        stop_metrics_recording()
+        return {"status": "stopped", "message": "Background metrics recording stopped"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.get("/metrics/status")
+def get_recording_status():
+    """Get the status of background metrics recording"""
+    global _metrics_task
+    is_running = _metrics_task is not None and not _metrics_task.done()
+    return {
+        "is_recording": is_running,
+        "task_status": "running" if is_running else "stopped"
+    }

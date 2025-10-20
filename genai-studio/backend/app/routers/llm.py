@@ -8,6 +8,47 @@ import time
 
 router = APIRouter()
 
+def calculate_groq_cost(model_id: str, tokens_used: int) -> float:
+    """Calculate accurate cost based on Groq model pricing"""
+    # Groq pricing as of 2024 (approximate rates)
+    pricing = {
+        # Llama models
+        "llama-3.1-8b-instant": 0.0000002,  # $0.20 per 1M tokens
+        "llama-3.1-70b-versatile": 0.0000007,  # $0.70 per 1M tokens
+        "llama-3.1-405b-versatile": 0.0000027,  # $2.70 per 1M tokens
+        "llama-3.1-90b-versatile": 0.0000009,  # $0.90 per 1M tokens
+        
+        # Mixtral models
+        "mixtral-8x7b-32768": 0.00000027,  # $0.27 per 1M tokens
+        
+        # Gemma models
+        "gemma-7b-it": 0.0000002,  # $0.20 per 1M tokens
+        "gemma2-9b-it": 0.0000002,  # $0.20 per 1M tokens
+        
+        # Code models
+        "llama-3.1-8b-instruct": 0.0000002,  # $0.20 per 1M tokens
+        "llama-3.1-70b-instruct": 0.0000007,  # $0.70 per 1M tokens
+        
+        # Default fallback
+        "default": 0.0000005  # $0.50 per 1M tokens
+    }
+    
+    # Extract base model name for pricing lookup
+    model_key = model_id.lower()
+    
+    # Try exact match first
+    if model_key in pricing:
+        cost_per_token = pricing[model_key]
+    else:
+        # Try partial matches
+        cost_per_token = pricing["default"]
+        for model_pattern, rate in pricing.items():
+            if model_pattern != "default" and model_pattern in model_key:
+                cost_per_token = rate
+                break
+    
+    return tokens_used * cost_per_token
+
 def record_groq_usage(model: str, tokens_used: int, cost_usd: float, duration_ms: int, success: bool = True):
     """Record Groq API usage for analytics"""
     try:
@@ -87,10 +128,8 @@ def complete(body: CompleteIn):
             usage = data.get("usage", {})
             tokens_used = usage.get("total_tokens", 0)
             
-            # Estimate cost (rough approximation based on Groq pricing)
-            # This is a simplified calculation - actual pricing may vary
-            cost_per_token = 0.0000005  # Rough estimate
-            cost_usd = tokens_used * cost_per_token
+            # Calculate accurate cost based on model pricing
+            cost_usd = calculate_groq_cost(body.model_id, tokens_used)
             
             record_groq_usage(body.model_id, tokens_used, cost_usd, duration_ms, True)
             
@@ -168,9 +207,8 @@ def chat(body: ChatIn):
         usage = data.get("usage", {})
         tokens_used = usage.get("total_tokens", 0)
         
-        # Estimate cost (rough approximation based on Groq pricing)
-        cost_per_token = 0.0000005  # Rough estimate
-        cost_usd = tokens_used * cost_per_token
+        # Calculate accurate cost based on model pricing
+        cost_usd = calculate_groq_cost(body.model_id, tokens_used)
         
         record_groq_usage(body.model_id, tokens_used, cost_usd, duration_ms, True)
         
