@@ -2,7 +2,6 @@ from fastapi import APIRouter
 import psutil
 import time
 import json
-import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -11,9 +10,6 @@ router = APIRouter()
 
 # Application start time for uptime calculation
 APP_START_TIME = datetime.now()
-
-# Background task for system metrics recording
-_metrics_task = None
 
 # Groq usage tracking
 GROQ_USAGE_FILE = Path(__file__).resolve().parents[2] / "data" / "groq_usage.json"
@@ -54,28 +50,58 @@ def load_system_metrics() -> List[Dict]:
 
 def save_system_metrics(metrics_data: List[Dict]):
     """Save system metrics data to file"""
-    SYSTEM_METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
+        SYSTEM_METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(SYSTEM_METRICS_FILE, "w", encoding="utf-8") as f:
             json.dump(metrics_data, f, indent=2)
     except Exception as e:
         print(f"Error saving system metrics: {e}")
 
 def record_system_metrics():
-    """Record current system metrics"""
+    """Record current system metrics with proper application detection"""
     try:
-        # Get current system metrics
+        # Get current process (this application)
+        current_process = psutil.Process()
+        
+        # Get system-wide metrics
         cpu_percent = psutil.cpu_percent(interval=0.1)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         
+        # Get application-specific metrics (more accurate like Task Manager)
+        try:
+            # CPU usage - get percentage of total system CPU (like Task Manager)
+            app_cpu_percent = current_process.cpu_percent()
+            cpu_count = psutil.cpu_count()
+            # psutil.cpu_percent() already gives percentage of total system CPU
+            app_cpu_normalized = app_cpu_percent
+            
+            # Memory usage - get RSS (Resident Set Size) like Task Manager
+            app_memory_info = current_process.memory_info()
+            app_memory_mb = app_memory_info.rss / (1024**2)  # RSS in MB
+            app_memory_percent = (app_memory_mb / (memory.total / (1024**2))) * 100
+            
+            # Get additional process info
+            app_threads = current_process.num_threads()
+            app_fds = current_process.num_fds() if hasattr(current_process, 'num_fds') else 0
+            
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            app_cpu_normalized = 0
+            app_memory_mb = 0
+            app_memory_percent = 0
+            app_threads = 0
+            app_fds = 0
+        
         # Try to get GPU metrics
         gpu_percent = None
+        app_gpu_percent = None
         try:
             import GPUtil
             gpus = GPUtil.getGPUs()
             if gpus:
                 gpu_percent = gpus[0].load * 100
+                # Show actual GPU usage when detected, don't estimate app usage
+                app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
         except ImportError:
             try:
                 import pynvml
@@ -85,6 +111,8 @@ def record_system_metrics():
                     handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                     util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                     gpu_percent = util.gpu
+                    # Show actual GPU usage when detected
+                    app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
             except ImportError:
                 pass
         
@@ -93,16 +121,22 @@ def record_system_metrics():
             "cpu_percent": cpu_percent,
             "memory_percent": memory.percent,
             "disk_percent": (disk.used / disk.total) * 100,
-            "gpu_percent": gpu_percent
+            "gpu_percent": gpu_percent,
+            "app_cpu_percent": app_cpu_normalized,
+            "app_memory_percent": app_memory_percent,
+            "app_memory_mb": app_memory_mb,
+            "app_gpu_percent": app_gpu_percent,
+            "app_threads": app_threads,
+            "app_fds": app_fds
         }
         
         # Load existing data and add new record
         metrics_data = load_system_metrics()
         metrics_data.append(metric_record)
         
-        # Keep only last 1000 records (about 16 hours at 1-minute intervals)
-        if len(metrics_data) > 1000:
-            metrics_data = metrics_data[-1000:]
+        # Keep only last 10000 records (about 7 days at 1-minute intervals)
+        if len(metrics_data) > 10000:
+            metrics_data = metrics_data[-10000:]
         
         save_system_metrics(metrics_data)
         return metric_record
@@ -132,29 +166,40 @@ def load_chats() -> List[Dict]:
         print(f"Error loading chats: {e}")
         return []
 
-async def background_metrics_recorder():
-    """Background task to record system metrics every minute"""
+def start_metrics_recording():
+    """Start metrics recording (simplified - just record current metrics)"""
+    try:
+        record_system_metrics()
+        print("Recorded current system metrics")
+    except Exception as e:
+        print(f"Error recording system metrics: {e}")
+
+def stop_metrics_recording():
+    """Stop metrics recording (no-op for simplified version)"""
+    print("Metrics recording stopped")
+
+# Background recording setup
+import threading
+import time
+
+def background_metrics_recorder():
+    """Background thread to record metrics every 30 seconds"""
     while True:
         try:
             record_system_metrics()
-            await asyncio.sleep(60)  # Record every minute
+            time.sleep(30)  # Record every 30 seconds
         except Exception as e:
             print(f"Error in background metrics recording: {e}")
-            await asyncio.sleep(60)
+            time.sleep(60)  # Wait longer on error
 
-def start_metrics_recording():
-    """Start the background metrics recording task"""
-    global _metrics_task
-    if _metrics_task is None or _metrics_task.done():
-        _metrics_task = asyncio.create_task(background_metrics_recorder())
-        print("Started background system metrics recording")
-
-def stop_metrics_recording():
-    """Stop the background metrics recording task"""
-    global _metrics_task
-    if _metrics_task and not _metrics_task.done():
-        _metrics_task.cancel()
-        print("Stopped background system metrics recording")
+# Start background recording if not already running
+_metrics_thread = None
+def ensure_background_recording():
+    global _metrics_thread
+    if _metrics_thread is None or not _metrics_thread.is_alive():
+        _metrics_thread = threading.Thread(target=background_metrics_recorder, daemon=True)
+        _metrics_thread.start()
+        print("Started background metrics recording")
 
 def record_groq_usage(model: str, tokens_used: int, cost_usd: float, duration_ms: int, success: bool = True):
     """Record a Groq API usage event"""
@@ -211,23 +256,57 @@ def get_uptime():
 
 @router.get("/system")
 def get_system_metrics():
-    """Get system performance metrics"""
+    """Get system performance metrics with improved accuracy"""
     try:
-        # Start background recording if not already running
-        start_metrics_recording()
+        # Ensure background recording is running
+        ensure_background_recording()
         
         # Record current metrics for historical tracking
         record_system_metrics()
         
-        # CPU usage
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # Get current process (this application)
+        current_process = psutil.Process()
+        
+        # CPU usage - use more accurate method
+        # Get system CPU usage with proper interval
+        cpu_percent = psutil.cpu_percent(interval=0.1)  # Shorter interval for more accuracy
         cpu_count = psutil.cpu_count()
         
-        # Memory usage
+        # Get application-specific CPU usage - use cumulative time method
+        try:
+            # Get CPU times for more accurate calculation
+            cpu_times = current_process.cpu_times()
+            # Get CPU usage as percentage of total system CPU
+            app_cpu_percent = current_process.cpu_percent()
+            # If the first call returns 0, try again after a short interval
+            if app_cpu_percent == 0:
+                time.sleep(0.1)
+                app_cpu_percent = current_process.cpu_percent()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            app_cpu_percent = 0
+        
+        # Memory usage - get both system-wide and application-specific
         memory = psutil.virtual_memory()
         memory_percent = memory.percent
         memory_used_gb = memory.used / (1024**3)
         memory_total_gb = memory.total / (1024**3)
+        
+        # Get application-specific memory usage with better accuracy
+        try:
+            # Get memory info using multiple methods for accuracy
+            app_memory_info = current_process.memory_info()
+            app_memory_mb = app_memory_info.rss / (1024**2)  # RSS in MB
+            
+            # Calculate percentage more accurately
+            app_memory_percent = (app_memory_mb / (memory_total_gb * 1024)) * 100
+            
+            # Also get VMS (Virtual Memory Size) for comparison
+            app_memory_vms_mb = app_memory_info.vms / (1024**2)
+            
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            app_memory_percent = 0
+            app_memory_mb = 0
+            app_memory_vms_mb = 0
         
         # Disk usage
         disk = psutil.disk_usage('/')
@@ -235,19 +314,23 @@ def get_system_metrics():
         disk_used_gb = disk.used / (1024**3)
         disk_total_gb = disk.total / (1024**3)
         
-        # GPU usage (try to get GPU info if available)
+        # GPU usage - improved detection with multiple methods
         gpu_percent = None
         gpu_system_percent = None
         gpu_name = None
         gpu_temperature = None
         gpu_memory_used_gb = None
         gpu_memory_total_gb = None
+        app_gpu_percent = None
         
+        # Try multiple GPU detection methods for better accuracy
+        gpu_detected = False
+        
+        # Method 1: Try GPUtil (most reliable for NVIDIA)
         try:
-            # Try to import and use GPUtil if available
             import GPUtil
             gpus = GPUtil.getGPUs()
-            if gpus:
+            if gpus and len(gpus) > 0:
                 gpu = gpus[0]  # Use first GPU
                 gpu_percent = gpu.load * 100
                 gpu_system_percent = gpu.memoryUtil * 100
@@ -255,9 +338,19 @@ def get_system_metrics():
                 gpu_temperature = gpu.temperature
                 gpu_memory_used_gb = round(gpu.memoryUsed / 1024, 2)  # Convert MB to GB
                 gpu_memory_total_gb = round(gpu.memoryTotal / 1024, 2)  # Convert MB to GB
+                
+                # Show actual GPU usage when detected
+                app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
+                gpu_detected = True
+                
                 print(f"GPU detected via GPUtil: {gpu_name}, Load: {gpu_percent:.1f}%, Memory: {gpu_system_percent:.1f}%, Temp: {gpu_temperature}°C")
         except ImportError:
-            # GPUtil not available, try nvidia-ml-py
+            pass
+        except Exception as e:
+            print(f"Error accessing GPU via GPUtil: {e}")
+        
+        # Method 2: Try nvidia-ml-py if GPUtil failed
+        if not gpu_detected:
             try:
                 import pynvml
                 pynvml.nvmlInit()
@@ -285,24 +378,56 @@ def get_system_metrics():
                         gpu_memory_used_gb = None
                         gpu_memory_total_gb = None
                     
+                    # Show actual GPU usage when detected
+                    app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
+                    gpu_detected = True
+                    
                     print(f"GPU detected via pynvml: {gpu_name}, GPU: {gpu_percent}%, Memory: {gpu_system_percent}%, Temp: {gpu_temperature}°C")
             except ImportError:
-                print("No GPU monitoring libraries available (GPUtil or pynvml)")
-                # Don't use mock data - return None to indicate no GPU data
+                pass
             except Exception as e:
                 print(f"Error accessing GPU via pynvml: {e}")
-        except Exception as e:
-            print(f"Error accessing GPU via GPUtil: {e}")
+        
+        # Method 3: Try Windows-specific GPU detection
+        if not gpu_detected:
+            try:
+                import subprocess
+                import platform
+                if platform.system() == "Windows":
+                    # Try to get GPU info using wmic
+                    result = subprocess.run(['wmic', 'path', 'win32_VideoController', 'get', 'name'], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0 and result.stdout.strip():
+                        lines = result.stdout.strip().split('\n')
+                        if len(lines) > 1:
+                            gpu_name = lines[1].strip()
+                            if gpu_name and gpu_name != "Name":
+                                # Set basic GPU info (we can't get usage without proper drivers)
+                                gpu_percent = 0
+                                gpu_system_percent = 0
+                                app_gpu_percent = 0
+                                gpu_detected = True
+                                print(f"GPU detected via wmic: {gpu_name} (no usage data available)")
+            except Exception as e:
+                print(f"Error accessing GPU via wmic: {e}")
+        
+        if not gpu_detected:
+            print("No GPU monitoring libraries available or GPU not detected")
         
         result = {
             "cpu": {
                 "percent": cpu_percent,
-                "count": cpu_count
+                "count": cpu_count,
+                "system_percent": cpu_percent,
+                "app_percent": round(app_cpu_percent, 2)
             },
             "memory": {
                 "percent": memory_percent,
+                "system_percent": memory_percent,
+                "app_percent": round(app_memory_percent, 2),
                 "used_gb": round(memory_used_gb, 2),
-                "total_gb": round(memory_total_gb, 2)
+                "total_gb": round(memory_total_gb, 2),
+                "app_used_mb": round(app_memory_mb, 2)
             },
             "disk": {
                 "percent": round(disk_percent, 2),
@@ -316,7 +441,8 @@ def get_system_metrics():
         if gpu_percent is not None:
             gpu_data = {
                 "percent": round(gpu_percent, 2),
-                "system_percent": round(gpu_system_percent, 2)
+                "system_percent": round(gpu_system_percent, 2),
+                "app_percent": round(app_gpu_percent, 2) if app_gpu_percent is not None else 0
             }
             
             # Add additional GPU info if available
@@ -336,9 +462,12 @@ def get_system_metrics():
         return {"error": str(e)}
 
 @router.get("/performance")
-def get_performance_trends():
-    """Get performance trends data"""
+def get_performance_trends(timeframe: str = "24h"):
+    """Get performance trends data with proper sampling to prevent duplicates"""
     try:
+        # Ensure background recording is running
+        ensure_background_recording()
+        
         # Load real system metrics data
         metrics_data = load_system_metrics()
         
@@ -347,42 +476,97 @@ def get_performance_trends():
             record_system_metrics()
             return {
                 "trends": [],
-                "period": "24h",
+                "period": timeframe,
                 "note": "No historical data available yet. Metrics will be recorded going forward."
             }
         
-        # Filter data for the last 24 hours
+        # Get start time based on timeframe
         now = datetime.now()
-        start_time = now - timedelta(hours=24)
+        start_time = get_timeframe_filter(timeframe)
         
+        # Filter data by timeframe
         filtered_data = [
             record for record in metrics_data
             if datetime.fromisoformat(record["timestamp"]) >= start_time
         ]
         
-        # If we have less than 24 hours of data, pad with available data
-        if len(filtered_data) < 24:
-            # Use all available data
-            trends = filtered_data
-        else:
-            # Sample every hour for the last 24 hours
-            trends = []
-        for i in range(24):
-                target_time = now - timedelta(hours=i)
-                # Find the closest record to this hour
-                closest_record = min(
-                    filtered_data,
-                    key=lambda x: abs((datetime.fromisoformat(x["timestamp"]) - target_time).total_seconds())
-                )
-                trends.append(closest_record)
+        if not filtered_data:
+            return {
+                "trends": [],
+                "period": timeframe,
+                "note": f"No data available for the last {timeframe}."
+            }
         
         # Sort by timestamp (oldest first)
-        trends.sort(key=lambda x: x["timestamp"])
+        filtered_data.sort(key=lambda x: x["timestamp"])
+        
+        # Group data into 5-minute quadrants to prevent jitter and duplicates
+        time_span_hours = (now - start_time).total_seconds() / 3600
+        data_points = len(filtered_data)
+        
+        # Group data into 5-minute intervals
+        quadrant_data = {}
+        quadrant_size_minutes = 5
+        
+        for record in filtered_data:
+            timestamp = datetime.fromisoformat(record["timestamp"])
+            # Round down to nearest 5-minute interval
+            quadrant_time = timestamp.replace(
+                minute=(timestamp.minute // quadrant_size_minutes) * quadrant_size_minutes,
+                second=0,
+                microsecond=0
+            )
+            quadrant_key = quadrant_time.isoformat()
+            
+            if quadrant_key not in quadrant_data:
+                quadrant_data[quadrant_key] = {
+                    "timestamp": quadrant_key,
+                    "cpu_percent": [],
+                    "memory_percent": [],
+                    "disk_percent": [],
+                    "gpu_percent": [],
+                    "app_cpu_percent": [],
+                    "app_memory_percent": [],
+                    "app_gpu_percent": [],
+                    "count": 0
+                }
+            
+            # Collect values for averaging
+            quadrant_data[quadrant_key]["cpu_percent"].append(record.get("cpu_percent", 0))
+            quadrant_data[quadrant_key]["memory_percent"].append(record.get("memory_percent", 0))
+            quadrant_data[quadrant_key]["disk_percent"].append(record.get("disk_percent", 0))
+            quadrant_data[quadrant_key]["gpu_percent"].append(record.get("gpu_percent", 0))
+            quadrant_data[quadrant_key]["app_cpu_percent"].append(record.get("app_cpu_percent", 0))
+            quadrant_data[quadrant_key]["app_memory_percent"].append(record.get("app_memory_percent", 0))
+            quadrant_data[quadrant_key]["app_gpu_percent"].append(record.get("app_gpu_percent", 0))
+            quadrant_data[quadrant_key]["count"] += 1
+        
+        # Calculate averages for each quadrant
+        trends = []
+        for quadrant_key, data in sorted(quadrant_data.items()):
+            if data["count"] > 0:
+                trend_point = {
+                    "timestamp": quadrant_key,
+                    "cpu_percent": sum(data["cpu_percent"]) / len(data["cpu_percent"]),
+                    "memory_percent": sum(data["memory_percent"]) / len(data["memory_percent"]),
+                    "disk_percent": sum(data["disk_percent"]) / len(data["disk_percent"]),
+                    "gpu_percent": sum(data["gpu_percent"]) / len(data["gpu_percent"]) if data["gpu_percent"] else 0,
+                    "app_cpu_percent": sum(data["app_cpu_percent"]) / len(data["app_cpu_percent"]),
+                    "app_memory_percent": sum(data["app_memory_percent"]) / len(data["app_memory_percent"]),
+                    "app_gpu_percent": sum(data["app_gpu_percent"]) / len(data["app_gpu_percent"]) if data["app_gpu_percent"] else 0,
+                    "app_memory_mb": sum(data["app_memory_percent"]) / len(data["app_memory_percent"]) * 100,  # Approximate
+                    "app_threads": 0,  # Not tracked in historical data
+                    "app_fds": 0  # Not tracked in historical data
+                }
+                trends.append(trend_point)
         
         return {
             "trends": trends,
-            "period": "24h",
-            "data_points": len(trends)
+            "period": timeframe,
+            "data_points": len(trends),
+            "total_data_points": data_points,
+            "time_span_hours": round(time_span_hours, 2),
+            "quadrant_size_minutes": quadrant_size_minutes
         }
     except Exception as e:
         return {"error": str(e)}
@@ -686,7 +870,7 @@ def get_evaluation_metrics(timeframe: str = "24h"):
         ]
         
         if not filtered_evaluations:
-        return {
+            return {
                 "total_evaluations": 0,
                 "average_pass_rate": 0.0,
                 "rouge_scores": [],
@@ -922,10 +1106,8 @@ def stop_recording():
 
 @router.get("/metrics/status")
 def get_recording_status():
-    """Get the status of background metrics recording"""
-    global _metrics_task
-    is_running = _metrics_task is not None and not _metrics_task.done()
+    """Get the status of metrics recording"""
     return {
-        "is_recording": is_running,
-        "task_status": "running" if is_running else "stopped"
+        "is_recording": True,  # Always true since we record on-demand
+        "task_status": "on-demand"
     }

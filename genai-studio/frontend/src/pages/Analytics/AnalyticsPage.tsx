@@ -26,15 +26,30 @@ interface UptimeData {
 }
 
 interface SystemMetrics {
-  cpu?: { percent?: number; count?: number; system_percent?: number };
-  memory?: {
-    percent?: number; // app percent if provided
+  cpu?: { 
+    percent?: number; 
+    count?: number; 
     system_percent?: number;
+    app_percent?: number;
+  };
+  memory?: {
+    percent?: number; // system percent
+    system_percent?: number;
+    app_percent?: number;
     used_gb?: number;
     total_gb?: number;
+    app_used_mb?: number;
   };
   disk?: { percent?: number; used_gb?: number; total_gb?: number };
-  gpu?: { percent?: number; system_percent?: number };
+  gpu?: { 
+    percent?: number; 
+    system_percent?: number;
+    app_percent?: number;
+    name?: string;
+    temperature?: number;
+    memory_used_gb?: number;
+    memory_total_gb?: number;
+  };
   timestamp?: string;
 }
 
@@ -44,6 +59,23 @@ interface PerformanceTrend {
   memory_percent?: number;
   disk_percent?: number;
   gpu_percent?: number;
+  app_cpu_percent?: number;
+  app_memory_percent?: number;
+  app_memory_mb?: number;
+  app_gpu_percent?: number;
+  app_threads?: number;
+  app_fds?: number;
+}
+
+interface ChartDataPoint {
+  time: string;
+  cpu: number;
+  memory: number;
+  disk: number;
+  gpu: number;
+  appCpu: number;
+  appMemory: number;
+  appGpu: number;
 }
 
 interface GroqAnalytics {
@@ -269,10 +301,10 @@ export default function AnalyticsPage() {
 
   const loadPerf = useCallback(async () => {
     try {
-      const r = await api.get("/analytics/performance");
+      const r = await api.get(`/analytics/performance?timeframe=${timeFilter}`);
       setPerformanceTrends(r.data?.trends ?? []);
     } catch (e) {}
-  }, []);
+  }, [timeFilter]);
 
   const loadGroq = useCallback(async () => {
     try {
@@ -328,9 +360,10 @@ export default function AnalyticsPage() {
     loadAll();
     const uptimeInterval = setInterval(loadUptime, 1_000); // realtime-ish uptime
     const dataInterval = setInterval(() => {
-      // targeted refresh depending on tab
+      // targeted refresh depending on tab - reduced frequency to prevent jitter
       if (activeTab === "application" && activeSubTab === "system") {
         loadSystem();
+        // Always reload performance data when timeframe changes
         loadPerf();
       } else if (activeTab === "application" && activeSubTab === "trends") {
         loadErrors();
@@ -341,26 +374,58 @@ export default function AnalyticsPage() {
       } else if (activeTab === "groq") {
         loadGroq();
       }
-    }, 2_000);
+    }, 5_000); // Increased from 2s to 5s to reduce jitter
     return () => {
       clearInterval(uptimeInterval);
       clearInterval(dataInterval);
     };
   }, [activeTab, activeSubTab, timeFilter, loadAll, loadUptime, loadSystem, loadPerf, loadGroq, loadErrors, loadLatency, loadThroughput, loadEvals]);
 
+  // Separate effect to reload performance data when timeframe changes
+  useEffect(() => {
+    if (activeTab === "application" && activeSubTab === "system") {
+      loadPerf();
+    }
+  }, [timeFilter, loadPerf, activeTab, activeSubTab]);
+
   /* ---------- Derived & mapped data for charts ---------- */
   const systemChartData = useMemo(
-    () =>
-      performanceTrends
-        .slice(-36)
-        .map((t) => ({
-          time: new Date(t.timestamp).toLocaleTimeString(),
-          cpu: (t.cpu_percent ?? 0),
-          memory: (t.memory_percent ?? 0),
-          disk: (t.disk_percent ?? 0),
-          gpu: (t.gpu_percent ?? 0),
-        })),
-    [performanceTrends]
+    (): ChartDataPoint[] => {
+      if (!performanceTrends || performanceTrends.length === 0) return [];
+      
+      const chartData: ChartDataPoint[] = [];
+      
+      performanceTrends.forEach((t) => {
+        const date = new Date(t.timestamp);
+        let timeLabel: string;
+        
+        // Since backend now groups data into 5-minute quadrants, we can display cleaner labels
+        if (timeFilter === "1h") {
+          timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } else if (timeFilter === "6h") {
+          timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } else if (timeFilter === "24h") {
+          // Show every 5-minute quadrant
+          timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } else { // 7d
+          timeLabel = date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+        
+        chartData.push({
+          time: timeLabel,
+          cpu: clampPct(t.cpu_percent ?? 0),
+          memory: clampPct(t.memory_percent ?? 0),
+          disk: clampPct(t.disk_percent ?? 0),
+          gpu: clampPct(t.gpu_percent ?? 0),
+          appCpu: clampPct(t.app_cpu_percent ?? 0),
+          appMemory: clampPct(t.app_memory_percent ?? 0),
+          appGpu: clampPct(t.app_gpu_percent ?? 0),
+        });
+      });
+      
+      return chartData;
+    },
+    [performanceTrends, timeFilter]
   );
 
   const groqChartData = groqAnalytics?.hourly_usage?.slice(-24) ?? [];
@@ -414,29 +479,18 @@ export default function AnalyticsPage() {
     return { em, bleu, rouge, f1, bert, ppl, acc, prec, rec };
   }, [evaluationMetrics]);
 
-  /* ---------- Application <> system derivations (defensive) ---------- */
-  const sysCPU = clampPct(systemMetrics?.cpu?.system_percent ?? systemMetrics?.cpu?.percent);
-  const appCPU = clampPct(
-    systemMetrics?.cpu && (systemMetrics.cpu.percent != null && systemMetrics.cpu.system_percent != null)
-      ? systemMetrics.cpu.percent
-      : sysCPU * 0.30
-  );
+  /* ---------- Application <> system derivations (using real metrics) ---------- */
+  const sysCPU = clampPct(systemMetrics?.cpu?.system_percent ?? systemMetrics?.cpu?.percent ?? 0);
+  const appCPU = clampPct(systemMetrics?.cpu?.app_percent ?? 0);
 
-  const sysMemPct = clampPct(systemMetrics?.memory?.system_percent ?? systemMetrics?.memory?.percent);
-  const appMemPct = clampPct(
-    systemMetrics?.memory && (systemMetrics.memory.percent != null && systemMetrics.memory.system_percent != null)
-      ? systemMetrics.memory.percent
-      : sysMemPct * 0.40
-  );
+  const sysMemPct = clampPct(systemMetrics?.memory?.system_percent ?? systemMetrics?.memory?.percent ?? 0);
+  const appMemPct = clampPct(systemMetrics?.memory?.app_percent ?? 0);
   const totalMemGB = Number(systemMetrics?.memory?.total_gb ?? 0);
-  const appMemGB = (appMemPct / 100) * totalMemGB;
+  const appMemMB = Number(systemMetrics?.memory?.app_used_mb ?? 0);
+  const appMemGB = appMemMB / 1024; // Convert MB to GB
 
-  const sysGPU = clampPct(systemMetrics?.gpu?.system_percent ?? systemMetrics?.gpu?.percent);
-  const appGPU = clampPct(
-    systemMetrics?.gpu && (systemMetrics.gpu.percent != null && systemMetrics.gpu.system_percent != null)
-      ? systemMetrics.gpu.percent
-      : sysGPU * 0.60
-  );
+  const sysGPU = clampPct(systemMetrics?.gpu?.system_percent ?? systemMetrics?.gpu?.percent ?? 0);
+  const appGPU = clampPct(systemMetrics?.gpu?.app_percent ?? 0);
 
   /* formatting helpers */
   const formatNumber = (n?: number | null) => (typeof n === "number" ? n.toLocaleString() : "0");
@@ -780,6 +834,30 @@ export default function AnalyticsPage() {
               {/* Application / System */}
               {activeTab === "application" && activeSubTab === "system" && (
                 <div style={{ display: "grid", gap: 24 }}>
+                  {/* Time Filter for System Tab */}
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16 }}>
+                    <label style={{ color: colors.muted, fontSize: 14, fontWeight: 500 }}>Historical Data Range:</label>
+                    <select
+                      value={timeFilter}
+                      onChange={(e) => setTimeFilter(e.target.value as any)}
+                      style={{ 
+                        padding: "8px 12px", 
+                        borderRadius: 8, 
+                        background: "#1e293b", 
+                        color: "#e2e8f0", 
+                        border: "1px solid #334155",
+                        fontSize: 14,
+                        fontWeight: 500,
+                        outline: "none",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      <option value="1h">Last 1h</option>
+                      <option value="6h">Last 6h</option>
+                      <option value="24h">Last 24h</option>
+                      <option value="7d">Last 7d</option>
+                    </select>
+                  </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
                     {/* CPU */}
                     <div style={{ padding: 24, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 16 }}>
@@ -796,17 +874,32 @@ export default function AnalyticsPage() {
                         <h3 style={{ margin: 0, color: colors.text, fontSize: 16 }}>Application Memory Usage</h3>
                         <CircleCompare systemPct={sysMemPct} appPct={appMemPct} outerColor={colors.primary} innerColor={colors.secondary} />
                       </div>
-                      <div style={{ fontSize: 24, fontWeight: 700, color: colors.secondary }}>{appMemGB.toFixed(1)} GB</div>
-                      <div style={{ fontSize: 12, color: colors.muted }}>Total: {totalMemGB.toFixed(1)} GB</div>
+                      <div style={{ fontSize: 24, fontWeight: 700, color: colors.secondary }}>{appMemMB.toFixed(0)} MB</div>
+                      <div style={{ fontSize: 12, color: colors.muted }}>Total System: {totalMemGB.toFixed(1)} GB</div>
                     </div>
 
                     {/* GPU */}
                     <div style={{ padding: 24, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 16 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                        <h3 style={{ margin: 0, color: colors.text, fontSize: 16 }}>Application GPU usage</h3>
+                        <h3 style={{ margin: 0, color: colors.text, fontSize: 16 }}>GPU Usage</h3>
                         <CircleCompare systemPct={sysGPU} appPct={appGPU} outerColor={colors.purple} innerColor={colors.secondary} />
                       </div>
                       <div style={{ fontSize: 24, fontWeight: 700, color: colors.secondary }}>{appGPU.toFixed(1)}%</div>
+                      {systemMetrics?.gpu?.name && (
+                        <div style={{ fontSize: 12, color: colors.muted, marginTop: 4 }}>
+                          {systemMetrics.gpu.name}
+                        </div>
+                      )}
+                      {systemMetrics?.gpu?.temperature && (
+                        <div style={{ fontSize: 12, color: colors.muted }}>
+                          Temp: {systemMetrics.gpu.temperature}°C
+                        </div>
+                      )}
+                      {systemMetrics?.gpu?.memory_used_gb && systemMetrics?.gpu?.memory_total_gb && (
+                        <div style={{ fontSize: 12, color: colors.muted }}>
+                          Memory: {systemMetrics.gpu.memory_used_gb.toFixed(1)}/{systemMetrics.gpu.memory_total_gb.toFixed(1)} GB
+                        </div>
+                      )}
                     </div>
 
                     
@@ -831,26 +924,51 @@ export default function AnalyticsPage() {
                     </ResponsiveContainer>
                   </ChartCard>
 
-                  <ChartCard title="Historical Performance (CPU / Memory / Disk / GPU)">
+                  <ChartCard title={`Historical Performance (System vs Application) - Last ${timeFilter} (5-min averages)`}>
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart
-                        data={systemChartData.map((trend) => ({
-                          time: trend.time,
-                          cpu: clampPct((trend.cpu ?? 0) * 1),
-                          memory: clampPct((trend.memory ?? 0) * 1),
-                          disk: clampPct((trend.disk ?? 0) * 1),
-                          gpu: clampPct((trend.gpu ?? 0) * 1),
-                        }))}
+                        data={systemChartData}
                       >
                         <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                        <XAxis dataKey="time" stroke={colors.muted} fontSize={12} />
-                        <YAxis stroke={colors.muted} fontSize={12} domain={[0, 100]} />
-                        <Tooltip contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }} />
+                        <XAxis 
+                          dataKey="time" 
+                          stroke={colors.muted} 
+                          fontSize={11}
+                          interval="preserveStartEnd"
+                          tick={{ fill: colors.muted }}
+                          angle={-45}
+                          textAnchor="end"
+                          height={60}
+                        />
+                        <YAxis 
+                          stroke={colors.muted} 
+                          fontSize={12} 
+                          domain={[0, 100]}
+                          tick={{ fill: colors.muted }}
+                          label={{ value: 'Usage %', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: colors.muted } }}
+                        />
+                        <Tooltip 
+                          contentStyle={{ 
+                            backgroundColor: colors.panel, 
+                            border: `1px solid ${colors.slate}`, 
+                            borderRadius: 8, 
+                            color: colors.text,
+                            fontSize: 12
+                          }}
+                          formatter={(value: any, name: string) => [`${value.toFixed(1)}%`, name]}
+                          labelStyle={{ color: colors.text, fontSize: 12 }}
+                        />
                         <Legend />
-                        <Area type="monotone" dataKey="cpu" stackId="1" stroke={colors.accent} fill={colors.accent} fillOpacity={0.18} name="CPU %" />
-                        <Area type="monotone" dataKey="memory" stackId="1" stroke={colors.primary} fill={colors.primary} fillOpacity={0.12} name="Memory %" />
-                        <Area type="monotone" dataKey="disk" stackId="1" stroke={colors.secondary} fill={colors.secondary} fillOpacity={0.12} name="Disk %" />
-                        {showGPU && <Area type="monotone" dataKey="gpu" stackId="1" stroke={colors.purple} fill={colors.purple} fillOpacity={0.12} name="GPU %" />}
+                        {/* System metrics */}
+                        <Area type="monotone" dataKey="cpu" stackId="1" stroke={colors.accent} fill={colors.accent} fillOpacity={0.15} name="System CPU %" />
+                        <Area type="monotone" dataKey="memory" stackId="1" stroke={colors.primary} fill={colors.primary} fillOpacity={0.10} name="System Memory %" />
+                        <Area type="monotone" dataKey="disk" stackId="1" stroke={colors.secondary} fill={colors.secondary} fillOpacity={0.10} name="System Disk %" />
+                        {showGPU && <Area type="monotone" dataKey="gpu" stackId="1" stroke={colors.purple} fill={colors.purple} fillOpacity={0.10} name="System GPU %" />}
+                        
+                        {/* Application metrics */}
+                        <Area type="monotone" dataKey="appCpu" stackId="2" stroke={colors.accent} fill={colors.accent} fillOpacity={0.25} name="App CPU %" strokeDasharray="5 5" />
+                        <Area type="monotone" dataKey="appMemory" stackId="2" stroke={colors.primary} fill={colors.primary} fillOpacity={0.20} name="App Memory %" strokeDasharray="5 5" />
+                        {showGPU && <Area type="monotone" dataKey="appGpu" stackId="2" stroke={colors.purple} fill={colors.purple} fillOpacity={0.20} name="App GPU %" strokeDasharray="5 5" />}
                       </AreaChart>
                     </ResponsiveContainer>
                   </ChartCard>
