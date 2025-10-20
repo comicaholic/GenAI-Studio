@@ -3,7 +3,7 @@ import psutil
 import time
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -336,7 +336,12 @@ def get_system_metrics():
         
         # Check if running in Docker and adjust memory detection
         is_docker = os.environ.get('DOCKER', 'false').lower() == 'true'
+        docker_limitations = False
+        
         if is_docker:
+            # Docker containers on Windows run Linux, so they can't access Windows system commands
+            # This means we can only get container-level metrics, not host system metrics
+            docker_limitations = True
             # Try to get host system memory info when running in Docker
             try:
                 import subprocess
@@ -354,6 +359,7 @@ def get_system_metrics():
                                 memory_total_gb = memory_mb / 1024
                                 # Recalculate memory percentage based on host total
                                 memory_percent = (memory_used_gb / memory_total_gb) * 100
+                                docker_limitations = False  # Successfully got host info
                                 break
                 else:
                     # Linux: Try to read from mounted host proc filesystem
@@ -364,10 +370,11 @@ def get_system_metrics():
                             host_mem_kb = int(line.split()[1])
                             memory_total_gb = host_mem_kb / (1024**2)  # Convert KB to GB
                             memory_percent = (memory_used_gb / memory_total_gb) * 100
+                            docker_limitations = False  # Successfully got host info
                             break
             except (FileNotFoundError, ValueError, IndexError, subprocess.TimeoutExpired, ImportError):
                 # Fallback to container memory if host access fails
-                pass
+                docker_limitations = True
         
         
         # Get application-specific memory usage with better accuracy
@@ -515,6 +522,18 @@ def get_system_metrics():
             "timestamp": datetime.now().isoformat()
         }
         
+        # Add Docker limitations warning
+        if docker_limitations:
+            result["docker_warning"] = {
+                "message": "Docker container limitations detected. Metrics may not reflect actual host system resources.",
+                "recommendation": "For accurate system metrics, use the Conda version: run_conda.bat",
+                "limitations": [
+                    "CPU usage reflects container scope rather than full system",
+                    "Memory totals and usage may reflect container limits",
+                    "GPU detection and utilization may be unavailable or limited"
+                ]
+            }
+        
         # Add GPU data if available
         if gpu_percent is not None:
             gpu_data = {
@@ -609,14 +628,14 @@ def get_performance_trends(timeframe: str = "24h"):
                     "count": 0
                 }
             
-            # Collect values for averaging
-            quadrant_data[quadrant_key]["cpu_percent"].append(record.get("cpu_percent", 0))
-            quadrant_data[quadrant_key]["memory_percent"].append(record.get("memory_percent", 0))
-            quadrant_data[quadrant_key]["disk_percent"].append(record.get("disk_percent", 0))
-            quadrant_data[quadrant_key]["gpu_percent"].append(record.get("gpu_percent", 0))
-            quadrant_data[quadrant_key]["app_cpu_percent"].append(record.get("app_cpu_percent", 0))
-            quadrant_data[quadrant_key]["app_memory_percent"].append(record.get("app_memory_percent", 0))
-            quadrant_data[quadrant_key]["app_gpu_percent"].append(record.get("app_gpu_percent", 0))
+            # Collect values for averaging (with null safety)
+            quadrant_data[quadrant_key]["cpu_percent"].append(record.get("cpu_percent") or 0)
+            quadrant_data[quadrant_key]["memory_percent"].append(record.get("memory_percent") or 0)
+            quadrant_data[quadrant_key]["disk_percent"].append(record.get("disk_percent") or 0)
+            quadrant_data[quadrant_key]["gpu_percent"].append(record.get("gpu_percent") or 0)
+            quadrant_data[quadrant_key]["app_cpu_percent"].append(record.get("app_cpu_percent") or 0)
+            quadrant_data[quadrant_key]["app_memory_percent"].append(record.get("app_memory_percent") or 0)
+            quadrant_data[quadrant_key]["app_gpu_percent"].append(record.get("app_gpu_percent") or 0)
             quadrant_data[quadrant_key]["count"] += 1
         
         # Calculate averages for each quadrant
@@ -942,10 +961,36 @@ def get_evaluation_metrics(timeframe: str = "24h"):
         
         # Filter by timeframe
         start_time = get_timeframe_filter(timeframe)
-        filtered_evaluations = [
-            eval for eval in evaluations
-            if datetime.fromisoformat(eval.get("startedAt", eval.get("timestamp", "1970-01-01T00:00:00"))) >= start_time
-        ]
+        filtered_evaluations = []
+        
+        for eval in evaluations:
+            try:
+                # Handle different timestamp formats and timezone awareness
+                eval_timestamp = eval.get("startedAt", eval.get("timestamp", "1970-01-01T00:00:00"))
+                
+                # Parse timestamp and ensure it's timezone-aware
+                if isinstance(eval_timestamp, str):
+                    if eval_timestamp.endswith('Z'):
+                        # UTC timestamp
+                        eval_dt = datetime.fromisoformat(eval_timestamp.replace('Z', '+00:00'))
+                    elif '+' in eval_timestamp or eval_timestamp.count('-') > 2:
+                        # Already timezone-aware
+                        eval_dt = datetime.fromisoformat(eval_timestamp)
+                    else:
+                        # Naive timestamp, assume UTC
+                        eval_dt = datetime.fromisoformat(eval_timestamp).replace(tzinfo=timezone.utc)
+                else:
+                    eval_dt = eval_timestamp
+                
+                # Ensure start_time is also timezone-aware
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+                
+                if eval_dt >= start_time:
+                    filtered_evaluations.append(eval)
+            except (ValueError, TypeError) as e:
+                # Skip invalid timestamps
+                continue
         
         if not filtered_evaluations:
             return {
@@ -1097,15 +1142,47 @@ def get_user_analytics(timeframe: str = "24h"):
         # Filter by timeframe
         start_time = get_timeframe_filter(timeframe)
         
-        filtered_evaluations = [
-            eval for eval in evaluations
-            if datetime.fromisoformat(eval.get("startedAt", eval.get("timestamp", "1970-01-01T00:00:00"))) >= start_time
-        ]
+        # Ensure start_time is timezone-aware
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
         
-        filtered_chats = [
-            chat for chat in chats
-            if datetime.fromisoformat(chat.get("lastActivityAt", chat.get("createdAt", "1970-01-01T00:00:00"))) >= start_time
-        ]
+        filtered_evaluations = []
+        for eval in evaluations:
+            try:
+                eval_timestamp = eval.get("startedAt", eval.get("timestamp", "1970-01-01T00:00:00"))
+                if isinstance(eval_timestamp, str):
+                    if eval_timestamp.endswith('Z'):
+                        eval_dt = datetime.fromisoformat(eval_timestamp.replace('Z', '+00:00'))
+                    elif '+' in eval_timestamp or eval_timestamp.count('-') > 2:
+                        eval_dt = datetime.fromisoformat(eval_timestamp)
+                    else:
+                        eval_dt = datetime.fromisoformat(eval_timestamp).replace(tzinfo=timezone.utc)
+                else:
+                    eval_dt = eval_timestamp
+                
+                if eval_dt >= start_time:
+                    filtered_evaluations.append(eval)
+            except (ValueError, TypeError):
+                continue
+        
+        filtered_chats = []
+        for chat in chats:
+            try:
+                chat_timestamp = chat.get("lastActivityAt", chat.get("createdAt", "1970-01-01T00:00:00"))
+                if isinstance(chat_timestamp, str):
+                    if chat_timestamp.endswith('Z'):
+                        chat_dt = datetime.fromisoformat(chat_timestamp.replace('Z', '+00:00'))
+                    elif '+' in chat_timestamp or chat_timestamp.count('-') > 2:
+                        chat_dt = datetime.fromisoformat(chat_timestamp)
+                    else:
+                        chat_dt = datetime.fromisoformat(chat_timestamp).replace(tzinfo=timezone.utc)
+                else:
+                    chat_dt = chat_timestamp
+                
+                if chat_dt >= start_time:
+                    filtered_chats.append(chat)
+            except (ValueError, TypeError):
+                continue
         
         # Calculate user activity metrics
         total_evaluations = len(filtered_evaluations)

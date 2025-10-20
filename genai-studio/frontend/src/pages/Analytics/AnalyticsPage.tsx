@@ -51,6 +51,11 @@ interface SystemMetrics {
     memory_total_gb?: number;
   };
   timestamp?: string;
+  docker_warning?: {
+    message: string;
+    recommendation: string;
+    limitations: string[];
+  };
 }
 
 interface PerformanceTrend {
@@ -132,6 +137,7 @@ const colors = {
   secondary: "#10b981",
   accent: "#f59e0b",
   danger: "#ef4444",
+  warning: "#f59e0b",
   purple: "#8b5cf6",
   cyan: "#06b6d4",
   green: "#22c55e",
@@ -858,6 +864,37 @@ export default function AnalyticsPage() {
                       <option value="7d">Last 7d</option>
                     </select>
                   </div>
+                  {/* Docker Warning Banner */}
+                  {systemMetrics?.docker_warning && (
+                    <div style={{ 
+                      padding: 16, 
+                      background: colors.warning + '20', 
+                      border: `1px solid ${colors.warning}`, 
+                      borderRadius: 12, 
+                      marginBottom: 20,
+                      color: colors.text
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontSize: 18, marginRight: 8 }}>⚠️</span>
+                        <strong style={{ color: colors.warning }}>Docker Limitations Detected</strong>
+                      </div>
+                      <div style={{ marginBottom: 8, fontSize: 14 }}>
+                        {systemMetrics.docker_warning.message}
+                      </div>
+                      <div style={{ marginBottom: 8, fontSize: 14, fontWeight: 600 }}>
+                        💡 {systemMetrics.docker_warning.recommendation}
+                      </div>
+                      <div style={{ fontSize: 12, color: colors.muted }}>
+                        <strong>Current limitations:</strong>
+                        <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                          {systemMetrics.docker_warning.limitations.map((limitation, index) => (
+                            <li key={index}>{limitation}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
                     {/* CPU */}
                     <div style={{ padding: 24, background: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 16 }}>
