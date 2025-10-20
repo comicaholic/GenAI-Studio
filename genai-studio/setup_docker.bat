@@ -1,16 +1,18 @@
 @echo off
 setlocal
-title GenAI Studio - Docker Run
+title GenAI Studio - Docker Setup (One-time)
 
 cd /d "%~dp0"
 echo ========================================
-echo GenAI Studio - Starting Containers
+echo GenAI Studio - Docker Setup
 echo ========================================
-echo Starting existing Docker containers...
+echo This is a one-time setup to build the Docker containers.
+echo Run this only when you first set up the project or when
+echo you make changes to Dockerfiles or dependencies.
 echo.
 
-echo Stopping any running containers...
-docker compose down >nul 2>&1
+echo Stopping any existing containers...
+docker compose down -v >nul 2>&1
 
 if %errorlevel% neq 0 (
   echo Docker is not running. Starting Docker Desktop...
@@ -23,18 +25,28 @@ if %errorlevel% neq 0 (
   if %errorlevel% neq 0 goto wait_for_docker
 )
 
+echo.
+echo Building Docker containers (this may take several minutes)...
+docker compose build --no-cache
+if errorlevel 1 (
+  echo.
+  echo Docker build failed. Check the error messages above.
+  pause
+  exit /b 1
+)
+
+echo.
 echo Starting containers...
 docker compose up -d
 if errorlevel 1 (
   echo.
   echo Docker failed to start. Make sure Docker Desktop is running.
-  echo If this is your first time running the project, use 'setup_docker.bat' instead.
   pause
   exit /b 1
 )
 
 echo Waiting for backend health...
-for /l %%i in (1,1,30) do (
+for /l %%i in (1,1,50) do (
   curl -fsS http://localhost:8000/api/health >nul 2>&1 && goto :ok
   timeout /t 2 >nul
 )
@@ -45,8 +57,10 @@ goto :eof
 :ok
 echo.
 echo ========================================
-echo Containers Started!
+echo Setup Complete!
 echo ========================================
+echo Your Docker containers are now built and running.
+echo.
 echo Frontend: http://localhost:5173
 echo Backend API: http://localhost:8000/api/health
 echo.
@@ -54,8 +68,9 @@ echo Opening browser...
 start "" http://localhost:5173
 start "" http://localhost:8000/api/health
 echo.
-echo Containers are running in the background.
-echo Use 'docker compose down' to stop them.
+echo You can now use 'run_docker.bat' to quickly start/stop the containers.
+echo Run 'setup_docker.bat' again only if you modify Dockerfiles or dependencies.
 echo.
 pause
 endlocal
+
