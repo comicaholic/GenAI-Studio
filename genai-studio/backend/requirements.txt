@@ -16,5 +16,6 @@ Pillow
 psutil
 gpustat
 GPUtil
+pynvml
 
 

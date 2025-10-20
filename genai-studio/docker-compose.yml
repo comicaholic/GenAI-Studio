@@ -6,6 +6,13 @@ services:
     ports: ["8000:8000"]
     environment:
       - DOCKER=true
+    # Full system access for accurate hardware monitoring
+    privileged: true
+    # Remove memory limits to see full system memory
+    deploy:
+      resources:
+        limits: {}
+        reservations: {}
     healthcheck:
       # Option A: if you've added curl in the backend image
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]

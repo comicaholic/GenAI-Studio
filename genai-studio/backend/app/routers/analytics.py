@@ -2,6 +2,7 @@ from fastapi import APIRouter
 import psutil
 import time
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -71,7 +72,17 @@ def record_system_metrics():
         # Get application-specific metrics (more accurate like Task Manager)
         try:
             # CPU usage - get percentage of total system CPU (like Task Manager)
+            # First call to initialize CPU tracking (often returns 0)
+            current_process.cpu_percent()
+            # Wait a bit for accurate measurement
+            time.sleep(0.2)
+            # Second call should give accurate percentage
             app_cpu_percent = current_process.cpu_percent()
+            # If still 0, try one more time with longer interval
+            if app_cpu_percent == 0:
+                time.sleep(0.5)
+                app_cpu_percent = current_process.cpu_percent()
+            
             cpu_count = psutil.cpu_count()
             # psutil.cpu_percent() already gives percentage of total system CPU
             app_cpu_normalized = app_cpu_percent
@@ -272,15 +283,47 @@ def get_system_metrics():
         cpu_percent = psutil.cpu_percent(interval=0.1)  # Shorter interval for more accuracy
         cpu_count = psutil.cpu_count()
         
-        # Get application-specific CPU usage - use cumulative time method
+        # Check if running in Docker and try to get host CPU info
+        is_docker = os.environ.get('DOCKER', 'false').lower() == 'true'
+        if is_docker and cpu_percent == 0.0:
+            # Try to get host CPU usage when running in Docker
+            try:
+                import subprocess
+                import platform
+                
+                if platform.system() == "Windows":
+                    # Use Windows wmic to get CPU usage
+                    result = subprocess.run(['wmic', 'cpu', 'get', 'loadpercentage', '/value'], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if 'LoadPercentage=' in line:
+                                cpu_percent = float(line.split('=')[1].strip())
+                                break
+                else:
+                    # Linux: Try to read from /proc/stat
+                    with open('/proc/stat', 'r') as f:
+                        cpu_stats = f.readline().split()
+                    if len(cpu_stats) >= 8:
+                        # Calculate CPU usage from /proc/stat
+                        idle = int(cpu_stats[4])
+                        total = sum(int(x) for x in cpu_stats[1:8])
+                        cpu_percent = 100.0 - (idle * 100.0 / total) if total > 0 else 0
+            except (FileNotFoundError, ValueError, IndexError, subprocess.TimeoutExpired):
+                # Fallback to psutil if host access fails
+                pass
+        
+        # Get application-specific CPU usage - use more reliable method
         try:
-            # Get CPU times for more accurate calculation
-            cpu_times = current_process.cpu_times()
-            # Get CPU usage as percentage of total system CPU
+            # First call to initialize CPU tracking (often returns 0)
+            current_process.cpu_percent()
+            # Wait a bit for accurate measurement
+            time.sleep(0.2)
+            # Second call should give accurate percentage
             app_cpu_percent = current_process.cpu_percent()
-            # If the first call returns 0, try again after a short interval
+            # If still 0, try one more time with longer interval
             if app_cpu_percent == 0:
-                time.sleep(0.1)
+                time.sleep(0.5)
                 app_cpu_percent = current_process.cpu_percent()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             app_cpu_percent = 0
@@ -290,6 +333,42 @@ def get_system_metrics():
         memory_percent = memory.percent
         memory_used_gb = memory.used / (1024**3)
         memory_total_gb = memory.total / (1024**3)
+        
+        # Check if running in Docker and adjust memory detection
+        is_docker = os.environ.get('DOCKER', 'false').lower() == 'true'
+        if is_docker:
+            # Try to get host system memory info when running in Docker
+            try:
+                import subprocess
+                import platform
+                
+                if platform.system() == "Windows":
+                    # Use Windows systeminfo command to get total memory
+                    result = subprocess.run(['systeminfo'], capture_output=True, text=True, timeout=10)
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if 'Total Physical Memory:' in line:
+                                # Extract memory value (e.g., "Total Physical Memory: 32,768 MB")
+                                memory_str = line.split(':')[1].strip()
+                                memory_mb = int(memory_str.replace(',', '').replace(' MB', ''))
+                                memory_total_gb = memory_mb / 1024
+                                # Recalculate memory percentage based on host total
+                                memory_percent = (memory_used_gb / memory_total_gb) * 100
+                                break
+                else:
+                    # Linux: Try to read from mounted host proc filesystem
+                    with open('/host/proc/meminfo', 'r') as f:
+                        meminfo = f.read()
+                    for line in meminfo.split('\n'):
+                        if line.startswith('MemTotal:'):
+                            host_mem_kb = int(line.split()[1])
+                            memory_total_gb = host_mem_kb / (1024**2)  # Convert KB to GB
+                            memory_percent = (memory_used_gb / memory_total_gb) * 100
+                            break
+            except (FileNotFoundError, ValueError, IndexError, subprocess.TimeoutExpired, ImportError):
+                # Fallback to container memory if host access fails
+                pass
+        
         
         # Get application-specific memory usage with better accuracy
         try:
@@ -302,6 +381,7 @@ def get_system_metrics():
             
             # Also get VMS (Virtual Memory Size) for comparison
             app_memory_vms_mb = app_memory_info.vms / (1024**2)
+            
             
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             app_memory_percent = 0
@@ -326,6 +406,7 @@ def get_system_metrics():
         # Try multiple GPU detection methods for better accuracy
         gpu_detected = False
         
+        
         # Method 1: Try GPUtil (most reliable for NVIDIA)
         try:
             import GPUtil
@@ -343,11 +424,10 @@ def get_system_metrics():
                 app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
                 gpu_detected = True
                 
-                print(f"GPU detected via GPUtil: {gpu_name}, Load: {gpu_percent:.1f}%, Memory: {gpu_system_percent:.1f}%, Temp: {gpu_temperature}°C")
         except ImportError:
             pass
         except Exception as e:
-            print(f"Error accessing GPU via GPUtil: {e}")
+            pass
         
         # Method 2: Try nvidia-ml-py if GPUtil failed
         if not gpu_detected:
@@ -382,11 +462,10 @@ def get_system_metrics():
                     app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
                     gpu_detected = True
                     
-                    print(f"GPU detected via pynvml: {gpu_name}, GPU: {gpu_percent}%, Memory: {gpu_system_percent}%, Temp: {gpu_temperature}°C")
             except ImportError:
                 pass
             except Exception as e:
-                print(f"Error accessing GPU via pynvml: {e}")
+                pass
         
         # Method 3: Try Windows-specific GPU detection
         if not gpu_detected:
@@ -407,12 +486,11 @@ def get_system_metrics():
                                 gpu_system_percent = 0
                                 app_gpu_percent = 0
                                 gpu_detected = True
-                                print(f"GPU detected via wmic: {gpu_name} (no usage data available)")
             except Exception as e:
-                print(f"Error accessing GPU via wmic: {e}")
+                pass
         
         if not gpu_detected:
-            print("No GPU monitoring libraries available or GPU not detected")
+            pass
         
         result = {
             "cpu": {

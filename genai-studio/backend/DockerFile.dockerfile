@@ -5,8 +5,18 @@ FROM python:3.11-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential cmake libopenblas-dev \
  && rm -rf /var/lib/apt/lists/*
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+
+# Install system monitoring tools and GPU libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    procps \
+    lshw \
+    pciutils \
     && rm -rf /var/lib/apt/lists/*
+
+# Install GPU monitoring libraries
+RUN pip install --upgrade pip setuptools wheel \
+ && pip install --no-cache-dir GPUtil pynvml
 
 WORKDIR /app
 
