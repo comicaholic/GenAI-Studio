@@ -10,6 +10,7 @@ export default function PresetManager({
   currentContent = "",
   currentParameters,
   currentMetrics,
+  selectedPresetTitle,
 }: { 
   onPresetChange: (preset: { title: string; body: string; id: string; parameters?: Preset['parameters']; metrics?: any }) => void;
   autoApplyOnMount?: boolean;
@@ -17,6 +18,7 @@ export default function PresetManager({
   currentContent?: string;
   currentParameters?: Preset['parameters'];
   currentMetrics?: any;
+  selectedPresetTitle?: string;
 }) {
   const [presets, setPresets] = useState<Preset[]>(presetStore.getPresets());
   const [selected, setSelected] = useState(() => {
@@ -71,6 +73,17 @@ export default function PresetManager({
     // run once on mount; don't depend on current.id
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Sync selected preset title from parent if provided
+  useEffect(() => {
+    if (!selectedPresetTitle) return;
+    if (selectedPresetTitle === selected) return;
+    const exists = presets.some(p => p.title === selectedPresetTitle);
+    if (exists) {
+      setSelected(selectedPresetTitle);
+      localStorage.setItem(`preset-selected-${presetStore.constructor.name}`, selectedPresetTitle);
+    }
+  }, [selectedPresetTitle, presets, presetStore.constructor.name, selected]);
 
   // Handle explicit preset selection (not tab switching)
   const handlePresetChange = (newPresetTitle: string) => {

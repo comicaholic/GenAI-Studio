@@ -383,19 +383,6 @@ export default function PromptEvalPage() {
 
   // Automation functionality
   const handleAutomationStart = useCallback(async (config: AutomationConfig) => {
-    if (!selected) {
-      showError("Model Required", "Select a model first.");
-      return;
-    }
-    if (!draft?.prompt?.trim()) {
-      showError("Prompt Required", "Please enter a prompt first.");
-      return;
-    }
-    if (!reference?.trim()) {
-      showError("Missing Reference", "Provide reference text first.");
-      return;
-    }
-
     const automationId = automationStore.startAutomation('prompt', config);
     setBusy("Running automation...");
 
@@ -409,14 +396,85 @@ export default function PromptEvalPage() {
         automationStore.updateProgress(automationId, { currentRunIndex: i });
 
         try {
+          // Load per-run files if specified
+          let runPromptText = draft?.prompt || "";
+          let runReference = reference || "";
+          let runPromptFileName = promptFileName;
+          let runRefFileName = refFileName;
+
+          // Load prompt file for this run if specified
+          if (run.promptFileName && run.promptFileName !== promptFileName) {
+            setBusy(`Loading prompt file for ${run.name}...`);
+            try {
+              const data = await loadReferenceByName(run.promptFileName);
+              runPromptText = data.text ?? "";
+              runPromptFileName = run.promptFileName;
+            } catch (e: any) {
+              showError("Prompt File Load Failed", `Failed to load prompt file ${run.promptFileName}: ${e?.message ?? e}`);
+              results[run.id] = {
+                runName: run.name,
+                error: `Failed to load prompt file: ${e?.message ?? e}`,
+              };
+              continue;
+            }
+          }
+
+          // Load reference file for this run if specified
+          if (run.referenceFileName && run.referenceFileName !== refFileName) {
+            setBusy(`Loading reference file for ${run.name}...`);
+            try {
+              const data = await loadReferenceByName(run.referenceFileName);
+              runReference = data.text ?? "";
+              runRefFileName = run.referenceFileName;
+            } catch (e: any) {
+              showError("Reference File Load Failed", `Failed to load reference file ${run.referenceFileName}: ${e?.message ?? e}`);
+              results[run.id] = {
+                runName: run.name,
+                error: `Failed to load reference file: ${e?.message ?? e}`,
+              };
+              continue;
+            }
+          }
+
+          // Validate required data for this run
+          if (!runPromptText.trim()) {
+            results[run.id] = {
+              runName: run.name,
+              error: "No prompt text available for this run",
+            };
+            continue;
+          }
+
+          if (!runReference.trim()) {
+            results[run.id] = {
+              runName: run.name,
+              error: "No reference text available for this run",
+            };
+            continue;
+          }
+
+          // Use per-run model if specified, otherwise use current selected model
+          const runModelId = run.modelId || selected?.id;
+          const runModelProvider = run.modelProvider || selected?.provider;
+          
+          if (!runModelId) {
+            results[run.id] = {
+              runName: run.name,
+              error: "No model specified for this run",
+            };
+            continue;
+          }
+
+          setBusy(`Running ${run.name}...`);
+
           // Build LLM output for this run
           const resources = resourceStore.getByIds(draft.resourceIds || []);
           let output = '';
           
           // Use the same streaming approach as the regular run
           for await (const chunk of callLLM({
-            modelId: selected.id,
-            prompt: run.prompt,
+            modelId: runModelId,
+            prompt: runPromptText,
             context: draft.context,
             resources,
             parameters: run.parameters as any,
@@ -438,23 +496,28 @@ export default function PromptEvalPage() {
           
           const res = await computeMetrics({
             prediction: output,
-            reference,
+            reference: runReference,
             metrics: runSelectedMetrics,
             meta: {
-              model: selected.id,
+              model: runModelId,
               params: run.parameters,
-              source_file: promptFileName,
-              reference_file: refFileName,
+              source_file: runPromptFileName,
+              reference_file: runRefFileName,
             },
           });
 
           results[run.id] = {
             runName: run.name,
-            prompt: run.prompt,
+            prompt: runPromptText,
             parameters: run.parameters,
             metrics: run.metrics,
             output,
             scores: res.scores ?? res,
+            model: { id: runModelId, provider: runModelProvider },
+            files: {
+              promptFileName: runPromptFileName,
+              referenceFileName: runRefFileName,
+            },
           };
 
           // Save individual evaluation to history
@@ -463,17 +526,17 @@ export default function PromptEvalPage() {
               id: crypto.randomUUID(),
               type: 'prompt' as const,
               title: `${config.name} - ${run.name}`,
-              model: { id: selected.id, provider: selected.provider },
+              model: { id: runModelId, provider: runModelProvider },
               parameters: run.parameters,
               metrics: runSelectedMetrics,
               usedText: {
-                promptText: run.prompt,
+                promptText: runPromptText,
                 context: draft.context,
-                referenceText: reference
+                referenceText: runReference
               },
               files: {
-                promptFileName,
-                referenceFileName: refFileName
+                promptFileName: runPromptFileName,
+                referenceFileName: runRefFileName
               },
               results: res.scores ?? res,
               startedAt: new Date().toISOString(),
@@ -496,6 +559,31 @@ export default function PromptEvalPage() {
 
       setAutomationResults(results);
       automationStore.completeAutomation(automationId);
+      
+      // Save automation aggregate to history
+      try {
+        const automationAggregate = {
+          id: config.id,
+          name: config.name,
+          model: { id: selected?.id || "unknown", provider: selected?.provider || "local" },
+          parameters: params,
+          runs: config.runs.map(run => ({
+            id: run.id,
+            name: run.name,
+            prompt: run.prompt,
+            parameters: run.parameters,
+            metrics: run.metrics,
+            results: results[run.id]?.scores || null,
+            error: results[run.id]?.error || null,
+          })),
+          status: "completed",
+          completedAt: new Date().toISOString(),
+        };
+        await api.post("/history/automations", automationAggregate);
+      } catch (e) {
+        console.warn("Failed to save automation aggregate:", e);
+      }
+      
       showSuccess("Automation Complete", `Completed ${config.runs.length} runs successfully!`);
 
     } catch (error: any) {

@@ -9,6 +9,13 @@ export type ModelInfo = {
   size?: string | null;
   quant?: string | null;
   tags?: string[];
+  // Additional metadata from classified models
+  publisher?: string;
+  category?: string;
+  architecture?: string;
+  params?: string;
+  description?: string;
+  source?: string;
 };
 
 type Ctx = {

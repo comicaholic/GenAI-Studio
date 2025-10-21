@@ -5,8 +5,127 @@ from typing import List, Dict, Any
 from app.services.llm.providers import list_groq_models, chat_complete
 import os, requests
 import time
+import json
+import re
 
 router = APIRouter()
+
+def fix_truncated_json(text: str) -> str:
+    """
+    Attempt to fix truncated JSON responses from LLMs.
+    This handles common cases where JSON is cut off due to token limits.
+    """
+    if not text or not text.strip():
+        return text
+    
+    # Check if the text looks like JSON (starts with { or [)
+    text = text.strip()
+    if not (text.startswith('{') or text.startswith('[')):
+        return text
+    
+    # Try to parse as JSON first
+    try:
+        json.loads(text)
+        return text  # Already valid JSON
+    except json.JSONDecodeError:
+        pass
+    
+    # If it's truncated JSON, try to fix it
+    if text.startswith('{'):
+        # Count opening and closing braces
+        open_braces = text.count('{')
+        close_braces = text.count('}')
+        
+        if open_braces > close_braces:
+            # Add missing closing braces
+            missing_braces = open_braces - close_braces
+            text += '}' * missing_braces
+            
+            # Try to parse again
+            try:
+                json.loads(text)
+                return text
+            except json.JSONDecodeError:
+                pass
+        
+        # If still invalid, try to close incomplete strings/objects
+        # Look for incomplete string values
+        if text.endswith('"') and not text.endswith('":'):
+            # Likely incomplete string value
+            text = text.rstrip('"') + '"}'
+        elif ':' in text and not text.endswith('}'):
+            # Likely incomplete object
+            if text.endswith(','):
+                text = text.rstrip(',') + '}'
+            else:
+                text += '}'
+        
+        # Try to parse one more time
+        try:
+            json.loads(text)
+            return text
+        except json.JSONDecodeError:
+            pass
+    
+    elif text.startswith('['):
+        # Similar logic for arrays
+        open_brackets = text.count('[')
+        close_brackets = text.count(']')
+        
+        if open_brackets > close_brackets:
+            missing_brackets = open_brackets - close_brackets
+            text += ']' * missing_brackets
+            
+            try:
+                json.loads(text)
+                return text
+            except json.JSONDecodeError:
+                pass
+    
+    # If we can't fix it, return the original text
+    # The frontend can handle displaying it as-is
+    return text
+
+def calculate_groq_cost(model_id: str, tokens_used: int) -> float:
+    """Calculate accurate cost based on Groq model pricing"""
+    # Groq pricing as of 2024 (approximate rates)
+    pricing = {
+        # Llama models
+        "llama-3.1-8b-instant": 0.0000002,  # $0.20 per 1M tokens
+        "llama-3.1-70b-versatile": 0.0000007,  # $0.70 per 1M tokens
+        "llama-3.1-405b-versatile": 0.0000027,  # $2.70 per 1M tokens
+        "llama-3.1-90b-versatile": 0.0000009,  # $0.90 per 1M tokens
+        
+        # Mixtral models
+        "mixtral-8x7b-32768": 0.00000027,  # $0.27 per 1M tokens
+        
+        # Gemma models
+        "gemma-7b-it": 0.0000002,  # $0.20 per 1M tokens
+        "gemma2-9b-it": 0.0000002,  # $0.20 per 1M tokens
+        
+        # Code models
+        "llama-3.1-8b-instruct": 0.0000002,  # $0.20 per 1M tokens
+        "llama-3.1-70b-instruct": 0.0000007,  # $0.70 per 1M tokens
+        
+        # Default fallback
+        "default": 0.0000005  # $0.50 per 1M tokens
+    }
+    
+    # Extract base model name for pricing lookup
+    model_key = model_id.lower()
+    
+    # Try exact match first
+    if model_key in pricing:
+        cost_per_token = pricing[model_key]
+    else:
+        # Try partial matches
+        cost_per_token = pricing["default"]
+        for model_pattern, rate in pricing.items():
+            if model_pattern != "default" and model_pattern in model_key:
+                cost_per_token = rate
+                break
+    
+    return tokens_used * cost_per_token
 
 def record_groq_usage(model: str, tokens_used: int, cost_usd: float, duration_ms: int, success: bool = True):
     """Record Groq API usage for analytics"""
@@ -34,7 +153,7 @@ class CompleteIn(BaseModel):
     provider: str  # "groq" | "local"
     messages: list[ChatMessage] | None = None
     prompt: str | None = None
-    max_tokens: int | None = 512
+    max_tokens: int | None = 1024  # Increased from 512 to help prevent JSON truncation
     temperature: float | None = 0.2
     top_p: float | None = 1.0
 
@@ -72,7 +191,7 @@ def complete(body: CompleteIn):
                 json={
                     "model": body.model_id,
                     "messages": messages,
-                    "max_tokens": body.max_tokens or 512,
+                    "max_tokens": body.max_tokens or 1024,
                     "temperature": body.temperature or 0.2,
                     "top_p": body.top_p or 1.0,
                 },
@@ -82,15 +201,16 @@ def complete(body: CompleteIn):
             data = r.json()
             text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
             
+            # Check if the response looks like truncated JSON and attempt to fix it
+            text = fix_truncated_json(text)
+            
             # Record usage for analytics
             duration_ms = int((time.time() - start_time) * 1000)
             usage = data.get("usage", {})
             tokens_used = usage.get("total_tokens", 0)
             
-            # Estimate cost (rough approximation based on Groq pricing)
-            # This is a simplified calculation - actual pricing may vary
-            cost_per_token = 0.0000005  # Rough estimate
-            cost_usd = tokens_used * cost_per_token
+            # Calculate accurate cost based on model pricing
+            cost_usd = calculate_groq_cost(body.model_id, tokens_used)
             
             record_groq_usage(body.model_id, tokens_used, cost_usd, duration_ms, True)
             
@@ -130,7 +250,7 @@ def chat(body: ChatIn):
     try:
         start_time = time.time()
         # Extract parameters with defaults
-        max_tokens = body.params.get("max_tokens", 512)
+        max_tokens = body.params.get("max_tokens", 1024)
         temperature = body.params.get("temperature", 0.2)
         top_p = body.params.get("top_p", 1.0)
         # Note: Groq API doesn't support top_k parameter
@@ -163,14 +283,16 @@ def chat(body: ChatIn):
         data = r.json()
         text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
         
+        # Check if the response looks like truncated JSON and attempt to fix it
+        text = fix_truncated_json(text)
+        
         # Record usage for analytics
         duration_ms = int((time.time() - start_time) * 1000)
         usage = data.get("usage", {})
         tokens_used = usage.get("total_tokens", 0)
         
-        # Estimate cost (rough approximation based on Groq pricing)
-        cost_per_token = 0.0000005  # Rough estimate
-        cost_usd = tokens_used * cost_per_token
+        # Calculate accurate cost based on model pricing
+        cost_usd = calculate_groq_cost(body.model_id, tokens_used)
         
         record_groq_usage(body.model_id, tokens_used, cost_usd, duration_ms, True)
         

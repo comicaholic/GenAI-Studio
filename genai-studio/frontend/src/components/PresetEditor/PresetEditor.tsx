@@ -61,7 +61,7 @@ export default function PresetEditor({
       context: "",
       params: {
         temperature: 0.2,
-        max_tokens: 512,
+        max_tokens: 1024,
         top_p: 1.0,
         top_k: 40,
       },
@@ -339,7 +339,7 @@ export default function PresetEditor({
                     type="number"
                     min="1"
                     max="4096"
-                    value={formData.content.params?.max_tokens || 512}
+                    value={formData.content.params?.max_tokens || 1024}
                     onChange={(e) => updateFormData('content.params.max_tokens', parseInt(e.target.value))}
                     style={styles.input}
                   />

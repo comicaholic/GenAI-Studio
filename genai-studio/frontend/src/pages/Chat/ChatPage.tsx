@@ -17,6 +17,7 @@ import { useBackgroundState } from "@/stores/backgroundState";
 import { historyService } from "@/services/history";
 import ChatAutomationModal, { ChatAutomationConfig } from "@/components/ChatAutomationModal/ChatAutomationModal";
 import { automationStore } from "@/stores/automationStore";
+import { api } from "@/services/api";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.7, max_tokens: 1024, top_p: 1.0, top_k: 40 };
 
@@ -236,8 +237,29 @@ export default function ChatPage() {
   }, [params, contextPrompt, selected]);
 
   // rename session
-  const renameSession = (id: string, title: string) => {
+  const renameSession = async (id: string, title: string) => {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
+    
+    // Also persist the change to the backend
+    try {
+      const session = sessions.find(s => s.id === id);
+      if (session) {
+        await historyService.updateChat(id, {
+          id: session.id,
+          title: title,
+          model: { id: session.modelId ?? "", provider: session.modelProvider ?? "" },
+          parameters: session.parameters ?? DEFAULT_PARAMS,
+          context: session.context,
+          messagesSummary: `${session.messages.length} messages`,
+          usedText: { chatHistory: session.messages.map((m) => ({ role: m.role, content: m.content })) },
+          lastActivityAt: session.lastActivityAt ?? new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.warn("Failed to update chat title in backend:", e);
+      // Show error notification to user
+      showError("Save Failed", "Failed to save chat name. Please try again.");
+    }
   };
 
   // start inline editing
@@ -248,9 +270,9 @@ export default function ChatPage() {
   };
 
   // save inline editing
-  const saveEditing = () => {
+  const saveEditing = async () => {
     if (editingSessionId && editingTitle.trim()) {
-      renameSession(editingSessionId, editingTitle.trim());
+      await renameSession(editingSessionId, editingTitle.trim());
     }
     setEditingSessionId(null);
     setEditingTitle("");
@@ -458,11 +480,6 @@ export default function ChatPage() {
 
   // Automation functionality
   const handleAutomationStart = async (config: ChatAutomationConfig) => {
-    if (!selected) {
-      showError("Model Required", "Select a model first.");
-      return;
-    }
-
     const automationId = automationStore.startAutomation('chat', config);
     setIsLoading(true);
 
@@ -476,6 +493,18 @@ export default function ChatPage() {
         automationStore.updateProgress(automationId, { currentRunIndex: i });
 
         try {
+          // Use per-run model if specified, otherwise use current selected model
+          const runModelId = run.modelId || selected?.id;
+          const runModelProvider = run.modelProvider || selected?.provider;
+          
+          if (!runModelId) {
+            results[run.id] = {
+              runName: run.name,
+              error: "No model specified for this run",
+            };
+            continue;
+          }
+
           // Create or get chat session
           let targetSessionId = run.chatId;
           if (!targetSessionId) {
@@ -486,8 +515,8 @@ export default function ChatPage() {
               messages: [],
               createdAt: new Date().toISOString(),
               lastActivityAt: new Date().toISOString(),
-              modelId: selected?.id,
-              modelProvider: selected?.provider,
+              modelId: runModelId,
+              modelProvider: runModelProvider,
               parameters: DEFAULT_PARAMS,
               context: "",
             };
@@ -533,9 +562,9 @@ export default function ChatPage() {
               { role: "user" as const, content: prompt.content },
             ];
 
-            // Call LLM
+            // Call LLM with per-run model
             const startTime = performance.now();
-            const raw = await chatComplete(selected.id, messagesForModel, prompt.parameters);
+            const raw = await chatComplete(runModelId, messagesForModel, prompt.parameters);
             
             // Normalize response
             let text = "";
@@ -586,6 +615,7 @@ export default function ChatPage() {
               context: prompt.context,
               output: text,
               usage,
+              model: { id: runModelId, provider: runModelProvider },
             });
 
             // Save to history
@@ -595,7 +625,7 @@ export default function ChatPage() {
                 await historyService.saveChat({
                   id: finalSession.id,
                   title: finalSession.title,
-                  model: { id: selected.id, provider: selected.provider },
+                  model: { id: runModelId, provider: runModelProvider || "local" },
                   parameters: prompt.parameters,
                   context: prompt.context ?? "",
                   messagesSummary: `${finalSession.messages.length} messages`,
@@ -618,6 +648,7 @@ export default function ChatPage() {
             chatId: targetSessionId,
             chatTitle: run.chatTitle,
             prompts: runResults,
+            model: { id: runModelId, provider: runModelProvider },
           };
 
         } catch (error: any) {
@@ -630,6 +661,29 @@ export default function ChatPage() {
 
       setAutomationResults(results);
       automationStore.completeAutomation(automationId);
+      
+      // Save automation aggregate to history
+      try {
+        const automationAggregate = {
+          id: config.id,
+          name: config.name,
+          model: { id: selected?.id || "unknown", provider: selected?.provider || "local" },
+          parameters: params,
+          runs: config.runs.map(run => ({
+            id: run.id,
+            name: run.name,
+            chatTitle: run.chatTitle,
+            prompts: results[run.id]?.prompts || [],
+            error: results[run.id]?.error || null,
+          })),
+          status: "completed",
+          completedAt: new Date().toISOString(),
+        };
+        await api.post("/history/automations", automationAggregate);
+      } catch (e) {
+        console.warn("Failed to save automation aggregate:", e);
+      }
+      
       showSuccess("Automation Complete", `Completed ${config.runs.length} chat runs successfully!`);
 
     } catch (error: any) {
@@ -1380,13 +1434,17 @@ export default function ChatPage() {
                   </button>
 
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       // quick save session title
                       if (!currentSessionId) return;
                       const title = prompt("Save chat as (title):", sessions.find((x) => x.id === currentSessionId)?.title ?? "");
                       if (!title) return;
-                      renameSession(currentSessionId, title);
-                      showSuccess("Saved", "Chat renamed.");
+                      try {
+                        await renameSession(currentSessionId, title);
+                        showSuccess("Saved", "Chat renamed.");
+                      } catch (e) {
+                        // Error already handled in renameSession
+                      }
                     }}
                     style={{ 
                       padding: "10px 16px", 

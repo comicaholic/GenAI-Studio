@@ -63,7 +63,7 @@ class LocalStoragePresetStore implements PresetStore {
         body: '',
         parameters: {
           temperature: 0.2,
-          max_tokens: 512,
+          max_tokens: 1024,
           top_p: 1.0,
           top_k: 40,
         },

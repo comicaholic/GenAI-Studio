@@ -84,20 +84,35 @@ export default function AutomationModal({
   const { showError } = useNotifications();
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
-  // Initialize runs when numRuns changes
+  // Initialize runs when numRuns changes (preserve existing selections)
   React.useEffect(() => {
-    const newRuns: AutomationRun[] = Array.from({ length: numRuns }, (_, i) => ({
-      id: crypto.randomUUID(),
-      name: `Run ${i + 1}`,
-      prompt: defaultPrompt,
-      parameters: { ...DEFAULT_PARAMS },
-      metrics: { ...DEFAULT_METRICS },
-      modelId: selected?.id,
-      modelProvider: selected?.provider,
-      status: 'pending',
-    }));
-    setRuns(newRuns);
-    setActiveRunIndex(0);
+    setRuns(prev => {
+      const current = prev ?? [];
+      if (numRuns === current.length) return current;
+      if (numRuns < current.length) {
+        // Truncate but keep existing data
+        return current.slice(0, numRuns);
+      }
+      // Append new runs cloning the last run's selections where possible
+      const toAdd = numRuns - current.length;
+      const template = current[current.length - 1];
+      const baseModelId = template?.modelId || selected?.id;
+      const baseModelProvider = template?.modelProvider || selected?.provider;
+      const appended: AutomationRun[] = Array.from({ length: toAdd }, (_, j) => ({
+        id: crypto.randomUUID(),
+        name: `Run ${current.length + j + 1}`,
+        prompt: template?.prompt ?? defaultPrompt,
+        parameters: { ...(template?.parameters || DEFAULT_PARAMS) },
+        metrics: { ...(template?.metrics || DEFAULT_METRICS) },
+        modelId: baseModelId,
+        modelProvider: baseModelProvider,
+        presetTitle: template?.presetTitle,
+        status: 'pending',
+      }));
+      return [...current, ...appended];
+    });
+    // keep activeRunIndex if still valid
+    setActiveRunIndex((idx) => Math.min(idx, Math.max(0, numRuns - 1)));
   }, [numRuns, defaultPrompt, selected?.id, selected?.provider]);
 
   // Load file lists if needed
@@ -155,24 +170,34 @@ export default function AutomationModal({
   }, []);
 
   const handleStart = useCallback(() => {
-    if (!selected) {
-      showError("Model Required", "Please select a model first.");
+    // Build config, filling missing per-run model with globally selected model if available
+    const name = (automationName && automationName.trim()) ? automationName.trim() : `Automation ${new Date().toLocaleDateString('en-GB')}`;
+
+    const preparedRuns = runs.map(run => ({
+      ...run,
+      modelId: run.modelId || selected?.id,
+      modelProvider: run.modelProvider || (selected?.provider as any),
+      status: 'pending' as const,
+    }));
+
+    // If no run has any model at all, show an error
+    const anyModel = preparedRuns.some(r => !!r.modelId);
+    if (!anyModel) {
+      showError("Model Required", "Select a model in the header or per-run before starting.");
       return;
     }
-
-    const name = (automationName && automationName.trim()) ? automationName.trim() : `Automation ${new Date().toLocaleDateString('en-GB')}`;
 
     const config: AutomationConfig = {
       id: crypto.randomUUID(),
       name,
-      runs: runs.map(run => ({ ...run, status: 'pending' as const })),
+      runs: preparedRuns,
       status: 'pending',
       createdAt: new Date().toISOString(),
     };
 
     onStart(config);
     onClose();
-  }, [selected, automationName, runs, onStart, onClose, showError]);
+  }, [selected?.id, selected?.provider, automationName, runs, onStart, onClose, showError]);
 
   // Export current automation config to JSON
   const handleExport = useCallback(() => {
@@ -377,7 +402,7 @@ export default function AutomationModal({
               />
             </div>
             <div style={{ marginBottom: 16 }}>
-              <PresetManager
+            <PresetManager
                 presetStore={presetStore}
                 onPresetChange={(preset: { title: string; body: string; id: string; parameters?: Preset['parameters']; metrics?: any }) => {
                   updateRun(activeRunIndex, {
@@ -396,7 +421,8 @@ export default function AutomationModal({
                 autoApplyOnMount={false}
                 currentContent={currentRun?.prompt || ''}
                 currentParameters={currentRun?.parameters || DEFAULT_PARAMS}
-                currentMetrics={currentRun?.metrics || DEFAULT_METRICS}
+              currentMetrics={currentRun?.metrics || DEFAULT_METRICS}
+              selectedPresetTitle={currentRun?.presetTitle}
               />
               {currentRun?.presetTitle && (
                 <div style={{ marginTop: 6, fontSize: 12, color: '#94a3b8' }}>

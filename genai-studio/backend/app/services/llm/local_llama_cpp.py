@@ -8,5 +8,5 @@ class LlamaCppProvider(LLMProvider):
     def list_models(self):
         return [{"id": self.model_path, "label": self.model_path.split("/")[-1], "tags": ["local","gguf"]}]
     def complete(self, prompt, params, files=None):
-        out = self.llm(prompt=prompt, temperature=params.get("temperature",0.2), max_tokens=params.get("max_tokens",512))
+        out = self.llm(prompt=prompt, temperature=params.get("temperature",0.2), max_tokens=params.get("max_tokens",1024))
         return out["choices"][0]["text"]

@@ -82,7 +82,8 @@ export const historyService = {
   // Get aggregated automation results for home page
   async getAutomationAggregates(): Promise<SavedAutomation[]> {
     try {
-      const response = await api.get('/history/automations/aggregates');
+      // Backend serves this at /api/automations/aggregates (no /history prefix)
+      const response = await api.get('/automations/aggregates');
       return Array.isArray(response.data) ? response.data : [];
     } catch (error) {
       console.warn('Failed to fetch automation aggregates:', error);

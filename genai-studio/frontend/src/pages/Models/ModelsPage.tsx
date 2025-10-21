@@ -21,6 +21,10 @@ interface ModelInfo {
   category?: string;
   source?: string;
   architecture?: string;
+  // Additional fields for HF models
+  pipeline_tag?: string;
+  author?: string;
+  description?: string;
 }
 
 interface DiscoverModalProps {
@@ -34,31 +38,129 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
   const [searchResults, setSearchResults] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingPopular, setIsLoadingPopular] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMoreResults, setHasMoreResults] = useState(true);
+  const [currentOffset, setCurrentOffset] = useState(0);
+  const [hfTokenStatus, setHfTokenStatus] = useState({ hasToken: false, connected: false });
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
-  const searchModels = async () => {
-    if (!searchQuery.trim()) return;
-    
-    setIsSearching(true);
+  const checkHfTokenStatus = async () => {
     try {
-      const response = await api.get("/models/discover", {
-        params: { q: searchQuery, sort: sortBy, limit: 20 }
+      const response = await api.get("/settings/huggingface/status");
+      setHfTokenStatus({
+        hasToken: !!response.data?.hasToken,
+        connected: !!response.data?.connected
       });
-      setSearchResults(response.data.results || []);
-    } catch (error: any) {
-      alert("Search failed: " + (error.message || error));
-    } finally {
-      setIsSearching(false);
+    } catch (error) {
+      console.log("Could not check HF token status:", error);
+      setHfTokenStatus({ hasToken: false, connected: false });
     }
+  };
+
+  const loadModels = async (reset: boolean = true) => {
+    if (!hfTokenStatus.hasToken) return;
+    
+    if (reset) {
+      setIsLoadingPopular(true);
+      setCurrentOffset(0);
+      setHasMoreResults(true);
+    } else {
+      setIsLoadingMore(true);
+    }
+    
+    try {
+      const offset = reset ? 0 : currentOffset;
+      const response = await api.get("/models/discover", {
+        params: { 
+          q: searchQuery, 
+          sort: sortBy, 
+          limit: 20, 
+          offset: offset 
+        }
+      });
+      const models = response.data.results || [];
+      
+      if (reset) {
+        setSearchResults(models);
+        // Select the first model by default
+        if (models.length > 0 && !selectedModel) {
+          setSelectedModel(models[0]);
+        }
+      } else {
+        setSearchResults(prev => [...prev, ...models]);
+      }
+      
+      // Check if there are more results
+      setHasMoreResults(models.length === 20);
+      setCurrentOffset(offset + models.length);
+      
+    } catch (error: any) {
+      console.error("Failed to load models:", error);
+      if (error.response?.status === 401) {
+        alert("Hugging Face token not configured or invalid. Please check your token in Settings.");
+      } else {
+        alert("Failed to load models: " + (error.message || error));
+      }
+    } finally {
+      setIsLoadingPopular(false);
+      setIsLoadingMore(false);
+    }
+  };
+
+
+  const reorderModels = (newSortBy: string) => {
+    if (searchResults.length === 0) return;
+    
+    const sorted = [...searchResults].sort((a, b) => {
+      switch (newSortBy) {
+        case "downloads":
+          return (b.downloads || 0) - (a.downloads || 0);
+        case "likes":
+          return (b.likes || 0) - (a.likes || 0);
+        case "recent":
+          return new Date(b.lastModified || 0).getTime() - new Date(a.lastModified || 0).getTime();
+        default:
+          return 0;
+      }
+    });
+    
+    setSearchResults(sorted);
+    setSortBy(newSortBy);
   };
 
   useEffect(() => {
     if (searchQuery.trim()) {
-      const timeoutId = setTimeout(searchModels, 500);
+      const timeoutId = setTimeout(() => loadModels(true), 500);
       return () => clearTimeout(timeoutId);
     } else {
-      setSearchResults([]);
+      // Load models with current sort when no search query
+      loadModels(true);
     }
-  }, [searchQuery, sortBy]);
+  }, [searchQuery]);
+
+  // Handle sort changes - triggers new search
+  useEffect(() => {
+    if (searchResults.length > 0 && !isInitialLoad) {
+      loadModels(true);
+    }
+  }, [sortBy]);
+
+  // Check HF token status and load popular models when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      checkHfTokenStatus();
+    }
+  }, [isOpen]);
+
+  // Load models when token status changes
+  useEffect(() => {
+    if (hfTokenStatus.hasToken && isOpen && searchResults.length === 0) {
+      loadModels(true).then(() => {
+        setIsInitialLoad(false);
+      });
+    }
+  }, [hfTokenStatus.hasToken, isOpen]);
 
   if (!isOpen) return null;
 
@@ -147,6 +249,38 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
           {/* Left Panel - Search */}
           <div style={{ width: "50%", padding: 16, borderRight: "1px solid #334155", overflow: "auto" }}>
+            {/* HF Token Warning */}
+            {!hfTokenStatus.hasToken && (
+              <div style={{
+                padding: "16px",
+                margin: "12px",
+                background: "linear-gradient(135deg, #f59e0b, #d97706)",
+                border: "1px solid #f59e0b",
+                borderRadius: "8px",
+                color: "#ffffff"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12,2L13.09,8.26L22,9L13.09,9.74L12,16L10.91,9.74L2,9L10.91,8.26L12,2M12,4.5L11.5,7.5L8.5,8L11.5,8.5L12,11.5L12.5,8.5L15.5,8L12.5,7.5L12,4.5Z"/>
+                  </svg>
+                  <strong style={{ fontSize: "14px" }}>Hugging Face Token Required</strong>
+                </div>
+                <div style={{ fontSize: "13px", lineHeight: "1.4", marginBottom: "8px" }}>
+                  To discover and add models from Hugging Face, you need to configure your access token first.
+                </div>
+                <div style={{ fontSize: "12px", opacity: "0.9" }}>
+                  Go to Settings → Hugging Face to add your token from{" "}
+                  <a
+                    href="https://huggingface.co/settings/tokens"
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "#ffffff", textDecoration: "underline" }}
+                  >
+                    huggingface.co/settings/tokens
+                  </a>
+                </div>
+              </div>
+            )}
             <div style={{ marginBottom: 16 }}>
           <input className="input h-10 text-sm" type="text"
                 value={searchQuery}
@@ -181,50 +315,269 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
 
             {/* Search Results */}
             <div>
-              <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100" style={{ color: "#e2e8f0", marginBottom: 12 }}>Search Results</h3>
-              {isSearching && <div style={{ color: "#94a3b8", textAlign: "center" }}>Searching...</div>}
-              {searchResults.map((model) => (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                <h3 style={{ color: "#e2e8f0", margin: 0, fontSize: 16, fontWeight: 600 }}>
+                  {searchQuery ? "Search Results" : 
+                    sortBy === "downloads" ? "Most Downloaded" :
+                    sortBy === "likes" ? "Most Liked" :
+                    sortBy === "recent" ? "Recently Updated" : "Models"}
+                </h3>
+                {!searchQuery && (
+                  <button
+                    onClick={() => loadModels(true)}
+                    disabled={isLoadingPopular}
+                    style={{
+                      padding: "6px 12px",
+                      background: "transparent",
+                      border: "1px solid #334155",
+                      borderRadius: 6,
+                      color: "#94a3b8",
+                      cursor: "pointer",
+                      fontSize: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      transition: "all 0.2s ease"
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = "#475569";
+                      e.currentTarget.style.color = "#e2e8f0";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = "#334155";
+                      e.currentTarget.style.color = "#94a3b8";
+                    }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/>
+                    </svg>
+                    Refresh
+                  </button>
+                )}
+              </div>
+              
+              {(isSearching || isLoadingPopular) && (
+                <div style={{ 
+                  color: "#94a3b8", 
+                  textAlign: "center", 
+                  padding: 20,
+                  background: "#1e293b",
+                  borderRadius: 8,
+                  border: "1px solid #334155"
+                }}>
+                  <div style={{ fontSize: 14 }}>Loading models...</div>
+                </div>
+              )}
+              
+              {!isSearching && !isLoadingPopular && searchResults.map((model) => (
                 <div
                   key={model.id}
                   style={{
-                    padding: 12,
-                    marginBottom: 8,
+                    padding: 16,
+                    marginBottom: 12,
                     border: "1px solid #334155",
-                    borderRadius: 8,
+                    borderRadius: 12,
                     cursor: "pointer",
-                    background: selectedModel?.id === model.id ? "#1e293b" : "transparent",
+                    background: selectedModel?.id === model.id ? "#1e293b" : "#0f172a",
+                    transition: "all 0.2s ease",
+                    position: "relative"
                   }}
                   onClick={() => setSelectedModel(model)}
+                  onMouseEnter={(e) => {
+                    if (selectedModel?.id !== model.id) {
+                      e.currentTarget.style.background = "#1e293b";
+                      e.currentTarget.style.borderColor = "#475569";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (selectedModel?.id !== model.id) {
+                      e.currentTarget.style.background = "#0f172a";
+                      e.currentTarget.style.borderColor = "#334155";
+                    }
+                  }}
                 >
-                  <div style={{ fontWeight: "bold", color: "#e2e8f0", marginBottom: 4 }}>
-                    {model.label}
-                  </div>
-                  <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                    Downloads: {model.downloads?.toLocaleString() || "N/A"} • 
-                    Likes: {model.likes?.toLocaleString() || "N/A"}
-                  </div>
-                  {model.tags && model.tags.length > 0 && (
-                    <div style={{ marginTop: 4 }}>
-                      {model.tags.slice(0, 3).map((tag, index) => (
-                        <span
-                          key={index}
-                          style={{
-                            display: "inline-block",
-                            padding: "2px 6px",
-                            margin: "2px 4px 2px 0",
-                            background: "#334155",
-                            color: "#e2e8f0",
-                            borderRadius: 4,
-                            fontSize: 10,
-                          }}
-                        >
-                          {tag}
-                        </span>
-                      ))}
+                  {/* Model Icon */}
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                    <div style={{
+                      width: 32,
+                      height: 32,
+                      background: "#ff6b35",
+                      borderRadius: 8,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0
+                    }}>
+                      <img 
+                        src="/assets/hf-logo.svg" 
+                        alt="Hugging Face" 
+                        width="20" 
+                        height="20"
+                      />
                     </div>
-                  )}
+                    
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {/* Model Name */}
+                      <div style={{ 
+                        fontWeight: 600, 
+                        color: "#e2e8f0", 
+                        marginBottom: 4,
+                        fontSize: 14,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap"
+                      }}>
+                        {model.label}
+                      </div>
+                      
+                      {/* Description */}
+                      {model.description && (
+                        <div style={{ 
+                          fontSize: 12, 
+                          color: "#94a3b8", 
+                          marginBottom: 8,
+                          lineHeight: "1.4",
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden"
+                        }}>
+                          {model.description}
+                        </div>
+                      )}
+                      
+                      {/* Stats */}
+                      <div style={{ 
+                        display: "flex", 
+                        gap: 16, 
+                        fontSize: 11, 
+                        color: "#64748b",
+                        marginBottom: 8
+                      }}>
+                        <span>📥 {model.downloads?.toLocaleString() || "0"}</span>
+                        <span>❤️ {model.likes?.toLocaleString() || "0"}</span>
+                        {model.params && <span>⚡ {model.params.toLocaleString()}B</span>}
+                      </div>
+                      
+                      {/* Tags */}
+                      {model.tags && model.tags.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {model.tags.slice(0, 4).map((tag, index) => (
+                            <span
+                              key={index}
+                              style={{
+                                padding: "2px 6px",
+                                background: "#334155",
+                                color: "#cbd5e1",
+                                borderRadius: 4,
+                                fontSize: 10,
+                                fontWeight: 500
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                          {model.tags.length > 4 && (
+                            <span style={{
+                              padding: "2px 6px",
+                              background: "#334155",
+                              color: "#64748b",
+                              borderRadius: 4,
+                              fontSize: 10
+                            }}>
+                              +{model.tags.length - 4}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Selection indicator */}
+                    {selectedModel?.id === model.id && (
+                      <div style={{
+                        position: "absolute",
+                        top: 12,
+                        right: 12,
+                        width: 20,
+                        height: 20,
+                        background: "#10b981",
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                          <path d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/>
+                        </svg>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
+              
+              {!isSearching && !isLoadingPopular && searchResults.length === 0 && (
+                <div style={{ 
+                  color: "#94a3b8", 
+                  textAlign: "center", 
+                  padding: 40,
+                  background: "#1e293b",
+                  borderRadius: 8,
+                  border: "1px solid #334155"
+                }}>
+                  <div style={{ fontSize: 14, marginBottom: 8 }}>No models found</div>
+                  <div style={{ fontSize: 12 }}>Try adjusting your search terms</div>
+                </div>
+              )}
+              
+              {/* Load More Button */}
+              {!isSearching && !isLoadingPopular && searchResults.length > 0 && hasMoreResults && (
+                <div style={{ textAlign: "center", marginTop: 16 }}>
+                  <button
+                    onClick={() => loadModels(false)}
+                    disabled={isLoadingMore}
+                    style={{
+                      padding: "12px 24px",
+                      background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                      border: "none",
+                      borderRadius: 8,
+                      color: "#ffffff",
+                      cursor: "pointer",
+                      fontSize: 14,
+                      fontWeight: 500,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      margin: "0 auto",
+                      transition: "all 0.2s ease",
+                      boxShadow: "0 2px 4px rgba(59, 130, 246, 0.3)"
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = "translateY(-1px)";
+                      e.currentTarget.style.boxShadow = "0 4px 8px rgba(59, 130, 246, 0.4)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = "translateY(0)";
+                      e.currentTarget.style.boxShadow = "0 2px 4px rgba(59, 130, 246, 0.3)";
+                    }}
+                  >
+                    {isLoadingMore ? (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ animation: "spin 1s linear infinite" }}>
+                          <path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/>
+                        </svg>
+                        Loading...
+                      </>
+                    ) : (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/>
+                        </svg>
+                        Load More Models
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
         </div>
       </div>
 
@@ -232,48 +585,166 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
           <div style={{ width: "50%", padding: 16, overflow: "auto" }}>
             {selectedModel ? (
               <div>
-                <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100" style={{ color: "#e2e8f0", marginBottom: 16 }}>Model Information</h3>
-                <div style={{ marginBottom: 12 }}>
-                  <strong style={{ color: "#e2e8f0" }}>Name:</strong>
-                  <div style={{ color: "#94a3b8", marginTop: 4 }}>{selectedModel.label}</div>
+                {/* Header */}
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                    <div style={{
+                      width: 40,
+                      height: 40,
+                      background: "#ff6b35",
+                      borderRadius: 10,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}>
+                      <img 
+                        src="/assets/hf-logo.svg" 
+                        alt="Hugging Face" 
+                        width="20" 
+                        height="20"
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>
+                        {selectedModel.label}
+                      </h3>
+                      <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+                        {selectedModel.author && `by ${selectedModel.author}`}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>
+                        📥 {selectedModel.downloads?.toLocaleString() || "0"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>
+                        ❤️ {selectedModel.likes?.toLocaleString() || "0"}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Description */}
+                  {selectedModel.description && (
+                    <div style={{
+                      fontSize: 13,
+                      color: "#cbd5e1",
+                      lineHeight: "1.5",
+                      background: "#1e293b",
+                      padding: 12,
+                      borderRadius: 8,
+                      border: "1px solid #334155"
+                    }}>
+                      {selectedModel.description}
+                    </div>
+                  )}
                 </div>
-                <div style={{ marginBottom: 12 }}>
-                  <strong style={{ color: "#e2e8f0" }}>Architecture:</strong>
-                  <div style={{ color: "#94a3b8", marginTop: 4 }}>{selectedModel.arch || "N/A"}</div>
-                </div>
-                <div style={{ marginBottom: 12 }}>
-                  <strong style={{ color: "#e2e8f0" }}>Parameters:</strong>
-                  <div style={{ color: "#94a3b8", marginTop: 4 }}>
-                    {selectedModel.params ? selectedModel.params.toLocaleString() : "N/A"}
+
+                {/* Model Information */}
+                <div style={{ marginBottom: 24 }}>
+                  <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 16 }}>
+                    Model Information
+                  </h4>
+                  
+                  <div style={{ display: "grid", gap: 12 }}>
+                    <div style={{
+                      background: "#1e293b",
+                      border: "1px solid #334155",
+                      borderRadius: 8,
+                      padding: 12
+                    }}>
+                      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Model ID</div>
+                      <div style={{ fontSize: 14, color: "#e2e8f0", fontFamily: "monospace" }}>
+                        {selectedModel.id}
+                      </div>
+                    </div>
+                    
+                    <div style={{
+                      background: "#1e293b",
+                      border: "1px solid #334155",
+                      borderRadius: 8,
+                      padding: 12
+                    }}>
+                      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Architecture</div>
+                      <div style={{ fontSize: 14, color: "#e2e8f0" }}>
+                        {selectedModel.arch ? (
+                          <span style={{
+                            padding: "4px 8px",
+                            background: "#10b981",
+                            color: "white",
+                            borderRadius: 4,
+                            fontSize: 12,
+                            fontWeight: 500
+                          }}>
+                            {selectedModel.arch}
+                          </span>
+                        ) : "N/A"}
+                      </div>
+                    </div>
+                    
+                    <div style={{
+                      background: "#1e293b",
+                      border: "1px solid #334155",
+                      borderRadius: 8,
+                      padding: 12
+                    }}>
+                      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Parameters</div>
+                      <div style={{ fontSize: 14, color: "#e2e8f0" }}>
+                        {selectedModel.params ? (
+                          <span style={{
+                            padding: "4px 8px",
+                            background: "#3b82f6",
+                            color: "white",
+                            borderRadius: 4,
+                            fontSize: 12,
+                            fontWeight: 500
+                          }}>
+                            {selectedModel.params.toLocaleString()}B
+                          </span>
+                        ) : "N/A"}
+                      </div>
+                    </div>
+                    
+                    <div style={{
+                      background: "#1e293b",
+                      border: "1px solid #334155",
+                      borderRadius: 8,
+                      padding: 12
+                    }}>
+                      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Pipeline</div>
+                      <div style={{ fontSize: 14, color: "#e2e8f0" }}>
+                        {selectedModel.pipeline_tag ? (
+                          <span style={{
+                            padding: "4px 8px",
+                            background: "#8b5cf6",
+                            color: "white",
+                            borderRadius: 4,
+                            fontSize: 12,
+                            fontWeight: 500
+                          }}>
+                            {selectedModel.pipeline_tag}
+                          </span>
+                        ) : "N/A"}
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div style={{ marginBottom: 12 }}>
-                  <strong style={{ color: "#e2e8f0" }}>Downloads:</strong>
-                  <div style={{ color: "#94a3b8", marginTop: 4 }}>
-                    {selectedModel.downloads?.toLocaleString() || "N/A"}
-                  </div>
-                </div>
-                <div style={{ marginBottom: 12 }}>
-                  <strong style={{ color: "#e2e8f0" }}>Likes:</strong>
-                  <div style={{ color: "#94a3b8", marginTop: 4 }}>
-                    {selectedModel.likes?.toLocaleString() || "N/A"}
-                  </div>
-                </div>
+
+                {/* Tags */}
                 {selectedModel.tags && selectedModel.tags.length > 0 && (
-                  <div style={{ marginBottom: 12 }}>
-                    <strong style={{ color: "#e2e8f0" }}>Tags:</strong>
-                    <div style={{ marginTop: 4 }}>
+                  <div style={{ marginBottom: 24 }}>
+                    <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 12 }}>
+                      Tags
+                    </h4>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                       {selectedModel.tags.map((tag, index) => (
                         <span
                           key={index}
                           style={{
-                            display: "inline-block",
-                            padding: "4px 8px",
-                            margin: "2px 4px 2px 0",
+                            padding: "6px 12px",
                             background: "#334155",
                             color: "#e2e8f0",
-                            borderRadius: 4,
+                            borderRadius: 6,
                             fontSize: 12,
+                            fontWeight: 500
                           }}
                         >
                           {tag}
@@ -282,26 +753,62 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                     </div>
                   </div>
                 )}
-                <button className="btn h-10 min-w-[96px]" style={{
-                    padding: "8px 16px",
-                    background: "#1e293b",
-                    border: "1px solid #334155",
+
+                {/* Download Button */}
+                <button 
+                  style={{
+                    width: "100%",
+                    padding: "12px 16px",
+                    background: "linear-gradient(135deg, #10b981, #059669)",
+                    border: "none",
                     borderRadius: 8,
-                    color: "#e2e8f0",
+                    color: "#ffffff",
                     cursor: "pointer",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    transition: "all 0.2s ease",
+                    boxShadow: "0 2px 4px rgba(16, 185, 129, 0.3)"
                   }}
                   onClick={() => {
                     alert("Download functionality would be implemented here");
                   }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-1px)";
+                    e.currentTarget.style.boxShadow = "0 4px 8px rgba(16, 185, 129, 0.4)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow = "0 2px 4px rgba(16, 185, 129, 0.3)";
+                  }}
                 >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/>
+                  </svg>
                   Download Model
                 </button>
               </div>
             ) : (
-              <div style={{ color: "#94a3b8", textAlign: "center", marginTop: 50 }}>
-                Select a model to view details
-        </div>
-      )}
+              <div style={{ 
+                color: "#94a3b8", 
+                textAlign: "center", 
+                marginTop: 100,
+                background: "#1e293b",
+                padding: 40,
+                borderRadius: 12,
+                border: "1px solid #334155"
+              }}>
+                <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
+                  Select a model to view details
+                </div>
+                <div style={{ fontSize: 13 }}>
+                  Choose from the popular models or search for specific ones
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

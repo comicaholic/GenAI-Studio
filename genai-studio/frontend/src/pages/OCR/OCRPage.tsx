@@ -25,7 +25,7 @@ import LayoutShell from "@/components/Layout/LayoutShell";
 import AutomationModal, { AutomationConfig } from "@/components/AutomationModal/AutomationModal";
 import { automationStore } from "@/stores/automationStore";
 
-const DEFAULT_PARAMS: ModelParams = { temperature: 0.2, max_tokens: 512, top_p: 1.0, top_k: 40 };
+const DEFAULT_PARAMS: ModelParams = { temperature: 0.2, max_tokens: 1024, top_p: 1.0, top_k: 40 };
 
 function renderPrompt(tmpl: string, ocrText: string, refText: string) {
   return tmpl
@@ -117,6 +117,12 @@ export default function OCRPage() {
   // Automation state
   const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
   const [automationResults, setAutomationResults] = useState<Record<string, any>>({});
+  // Automation progress overlay state
+  const [automationProgress, setAutomationProgress] = useState<{
+    id: string;
+    currentRunIndex: number;
+    status: "running" | "completed" | "error";
+  } | null>(null);
   
   // Prompt enlarge modal state
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
@@ -450,19 +456,6 @@ export default function OCRPage() {
 
   // Automation functionality
   const handleAutomationStart = async (config: AutomationConfig) => {
-    if (!selected) {
-      showError("Model Required", "Select a model first.");
-      return;
-    }
-    if (!ocr?.text) {
-      showError("OCR Required", "Please extract OCR text first.");
-      return;
-    }
-    if (!reference) {
-      showError("Reference Required", "Please provide reference text first.");
-      return;
-    }
-
     const automationId = automationStore.startAutomation('ocr', config);
     setBusy("Running automation...");
 
@@ -476,10 +469,83 @@ export default function OCRPage() {
         automationStore.updateProgress(automationId, { currentRunIndex: i });
 
         try {
+          // Load per-run files if specified
+          let runOcrText = ocr?.text || "";
+          let runReference = reference || "";
+          let runSrcFileName = srcFileName;
+          let runRefFileName = refFileName;
+
+          // Load source file for this run if specified
+          if (run.sourceFileName && run.sourceFileName !== srcFileName) {
+            setBusy(`Loading source file for ${run.name}...`);
+            try {
+              const res = await api.get(`/files/load`, { params: { kind: "source", name: run.sourceFileName }, responseType: "blob" });
+              const file = new File([res.data], run.sourceFileName);
+              const ocrRes = await extractOCR(file);
+              runOcrText = ocrRes?.text ?? "";
+              runSrcFileName = run.sourceFileName;
+            } catch (e: any) {
+              showError("Source File Load Failed", `Failed to load source file ${run.sourceFileName}: ${e?.message ?? e}`);
+              results[run.id] = {
+                runName: run.name,
+                error: `Failed to load source file: ${e?.message ?? e}`,
+              };
+              continue;
+            }
+          }
+
+          // Load reference file for this run if specified
+          if (run.referenceFileName && run.referenceFileName !== refFileName) {
+            setBusy(`Loading reference file for ${run.name}...`);
+            try {
+              const data = await loadReferenceByName(run.referenceFileName);
+              runReference = data.text ?? "";
+              runRefFileName = run.referenceFileName;
+            } catch (e: any) {
+              showError("Reference File Load Failed", `Failed to load reference file ${run.referenceFileName}: ${e?.message ?? e}`);
+              results[run.id] = {
+                runName: run.name,
+                error: `Failed to load reference file: ${e?.message ?? e}`,
+              };
+              continue;
+            }
+          }
+
+          // Validate required data for this run
+          if (!runOcrText) {
+            results[run.id] = {
+              runName: run.name,
+              error: "No OCR text available for this run",
+            };
+            continue;
+          }
+
+          if (!runReference) {
+            results[run.id] = {
+              runName: run.name,
+              error: "No reference text available for this run",
+            };
+            continue;
+          }
+
+          // Use per-run model if specified, otherwise use current selected model
+          const runModelId = run.modelId || selected?.id;
+          const runModelProvider = run.modelProvider || selected?.provider;
+          
+          if (!runModelId) {
+            results[run.id] = {
+              runName: run.name,
+              error: "No model specified for this run",
+            };
+            continue;
+          }
+
+          setBusy(`Running ${run.name}...`);
+
           // Build LLM output for this run
-          const injected = renderPrompt(run.prompt, ocr.text, reference);
+          const injected = renderPrompt(run.prompt, runOcrText, runReference);
           const output = await chatComplete(
-            selected.id,
+            runModelId,
             [
               { role: "system", content: "You are a helpful assistant." },
               { role: "user", content: injected },
@@ -501,13 +567,13 @@ export default function OCRPage() {
           
           const res = await computeMetrics({
             prediction: output || "",
-            reference,
+            reference: runReference,
             metrics: runSelectedMetrics,
             meta: {
-              model: selected.id,
+              model: runModelId,
               params: run.parameters,
-              source_file: srcFileName,
-              reference_file: refFileName,
+              source_file: runSrcFileName,
+              reference_file: runRefFileName,
             },
           });
 
@@ -518,6 +584,11 @@ export default function OCRPage() {
             metrics: run.metrics,
             output,
             scores: res.scores ?? res,
+            model: { id: runModelId, provider: runModelProvider },
+            files: {
+              sourceFileName: runSrcFileName,
+              referenceFileName: runRefFileName,
+            },
           };
 
           // Save individual evaluation to history
@@ -526,17 +597,17 @@ export default function OCRPage() {
               id: crypto.randomUUID(),
               type: "ocr" as const,
               title: `${config.name} - ${run.name}`,
-              model: { id: selected.id, provider: selected.provider },
+              model: { id: runModelId, provider: runModelProvider || "local" },
               parameters: run.parameters,
               metrics: runSelectedMetrics,
               usedText: {
-                ocrText: ocr.text,
-                referenceText: reference,
+                ocrText: runOcrText,
+                referenceText: runReference,
                 promptText: injected,
               },
               files: {
-                sourceFileName: srcFileName,
-                referenceFileName: refFileName,
+                sourceFileName: runSrcFileName,
+                referenceFileName: runRefFileName,
               },
               results: res.scores ?? res,
               startedAt: new Date().toISOString(),
@@ -559,6 +630,31 @@ export default function OCRPage() {
 
       setAutomationResults(results);
       automationStore.completeAutomation(automationId);
+      
+      // Save automation aggregate to history
+      try {
+        const automationAggregate = {
+          id: config.id,
+          name: config.name,
+          model: { id: selected?.id || "unknown", provider: selected?.provider || "local" },
+          parameters: params,
+          runs: config.runs.map(run => ({
+            id: run.id,
+            name: run.name,
+            prompt: run.prompt,
+            parameters: run.parameters,
+            metrics: run.metrics,
+            results: results[run.id]?.scores || null,
+            error: results[run.id]?.error || null,
+          })),
+          status: "completed",
+          completedAt: new Date().toISOString(),
+        };
+        await api.post("/history/automations", automationAggregate);
+      } catch (e) {
+        console.warn("Failed to save automation aggregate:", e);
+      }
+      
       showSuccess("Automation Complete", `Completed ${config.runs.length} runs successfully!`);
 
     } catch (error: any) {
@@ -1188,6 +1284,41 @@ export default function OCRPage() {
 
   return (
     <LayoutShell title="OCR Evaluation" left={left} right={right} rightWidth={400}>
+      {/* Automation progress overlay */}
+      {automationProgress && (
+        <div style={{
+          position: "fixed",
+          top: 16,
+          right: 16,
+          zIndex: 1000,
+          minWidth: 280,
+          background: "#0b1220",
+          border: "1px solid #334155",
+          borderRadius: 12,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+          padding: 16,
+          color: "#e2e8f0",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/></svg>
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Running Automation</div>
+                <div style={{ fontSize: 12, color: "#94a3b8" }}>Run {automationProgress.currentRunIndex + 1}</div>
+              </div>
+            </div>
+            <div style={{ width: 10, height: 10, borderRadius: "50%", background: automationProgress.status === "running" ? "#10b981" : automationProgress.status === "error" ? "#ef4444" : "#3b82f6", boxShadow: automationProgress.status === "running" ? "0 0 8px rgba(16,185,129,0.6)" : "none" }} />
+          </div>
+          <div style={{ height: 6, background: "#1e293b", borderRadius: 999, overflow: "hidden", border: "1px solid #334155" }}>
+            <div style={{ height: "100%", width: "100%", background: "linear-gradient(90deg,#3b82f6,#8b5cf6)", animation: "progressStripe 1.2s linear infinite" }} />
+          </div>
+          <style>
+            {`@keyframes progressStripe {0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}`}
+          </style>
+        </div>
+      )}
       {busy && (
         <div style={{
           background: "#1e293b",

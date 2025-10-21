@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from pathlib import Path
 from ..services.config import load_config, save_config, resolve_paths, _to_abs
+from ..services.gpu_detection import detect_available_gpus, get_gpu_info, validate_gpu_selection
 import requests
 import os
 import re
@@ -122,7 +123,7 @@ def get_settings():
         },
         "localModels": {
             "selectedGpu": "auto",
-            "availableGpus": ["auto", "cpu", "cuda:0", "cuda:1", "mps"]
+            "availableGpus": detect_available_gpus()
         }
     }
     
@@ -259,6 +260,39 @@ def test_groq_connection(request: dict):
         
         return {"connected": False, "error": str(e)}
 
+@router.get("/gpu/info")
+def get_gpu_info_endpoint():
+    """Get detailed GPU information"""
+    return get_gpu_info()
+
+@router.post("/gpu/validate")
+def validate_gpu_selection_endpoint(request: dict):
+    """Validate if a GPU selection is available"""
+    gpu_id = request.get("gpu_id", "auto")
+    is_valid = validate_gpu_selection(gpu_id)
+    return {"valid": is_valid, "gpu_id": gpu_id}
+
+@router.get("/huggingface/status")
+def get_huggingface_status():
+    """Get Hugging Face token status"""
+    try:
+        cfg = load_config()
+        hf_config = cfg.get("huggingface", {})
+        token = hf_config.get("token", "")
+        connected = hf_config.get("connected", False)
+        
+        return {
+            "hasToken": bool(token),
+            "connected": connected,
+            "tokenLength": len(token) if token else 0
+        }
+    except Exception as e:
+        return {
+            "hasToken": False,
+            "connected": False,
+            "error": str(e)
+        }
+
 @router.post("/huggingface/test")
 def test_huggingface_connection(request: dict):
     """Test Hugging Face token connection"""
@@ -266,13 +300,52 @@ def test_huggingface_connection(request: dict):
     if not token:
         return {"connected": False, "error": "No token provided"}
     
+    print(f"Testing HF token: {token[:10]}... (length: {len(token)})")
+    
     try:
+        # Clean the token (remove any whitespace)
+        clean_token = token.strip()
+        print(f"Original token length: {len(token)}, Clean token length: {len(clean_token)}")
+        
         # Test with a simple API call to get user info
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get("https://huggingface.co/api/whoami", headers=headers, timeout=10)
+        headers = {"Authorization": f"Bearer {clean_token}"}
+        print(f"Making request to HF API with headers: Authorization: Bearer {clean_token[:10]}...")
+        
+        # Try multiple endpoints to test the token (using correct HF API endpoints)
+        endpoints_to_try = [
+            "https://huggingface.co/api/whoami-v2",  # Updated to v2 endpoint
+            "https://huggingface.co/api/whoami",    # Fallback to v1
+            "https://huggingface.co/api/user",
+            "https://huggingface.co/api/models?limit=1"
+        ]
+        
+        response = None
+        working_endpoint = None
+        
+        for endpoint in endpoints_to_try:
+            print(f"Trying endpoint: {endpoint}")
+            try:
+                test_response = requests.get(endpoint, headers=headers, timeout=10)
+                print(f"Endpoint {endpoint} returned status: {test_response.status_code}")
+                if test_response.status_code == 200:
+                    response = test_response
+                    working_endpoint = endpoint
+                    break
+                elif test_response.status_code != 401:
+                    # If it's not 401, the token might be working but endpoint is different
+                    print(f"Non-401 response from {endpoint}: {test_response.status_code}")
+            except Exception as e:
+                print(f"Error testing {endpoint}: {e}")
+        
+        if not response:
+            # If no endpoint worked, try the original whoami endpoint
+            response = requests.get("https://huggingface.co/api/whoami", headers=headers, timeout=10)
+        print(f"HF API response status: {response.status_code}")
+        print(f"HF API response text: {response.text[:200]}...")
         
         if response.status_code == 200:
             user_info = response.json()
+            print(f"HF API user info: {user_info}")
             
             # Update the connection status in config
             cfg = load_config()
@@ -284,6 +357,7 @@ def test_huggingface_connection(request: dict):
             
             return {"connected": True, "username": user_info.get("name", "Unknown")}
         else:
+            print(f"HF API error: {response.status_code} - {response.text}")
             # Update the connection status in config
             cfg = load_config()
             if "huggingface" not in cfg:
@@ -291,8 +365,9 @@ def test_huggingface_connection(request: dict):
             cfg["huggingface"]["connected"] = False
             save_config(cfg)
             
-            return {"connected": False, "error": f"HTTP {response.status_code}"}
+            return {"connected": False, "error": f"HTTP {response.status_code}: {response.text[:100]}"}
     except Exception as e:
+        print(f"HF API exception: {str(e)}")
         # Update the connection status in config
         cfg = load_config()
         if "huggingface" not in cfg:
