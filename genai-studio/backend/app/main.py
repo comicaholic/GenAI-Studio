@@ -28,6 +28,24 @@ from .routers import (
 
 app = FastAPI(title="GenAI Studio")
 
+# Start background metrics recording on startup
+@app.on_event("startup")
+async def startup_event():
+    """Start background services on application startup"""
+    try:
+        from .routers.analytics import ensure_background_recording
+        ensure_background_recording()
+        print("✅ Background metrics recording started")
+    except Exception as e:
+        print(f"⚠️ Failed to start background metrics recording: {e}")
+
+# Also start recording immediately when the module is imported
+try:
+    from .routers.analytics import ensure_background_recording
+    ensure_background_recording()
+except Exception as e:
+    print(f"⚠️ Failed to start background metrics recording on import: {e}")
+
 # CORS – tighten to dev origins if you like
 
 

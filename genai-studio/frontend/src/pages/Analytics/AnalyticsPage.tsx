@@ -150,7 +150,12 @@ const colors = {
   muted: "#94a3b8",
 };
 
-const clampPct = (v?: number | null) => Math.max(0, Math.min(100, Number(v ?? 0)));
+const clampPct = (v?: number | null) => {
+  const value = Number(v ?? 0);
+  const clamped = Math.max(0, Math.min(100, value));
+  // Use parseFloat to avoid floating point precision issues
+  return parseFloat(clamped.toFixed(1));
+};
 
 const ringLen = (r: number) => 2 * Math.PI * r;
 // lightweight switch UI
@@ -266,7 +271,8 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
 export default function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState<"application" | "groq">("application");
   const [activeSubTab, setActiveSubTab] = useState<"system" | "trends" | "evaluations">("system");
-  const [timeFilter, setTimeFilter] = useState<"1h" | "6h" | "24h" | "7d">("24h");
+  const [timeFilter, setTimeFilter] = useState<"1h" | "6h" | "24h" | "7d" | "30d" | "90d" | "all">("30d");
+  const [dataInterval, setDataInterval] = useState<"1min" | "5min" | "15min" | "1h">("5min");
   const [uptime, setUptime] = useState<UptimeData | null>(null);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [performanceTrends, setPerformanceTrends] = useState<PerformanceTrend[]>([]);
@@ -307,10 +313,33 @@ export default function AnalyticsPage() {
 
   const loadPerf = useCallback(async () => {
     try {
-      const r = await api.get(`/analytics/performance?timeframe=${timeFilter}`);
-      setPerformanceTrends(r.data?.trends ?? []);
-    } catch (e) {}
-  }, [timeFilter]);
+      // Convert dataInterval to minutes for backend
+      const intervalMinutes = dataInterval === "1min" ? 1 : 
+                             dataInterval === "5min" ? 5 : 
+                             dataInterval === "15min" ? 15 : 
+                             dataInterval === "1h" ? 60 : 5;
+      
+      const r = await api.get(`/analytics/performance?timeframe=${timeFilter}&interval_minutes=${intervalMinutes}`);
+      
+      // Ensure we have valid data structure
+      const trends = r.data?.trends ?? [];
+      
+      // Validate and clean the data
+      const validTrends = trends.filter((trend: any) => {
+        const hasTimestamp = trend.timestamp && typeof trend.timestamp === 'string';
+        const hasValidData = typeof trend.cpu_percent === 'number' || 
+                           typeof trend.memory_percent === 'number' ||
+                           typeof trend.gpu_percent === 'number';
+        return hasTimestamp && hasValidData;
+      });
+      
+      setPerformanceTrends(validTrends);
+    } catch (e) {
+      console.error('Error loading performance data:', e);
+      // Set empty array if API fails
+      setPerformanceTrends([]);
+    }
+  }, [timeFilter, dataInterval]);
 
   const loadGroq = useCallback(async () => {
     try {
@@ -343,8 +372,12 @@ export default function AnalyticsPage() {
   const loadEvals = useCallback(async () => {
     try {
       const r = await api.get(`/analytics/evaluations?timeframe=${timeFilter}`);
+      console.log('Evaluations API Response:', r.data);
       setEvaluationMetrics(r.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error loading evaluation data:', e);
+      setEvaluationMetrics(null);
+    }
   }, [timeFilter]);
 
   const loadAll = useCallback(async () => {
@@ -380,7 +413,7 @@ export default function AnalyticsPage() {
       } else if (activeTab === "groq") {
         loadGroq();
       }
-    }, 5_000); // Increased from 2s to 5s to reduce jitter
+    }, 2_000); // Reduced back to 2s for more responsive updates
     return () => {
       clearInterval(uptimeInterval);
       clearInterval(dataInterval);
@@ -392,7 +425,7 @@ export default function AnalyticsPage() {
     if (activeTab === "application" && activeSubTab === "system") {
       loadPerf();
     }
-  }, [timeFilter, loadPerf, activeTab, activeSubTab]);
+  }, [timeFilter, dataInterval, loadPerf, activeTab, activeSubTab]);
 
   /* ---------- Derived & mapped data for charts ---------- */
   const systemChartData = useMemo(
@@ -405,13 +438,13 @@ export default function AnalyticsPage() {
         const date = new Date(t.timestamp);
         let timeLabel: string;
         
-        // Since backend now groups data into 5-minute quadrants, we can display cleaner labels
+        // Since backend now groups data into configurable intervals, we can display cleaner labels
         if (timeFilter === "1h") {
           timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } else if (timeFilter === "6h") {
           timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } else if (timeFilter === "24h") {
-          // Show every 5-minute quadrant
+          // Show every data point
           timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } else { // 7d
           timeLabel = date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -434,7 +467,10 @@ export default function AnalyticsPage() {
     [performanceTrends, timeFilter]
   );
 
-  const groqChartData = groqAnalytics?.hourly_usage?.slice(-24) ?? [];
+  const groqChartData = groqAnalytics?.hourly_usage?.slice(-24)?.map(item => ({
+    ...item,
+    cost_usd: parseFloat((item.cost_usd ?? 0).toFixed(4)),
+  })) ?? [];
 
   const modelUsageData =
     groqAnalytics?.usage_by_model
@@ -442,7 +478,7 @@ export default function AnalyticsPage() {
           name,
           requests: v?.requests ?? 0,
           tokens: v?.tokens ?? 0,
-          cost_usd: v?.cost_usd ?? 0,
+          cost_usd: parseFloat((v?.cost_usd ?? 0).toFixed(4)),
         }))
       : [];
 
@@ -450,39 +486,55 @@ export default function AnalyticsPage() {
     errorMetrics?.hourly_errors?.map((pt) => ({
       hour: pt.hour,
       errors: pt.errors ?? 0,
-      error_rate_pct: (pt.error_rate ?? 0) * 100,
+      error_rate_pct: parseFloat(((pt.error_rate ?? 0) * 100).toFixed(1)),
     })) ?? [];
 
   /* ---------- Evaluation metrics (averages) ---------- */
   const evalAverages = useMemo(() => {
-    const em = Array.isArray(evaluationMetrics?.exact_match_scores) && evaluationMetrics && evaluationMetrics.exact_match_scores.length
+    if (!evaluationMetrics) {
+      return { em: 0, bleu: 0, rouge: 0, f1: 0, bert: 0, ppl: 0, acc: 0, prec: 0, rec: 0 };
+    }
+    
+    // Handle the new backend structure with individual score arrays
+    const em = Array.isArray(evaluationMetrics?.exact_match_scores) && evaluationMetrics.exact_match_scores.length
       ? evaluationMetrics.exact_match_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.exact_match_scores.length
       : 0;
-    const bleu = Array.isArray(evaluationMetrics?.bleu_scores) && evaluationMetrics && evaluationMetrics.bleu_scores.length
+    const bleu = Array.isArray(evaluationMetrics?.bleu_scores) && evaluationMetrics.bleu_scores.length
       ? evaluationMetrics.bleu_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.bleu_scores.length
       : 0;
-    const rouge = Array.isArray(evaluationMetrics?.rouge_scores) && evaluationMetrics && evaluationMetrics.rouge_scores.length
+    const rouge = Array.isArray(evaluationMetrics?.rouge_scores) && evaluationMetrics.rouge_scores.length
       ? evaluationMetrics.rouge_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.rouge_scores.length
       : 0;
-    const f1 = Array.isArray(evaluationMetrics?.f1_scores) && evaluationMetrics && evaluationMetrics.f1_scores.length
+    const f1 = Array.isArray(evaluationMetrics?.f1_scores) && evaluationMetrics.f1_scores.length
       ? evaluationMetrics.f1_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.f1_scores.length
       : 0;
-    const bert = Array.isArray(evaluationMetrics?.bertscore_scores) && evaluationMetrics && evaluationMetrics.bertscore_scores.length
+    const bert = Array.isArray(evaluationMetrics?.bertscore_scores) && evaluationMetrics.bertscore_scores.length
       ? evaluationMetrics.bertscore_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.bertscore_scores.length
       : 0;
-    const ppl = Array.isArray(evaluationMetrics?.perplexity_scores) && evaluationMetrics && evaluationMetrics.perplexity_scores.length
+    const ppl = Array.isArray(evaluationMetrics?.perplexity_scores) && evaluationMetrics.perplexity_scores.length
       ? evaluationMetrics.perplexity_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.perplexity_scores.length
       : 0;
-    const acc = Array.isArray(evaluationMetrics?.accuracy_scores) && evaluationMetrics && evaluationMetrics.accuracy_scores.length
+    const acc = Array.isArray(evaluationMetrics?.accuracy_scores) && evaluationMetrics.accuracy_scores.length
       ? evaluationMetrics.accuracy_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.accuracy_scores.length
       : 0;
-    const prec = Array.isArray(evaluationMetrics?.precision_scores) && evaluationMetrics && evaluationMetrics.precision_scores.length
+    const prec = Array.isArray(evaluationMetrics?.precision_scores) && evaluationMetrics.precision_scores.length
       ? evaluationMetrics.precision_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.precision_scores.length
       : 0;
-    const rec = Array.isArray(evaluationMetrics?.recall_scores) && evaluationMetrics && evaluationMetrics.recall_scores.length
+    const rec = Array.isArray(evaluationMetrics?.recall_scores) && evaluationMetrics.recall_scores.length
       ? evaluationMetrics.recall_scores.reduce((s: number, r: { score?: number }) => s + (r.score ?? 0), 0) / evaluationMetrics.recall_scores.length
       : 0;
-    return { em, bleu, rouge, f1, bert, ppl, acc, prec, rec };
+    
+    return { 
+      em: parseFloat(em.toFixed(3)), 
+      bleu: parseFloat(bleu.toFixed(3)), 
+      rouge: parseFloat(rouge.toFixed(3)), 
+      f1: parseFloat(f1.toFixed(3)), 
+      bert: parseFloat(bert.toFixed(3)), 
+      ppl: parseFloat(ppl.toFixed(2)), 
+      acc: parseFloat(acc.toFixed(3)), 
+      prec: parseFloat(prec.toFixed(3)), 
+      rec: parseFloat(rec.toFixed(3)) 
+    };
   }, [evaluationMetrics]);
 
   /* ---------- Application <> system derivations (using real metrics) ---------- */
@@ -604,6 +656,9 @@ export default function AnalyticsPage() {
                   <option value="6h">Last 6h</option>
                   <option value="24h">Last 24h</option>
                   <option value="7d">Last 7d</option>
+                  <option value="30d">Last 30d</option>
+                  <option value="90d">Last 90d</option>
+                  <option value="all">All time</option>
                 </select>
 
                 <button
@@ -840,30 +895,6 @@ export default function AnalyticsPage() {
               {/* Application / System */}
               {activeTab === "application" && activeSubTab === "system" && (
                 <div style={{ display: "grid", gap: 24 }}>
-                  {/* Time Filter for System Tab */}
-                  <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16 }}>
-                    <label style={{ color: colors.muted, fontSize: 14, fontWeight: 500 }}>Historical Data Range:</label>
-                    <select
-                      value={timeFilter}
-                      onChange={(e) => setTimeFilter(e.target.value as any)}
-                      style={{ 
-                        padding: "8px 12px", 
-                        borderRadius: 8, 
-                        background: "#1e293b", 
-                        color: "#e2e8f0", 
-                        border: "1px solid #334155",
-                        fontSize: 14,
-                        fontWeight: 500,
-                        outline: "none",
-                        transition: "all 0.2s ease"
-                      }}
-                    >
-                      <option value="1h">Last 1h</option>
-                      <option value="6h">Last 6h</option>
-                      <option value="24h">Last 24h</option>
-                      <option value="7d">Last 7d</option>
-                    </select>
-                  </div>
                   {/* Docker Warning Banner */}
                   {systemMetrics?.docker_warning && (
                     <div style={{ 
@@ -911,7 +942,7 @@ export default function AnalyticsPage() {
                         <h3 style={{ margin: 0, color: colors.text, fontSize: 16 }}>Application Memory Usage</h3>
                         <CircleCompare systemPct={sysMemPct} appPct={appMemPct} outerColor={colors.primary} innerColor={colors.secondary} />
                       </div>
-                      <div style={{ fontSize: 24, fontWeight: 700, color: colors.secondary }}>{appMemMB.toFixed(0)} MB</div>
+                      <div style={{ fontSize: 24, fontWeight: 700, color: colors.secondary }}>{Math.round(appMemMB)} MB</div>
                       <div style={{ fontSize: 12, color: colors.muted }}>Total System: {totalMemGB.toFixed(1)} GB</div>
                     </div>
 
@@ -954,14 +985,80 @@ export default function AnalyticsPage() {
                         <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
                         <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
                         <YAxis stroke={colors.muted} fontSize={12} domain={[0, 100]} />
-                        <Tooltip contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                          formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
+                        />
                         <Legend />
                         <Bar dataKey="application" fill={colors.accent} name="Application %" />
                       </BarChart>
                     </ResponsiveContainer>
                   </ChartCard>
 
-                  <ChartCard title={`Historical Performance (System vs Application) - Last ${timeFilter} (5-min averages)`}>
+                  {/* Chart Controls */}
+                  <div style={{ 
+                    display: "flex", 
+                    gap: 16, 
+                    alignItems: "center", 
+                    padding: "16px 20px",
+                    background: colors.panel,
+                    border: `1px solid ${colors.slate}`,
+                    borderRadius: 12,
+                    marginBottom: 8
+                  }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      <label style={{ color: colors.muted, fontSize: 14, fontWeight: 500 }}>Time Range:</label>
+                      <select
+                        value={timeFilter}
+                        onChange={(e) => setTimeFilter(e.target.value as any)}
+                        style={{ 
+                          padding: "8px 12px", 
+                          borderRadius: 8, 
+                          background: "#0f172a", 
+                          color: "#e2e8f0", 
+                          border: "1px solid #334155",
+                          fontSize: 14,
+                          fontWeight: 500,
+                          outline: "none",
+                          transition: "all 0.2s ease"
+                        }}
+                      >
+                        <option value="1h">Last 1h</option>
+                        <option value="6h">Last 6h</option>
+                        <option value="24h">Last 24h</option>
+                        <option value="7d">Last 7d</option>
+                        <option value="30d">Last 30d</option>
+                        <option value="90d">Last 90d</option>
+                        <option value="all">All time</option>
+                      </select>
+                    </div>
+                    
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      <label style={{ color: colors.muted, fontSize: 14, fontWeight: 500 }}>Data Interval:</label>
+                      <select
+                        value={dataInterval}
+                        onChange={(e) => setDataInterval(e.target.value as any)}
+                        style={{ 
+                          padding: "8px 12px", 
+                          borderRadius: 8, 
+                          background: "#0f172a", 
+                          color: "#e2e8f0", 
+                          border: "1px solid #334155",
+                          fontSize: 14,
+                          fontWeight: 500,
+                          outline: "none",
+                          transition: "all 0.2s ease"
+                        }}
+                      >
+                        <option value="1min">1 minute</option>
+                        <option value="5min">5 minutes</option>
+                        <option value="15min">15 minutes</option>
+                        <option value="1h">1 hour</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <ChartCard title={`Historical Performance (System vs Application) - Last ${timeFilter} (${dataInterval} intervals)`}>
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart
                         data={systemChartData}
@@ -992,7 +1089,7 @@ export default function AnalyticsPage() {
                             color: colors.text,
                             fontSize: 12
                           }}
-                          formatter={(value: any, name: string) => [`${value.toFixed(1)}%`, name]}
+                          formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
                           labelStyle={{ color: colors.text, fontSize: 12 }}
                         />
                         <Legend />
@@ -1033,7 +1130,15 @@ export default function AnalyticsPage() {
                           <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
                           <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
                           <YAxis stroke={colors.muted} fontSize={12} />
-                          <Tooltip contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                            formatter={(value: any, name: string) => {
+                              if (name === "Error Rate %") {
+                                return [`${Number(value).toFixed(1)}%`, name];
+                              }
+                              return [value, name];
+                            }}
+                          />
                           <Legend />
                           <Line type="monotone" dataKey="errors" stroke={colors.danger} strokeWidth={2} name="Errors" />
                           <Line type="monotone" dataKey="error_rate_pct" stroke={colors.accent} strokeWidth={2} name="Error Rate %" />
@@ -1052,7 +1157,7 @@ export default function AnalyticsPage() {
                   {evaluationMetrics ? (
                     <>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
-                        <StatCard title="Total Evaluations" value={formatNumber(evaluationMetrics.total_evaluations)} subtitle="All time" color={colors.primary} />
+                        <StatCard title="Total Evaluations" value={formatNumber(evaluationMetrics.total_evaluations || 0)} subtitle="All time" color={colors.primary} />
                         <StatCard title="Avg Pass Rate" value={`${((evaluationMetrics.average_pass_rate ?? 0) * 100).toFixed(1)}%`} subtitle="Overall success" color={colors.secondary} />
                         {[
                           { k: "rouge", label: "ROUGE", val: evalAverages.rouge.toFixed(3), color: colors.primary },
@@ -1109,7 +1214,15 @@ export default function AnalyticsPage() {
                             <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
                             <XAxis dataKey="idx" stroke={colors.muted} fontSize={12} />
                             <YAxis stroke={colors.muted} fontSize={12} />
-                            <Tooltip contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }} />
+                            <Tooltip 
+                              contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                              formatter={(value: any, name: string) => {
+                                if (name === "Perplexity") {
+                                  return [`${Number(value).toFixed(2)}`, name];
+                                }
+                                return [`${Number(value).toFixed(3)}`, name];
+                              }}
+                            />
                             <Legend />
                             {evalToggles.rouge && <Line type="monotone" dataKey="rouge" stroke={colors.primary} name="ROUGE" dot={false} />}
                             {evalToggles.bleu && <Line type="monotone" dataKey="bleu" stroke={colors.secondary} name="BLEU" dot={false} />}
@@ -1149,7 +1262,15 @@ export default function AnalyticsPage() {
                               <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
                               <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
                               <YAxis stroke={colors.muted} fontSize={12} />
-                              <Tooltip contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }} />
+                              <Tooltip 
+                                contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                                formatter={(value: any, name: string) => {
+                                  if (name === "Cost (USD)") {
+                                    return [`$${Number(value).toFixed(4)}`, name];
+                                  }
+                                  return [value, name];
+                                }}
+                              />
                               <Legend />
                               <Bar dataKey="requests" fill={colors.primary} name="Requests" />
                               <Bar dataKey="tokens" fill={colors.secondary} name="Tokens" />
@@ -1167,7 +1288,15 @@ export default function AnalyticsPage() {
                               <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
                               <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
                               <YAxis stroke={colors.muted} fontSize={12} />
-                              <Tooltip contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }} />
+                              <Tooltip 
+                                contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                                formatter={(value: any, name: string) => {
+                                  if (name === "Cost (USD)") {
+                                    return [`$${Number(value).toFixed(4)}`, name];
+                                  }
+                                  return [value, name];
+                                }}
+                              />
                               <Legend />
                               <Line type="monotone" dataKey="requests" stroke={colors.primary} strokeWidth={2} name="Requests" />
                               <Line type="monotone" dataKey="tokens" stroke={colors.secondary} strokeWidth={2} name="Tokens" />

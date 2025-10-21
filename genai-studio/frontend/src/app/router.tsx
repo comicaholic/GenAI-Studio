@@ -1,5 +1,5 @@
 import React from "react";
-import { createBrowserRouter, Outlet, useLocation } from "react-router-dom";
+import { createBrowserRouter, Outlet, useLocation, useNavigate } from "react-router-dom";
 import RouteError from "@/app/RouteError";
 import HomePage from "@/pages/Home/HomePage";
 import OCRPage from "@/pages/OCR/OCRPage";
@@ -13,12 +13,45 @@ import LeftRail from "@/components/LeftRail/LeftRail";
 import BackgroundOperationsIndicator from "@/components/BackgroundOperations/BackgroundOperationsIndicator";
 import ModelSelector from '@/components/TopBar/ModelSelector';
 import BackgroundPages from '@/components/BackgroundPages/BackgroundPages';
+import { api } from "@/services/api";
 
 
 // If you have a ModelSelector, import it here and render in the header.
 
 // Height constants (keep header small and tidy)
 const HEADER_H = 48; // 12 * 4px
+
+function LandingPageHandler({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [hasCheckedSettings, setHasCheckedSettings] = React.useState(false);
+
+  React.useEffect(() => {
+    // Only check settings if we're on the home page and haven't checked yet
+    if (location.pathname === '/' && !hasCheckedSettings) {
+      const checkSettings = async () => {
+        try {
+          const res = await api.get("/settings/settings");
+          const defaultLandingPage = res.data?.ui?.defaultLandingPage || '/';
+          
+          // If the default landing page is not the home page, navigate to it
+          if (defaultLandingPage !== '/') {
+            console.log('Navigating to configured landing page:', defaultLandingPage);
+            navigate(defaultLandingPage, { replace: true });
+          }
+        } catch (err) {
+          console.warn('Failed to load settings for landing page:', err);
+        } finally {
+          setHasCheckedSettings(true);
+        }
+      };
+
+      checkSettings();
+    }
+  }, [location.pathname, navigate, hasCheckedSettings]);
+
+  return <>{children}</>;
+}
 
 function AppShell() {
   const { pathname } = useLocation();
@@ -88,9 +121,11 @@ function AppShell() {
         {/* Main scroll container — only THIS scrolls */}
         <main className="col-start-1 col-end-3 min-w-0 h-full overflow-y-auto">
           <div className="px-4 py-5">
-            <BackgroundPages>
-              <Outlet />
-            </BackgroundPages>
+            <LandingPageHandler>
+              <BackgroundPages>
+                <Outlet />
+              </BackgroundPages>
+            </LandingPageHandler>
           </div>
         </main>
       </div>

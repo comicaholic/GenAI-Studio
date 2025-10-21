@@ -17,11 +17,11 @@
     "chat": []
   },
   "groq": {
-    "apiKey": "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",
+    "apiKey": "",
     "connected": true
   },
   "huggingface": {
     "token": "",
-    "connected": false
+    "connected": true
   }
 }

@@ -64,28 +64,27 @@ def record_system_metrics():
         # Get current process (this application)
         current_process = psutil.Process()
         
-        # Get system-wide metrics
-        cpu_percent = psutil.cpu_percent(interval=0.1)
+        # Get system-wide metrics with better accuracy
+        # Use shorter interval for more responsive updates
+        cpu_percent = psutil.cpu_percent(interval=0.05)  # Reduced from 0.1
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         
         # Get application-specific metrics (more accurate like Task Manager)
         try:
             # CPU usage - get percentage of total system CPU (like Task Manager)
-            # First call to initialize CPU tracking (often returns 0)
+            # Use non-blocking call first to initialize
             current_process.cpu_percent()
-            # Wait a bit for accurate measurement
-            time.sleep(0.2)
-            # Second call should give accurate percentage
-            app_cpu_percent = current_process.cpu_percent()
-            # If still 0, try one more time with longer interval
-            if app_cpu_percent == 0:
-                time.sleep(0.5)
-                app_cpu_percent = current_process.cpu_percent()
+            # Use blocking call for accurate measurement
+            app_cpu_percent = current_process.cpu_percent(interval=0.1)
             
             cpu_count = psutil.cpu_count()
-            # psutil.cpu_percent() already gives percentage of total system CPU
-            app_cpu_normalized = app_cpu_percent
+            # psutil.Process().cpu_percent() returns percentage of ONE CPU core, not total system
+            # We need to normalize it to be a percentage of total system CPU
+            app_cpu_normalized = app_cpu_percent / cpu_count if cpu_count > 0 else app_cpu_percent
+            
+            # Additional safeguard: ensure app CPU never exceeds system CPU
+            app_cpu_normalized = min(app_cpu_normalized, cpu_percent)
             
             # Memory usage - get RSS (Resident Set Size) like Task Manager
             app_memory_info = current_process.memory_info()
@@ -103,17 +102,38 @@ def record_system_metrics():
             app_threads = 0
             app_fds = 0
         
-        # Try to get GPU metrics
+        # Try to get GPU metrics with improved accuracy
         gpu_percent = None
         app_gpu_percent = None
+        gpu_name = None
+        gpu_temperature = None
+        gpu_memory_used_gb = None
+        gpu_memory_total_gb = None
+        
+        # Method 1: Try GPUtil (most reliable for NVIDIA)
         try:
             import GPUtil
             gpus = GPUtil.getGPUs()
-            if gpus:
-                gpu_percent = gpus[0].load * 100
-                # Show actual GPU usage when detected, don't estimate app usage
-                app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
+            if gpus and len(gpus) > 0:
+                gpu = gpus[0]  # Use first GPU
+                gpu_percent = gpu.load * 100
+                gpu_name = gpu.name
+                gpu_temperature = gpu.temperature
+                gpu_memory_used_gb = round(gpu.memoryUsed / 1024, 2)  # Convert MB to GB
+                gpu_memory_total_gb = round(gpu.memoryTotal / 1024, 2)  # Convert MB to GB
+                
+                # Application GPU usage should be much lower than system usage
+                # Since we can't easily distinguish per-process GPU usage, we'll estimate it
+                # as a small fraction of system usage (typically 5-20% of system usage)
+                app_gpu_percent = max(0, gpu_percent * 0.1) if gpu_percent > 0 else 0
+                
         except ImportError:
+            pass
+        except Exception as e:
+            print(f"GPUtil error: {e}")
+        
+        # Method 2: Try nvidia-ml-py if GPUtil failed
+        if gpu_percent is None:
             try:
                 import pynvml
                 pynvml.nvmlInit()
@@ -122,37 +142,100 @@ def record_system_metrics():
                     handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                     util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                     gpu_percent = util.gpu
-                    # Show actual GPU usage when detected
-                    app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
+                    
+                    # Get additional GPU info
+                    try:
+                        name_bytes = pynvml.nvmlDeviceGetName(handle)
+                        gpu_name = name_bytes.decode('utf-8') if isinstance(name_bytes, bytes) else str(name_bytes)
+                    except:
+                        gpu_name = "NVIDIA GPU"
+                    
+                    try:
+                        gpu_temperature = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                    except:
+                        gpu_temperature = None
+                    
+                    try:
+                        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                        gpu_memory_used_gb = round(mem_info.used / (1024**3), 2)
+                        gpu_memory_total_gb = round(mem_info.total / (1024**3), 2)
+                    except:
+                        gpu_memory_used_gb = None
+                        gpu_memory_total_gb = None
+                    
+                    # Application GPU usage should be much lower than system usage
+                    # Since we can't easily distinguish per-process GPU usage, we'll estimate it
+                    # as a small fraction of system usage (typically 5-20% of system usage)
+                    app_gpu_percent = max(0, gpu_percent * 0.1) if gpu_percent > 0 else 0
+                    
             except ImportError:
                 pass
+            except Exception as e:
+                print(f"pynvml error: {e}")
+        
+        # Method 3: Try Windows-specific GPU detection for basic info
+        if gpu_percent is None:
+            try:
+                import subprocess
+                import platform
+                if platform.system() == "Windows":
+                    # Try to get GPU info using wmic
+                    result = subprocess.run(['wmic', 'path', 'win32_VideoController', 'get', 'name'], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0 and result.stdout.strip():
+                        lines = result.stdout.strip().split('\n')
+                        if len(lines) > 1:
+                            gpu_name = lines[1].strip()
+                            if gpu_name and gpu_name != "Name":
+                                # Set basic GPU info (we can't get usage without proper drivers)
+                                gpu_percent = 0
+                                app_gpu_percent = 0
+            except Exception as e:
+                print(f"Windows GPU detection error: {e}")
+        
+        # Calculate disk percentage with debugging
+        disk_percent = (disk.used / disk.total) * 100
+        
+        # Debug logging for values over 100%
+        if cpu_percent > 100:
+            print(f"WARNING: CPU usage over 100%: {cpu_percent}%")
+        if memory.percent > 100:
+            print(f"WARNING: Memory usage over 100%: {memory.percent}%")
+        if disk_percent > 100:
+            print(f"WARNING: Disk usage over 100%: {disk_percent}% (used: {disk.used}, total: {disk.total})")
+        if gpu_percent and gpu_percent > 100:
+            print(f"WARNING: GPU usage over 100%: {gpu_percent}%")
         
         metric_record = {
             "timestamp": datetime.now().isoformat(),
             "cpu_percent": cpu_percent,
             "memory_percent": memory.percent,
-            "disk_percent": (disk.used / disk.total) * 100,
+            "disk_percent": disk_percent,
             "gpu_percent": gpu_percent,
             "app_cpu_percent": app_cpu_normalized,
             "app_memory_percent": app_memory_percent,
             "app_memory_mb": app_memory_mb,
             "app_gpu_percent": app_gpu_percent,
             "app_threads": app_threads,
-            "app_fds": app_fds
+            "app_fds": app_fds,
+            "gpu_name": gpu_name,
+            "gpu_temperature": gpu_temperature,
+            "gpu_memory_used_gb": gpu_memory_used_gb,
+            "gpu_memory_total_gb": gpu_memory_total_gb
         }
         
         # Load existing data and add new record
         metrics_data = load_system_metrics()
         metrics_data.append(metric_record)
         
-        # Keep only last 10000 records (about 7 days at 1-minute intervals)
-        if len(metrics_data) > 10000:
-            metrics_data = metrics_data[-10000:]
+        # Keep only last 50000 records (about 35 days at 1-minute intervals, or longer with larger intervals)
+        if len(metrics_data) > 50000:
+            metrics_data = metrics_data[-50000:]
         
         save_system_metrics(metrics_data)
         return metric_record
     except Exception as e:
-        print(f"Error recording system metrics: {e}")
+        print(f"❌ Error recording system metrics: {e}")
         return None
 
 def load_evaluations() -> List[Dict]:
@@ -194,23 +277,45 @@ import threading
 import time
 
 def background_metrics_recorder():
-    """Background thread to record metrics every 30 seconds"""
+    """Background thread to record metrics every 10 seconds for more responsive updates"""
+    print("🔄 Background metrics recorder started")
+    record_count = 0
+    
     while True:
         try:
             record_system_metrics()
-            time.sleep(30)  # Record every 30 seconds
+            record_count += 1
+            
+            # Log every 10th record (every ~100 seconds) to show it's working
+            if record_count % 10 == 0:
+                print(f"📊 Background metrics recorded {record_count} times")
+            
+            time.sleep(10)  # Record every 10 seconds for more responsive updates
         except Exception as e:
-            print(f"Error in background metrics recording: {e}")
-            time.sleep(60)  # Wait longer on error
+            print(f"❌ Error in background metrics recording: {e}")
+            time.sleep(30)  # Wait longer on error
 
 # Start background recording if not already running
 _metrics_thread = None
 def ensure_background_recording():
+    """Ensure background metrics recording is running"""
     global _metrics_thread
+    
     if _metrics_thread is None or not _metrics_thread.is_alive():
-        _metrics_thread = threading.Thread(target=background_metrics_recorder, daemon=True)
-        _metrics_thread.start()
-        print("Started background metrics recording")
+        try:
+            _metrics_thread = threading.Thread(target=background_metrics_recorder, daemon=True)
+            _metrics_thread.start()
+            print("✅ Started background metrics recording")
+            
+            # Give it a moment to start and record initial metrics
+            time.sleep(1)
+            record_system_metrics()
+            print("📊 Initial metrics recorded")
+            
+        except Exception as e:
+            print(f"❌ Failed to start background metrics recording: {e}")
+    else:
+        print("ℹ️ Background metrics recording already running")
 
 def record_groq_usage(model: str, tokens_used: int, cost_usd: float, duration_ms: int, success: bool = True):
     """Record a Groq API usage event"""
@@ -236,7 +341,8 @@ def record_groq_usage(model: str, tokens_used: int, cost_usd: float, duration_ms
 
 def get_timeframe_filter(timeframe: str) -> datetime:
     """Get start time for given timeframe"""
-    now = datetime.now()
+    # Use local time instead of UTC to match the stored data timestamps
+    now = datetime.now()  # Local time without timezone
     timeframe_map = {
         "30m": timedelta(minutes=30),
         "1h": timedelta(hours=1),
@@ -245,7 +351,10 @@ def get_timeframe_filter(timeframe: str) -> datetime:
         "12h": timedelta(hours=12),
         "24h": timedelta(hours=24),
         "3d": timedelta(days=3),
-        "7d": timedelta(days=7)
+        "7d": timedelta(days=7),
+        "30d": timedelta(days=30),
+        "90d": timedelta(days=90),
+        "all": timedelta(days=365)  # Effectively all time
     }
     
     delta = timeframe_map.get(timeframe, timedelta(hours=24))
@@ -280,7 +389,7 @@ def get_system_metrics():
         
         # CPU usage - use more accurate method
         # Get system CPU usage with proper interval
-        cpu_percent = psutil.cpu_percent(interval=0.1)  # Shorter interval for more accuracy
+        cpu_percent = psutil.cpu_percent(interval=0.05)  # Even shorter interval for more accuracy
         cpu_count = psutil.cpu_count()
         
         # Check if running in Docker and try to get host CPU info
@@ -315,16 +424,14 @@ def get_system_metrics():
         
         # Get application-specific CPU usage - use more reliable method
         try:
-            # First call to initialize CPU tracking (often returns 0)
-            current_process.cpu_percent()
-            # Wait a bit for accurate measurement
-            time.sleep(0.2)
-            # Second call should give accurate percentage
-            app_cpu_percent = current_process.cpu_percent()
-            # If still 0, try one more time with longer interval
-            if app_cpu_percent == 0:
-                time.sleep(0.5)
-                app_cpu_percent = current_process.cpu_percent()
+            # Use blocking call for accurate measurement
+            app_cpu_percent = current_process.cpu_percent(interval=0.1)
+            # psutil.Process().cpu_percent() returns percentage of ONE CPU core, not total system
+            # We need to normalize it to be a percentage of total system CPU
+            app_cpu_percent = app_cpu_percent / cpu_count if cpu_count > 0 else app_cpu_percent
+            
+            # Additional safeguard: ensure app CPU never exceeds system CPU
+            app_cpu_percent = min(app_cpu_percent, cpu_percent)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             app_cpu_percent = 0
         
@@ -401,6 +508,16 @@ def get_system_metrics():
         disk_used_gb = disk.used / (1024**3)
         disk_total_gb = disk.total / (1024**3)
         
+        # Debug logging for values over 100%
+        if cpu_percent > 100:
+            print(f"WARNING: CPU usage over 100%: {cpu_percent}%")
+        if memory_percent > 100:
+            print(f"WARNING: Memory usage over 100%: {memory_percent}%")
+        if disk_percent > 100:
+            print(f"WARNING: Disk usage over 100%: {disk_percent}% (used: {disk.used}, total: {disk.total})")
+        if gpu_percent and gpu_percent > 100:
+            print(f"WARNING: GPU usage over 100%: {gpu_percent}%")
+        
         # GPU usage - improved detection with multiple methods
         gpu_percent = None
         gpu_system_percent = None
@@ -409,10 +526,6 @@ def get_system_metrics():
         gpu_memory_used_gb = None
         gpu_memory_total_gb = None
         app_gpu_percent = None
-        
-        # Try multiple GPU detection methods for better accuracy
-        gpu_detected = False
-        
         
         # Method 1: Try GPUtil (most reliable for NVIDIA)
         try:
@@ -427,17 +540,18 @@ def get_system_metrics():
                 gpu_memory_used_gb = round(gpu.memoryUsed / 1024, 2)  # Convert MB to GB
                 gpu_memory_total_gb = round(gpu.memoryTotal / 1024, 2)  # Convert MB to GB
                 
-                # Show actual GPU usage when detected
-                app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
-                gpu_detected = True
+                # Application GPU usage should be much lower than system usage
+                # Since we can't easily distinguish per-process GPU usage, we'll estimate it
+                # as a small fraction of system usage (typically 5-20% of system usage)
+                app_gpu_percent = max(0, gpu_percent * 0.1) if gpu_percent > 0 else 0
                 
         except ImportError:
             pass
         except Exception as e:
-            pass
+            print(f"GPUtil error in system endpoint: {e}")
         
         # Method 2: Try nvidia-ml-py if GPUtil failed
-        if not gpu_detected:
+        if gpu_percent is None:
             try:
                 import pynvml
                 pynvml.nvmlInit()
@@ -449,8 +563,11 @@ def get_system_metrics():
                     gpu_system_percent = util.memory
                     
                     # Get additional GPU info
-                    name_bytes = pynvml.nvmlDeviceGetName(handle)
-                    gpu_name = name_bytes.decode('utf-8') if isinstance(name_bytes, bytes) else str(name_bytes)
+                    try:
+                        name_bytes = pynvml.nvmlDeviceGetName(handle)
+                        gpu_name = name_bytes.decode('utf-8') if isinstance(name_bytes, bytes) else str(name_bytes)
+                    except:
+                        gpu_name = "NVIDIA GPU"
                     
                     try:
                         gpu_temperature = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
@@ -465,17 +582,18 @@ def get_system_metrics():
                         gpu_memory_used_gb = None
                         gpu_memory_total_gb = None
                     
-                    # Show actual GPU usage when detected
-                    app_gpu_percent = gpu_percent if gpu_percent > 0 else 0
-                    gpu_detected = True
+                    # Application GPU usage should be much lower than system usage
+                    # Since we can't easily distinguish per-process GPU usage, we'll estimate it
+                    # as a small fraction of system usage (typically 5-20% of system usage)
+                    app_gpu_percent = max(0, gpu_percent * 0.1) if gpu_percent > 0 else 0
                     
             except ImportError:
                 pass
             except Exception as e:
-                pass
+                print(f"pynvml error in system endpoint: {e}")
         
         # Method 3: Try Windows-specific GPU detection
-        if not gpu_detected:
+        if gpu_percent is None:
             try:
                 import subprocess
                 import platform
@@ -492,12 +610,8 @@ def get_system_metrics():
                                 gpu_percent = 0
                                 gpu_system_percent = 0
                                 app_gpu_percent = 0
-                                gpu_detected = True
             except Exception as e:
-                pass
-        
-        if not gpu_detected:
-            pass
+                print(f"Windows GPU detection error in system endpoint: {e}")
         
         result = {
             "cpu": {
@@ -559,8 +673,10 @@ def get_system_metrics():
         return {"error": str(e)}
 
 @router.get("/performance")
-def get_performance_trends(timeframe: str = "24h"):
+def get_performance_trends(timeframe: str = "24h", interval_minutes: int = 5):
     """Get performance trends data with proper sampling to prevent duplicates"""
+    # Validate and clamp interval_minutes
+    interval_minutes = max(1, min(60, interval_minutes))  # Clamp between 1-60 minutes
     try:
         # Ensure background recording is running
         ensure_background_recording()
@@ -578,14 +694,19 @@ def get_performance_trends(timeframe: str = "24h"):
             }
         
         # Get start time based on timeframe
-        now = datetime.now()
+        now = datetime.now()  # Use local time to match stored data
         start_time = get_timeframe_filter(timeframe)
         
         # Filter data by timeframe
-        filtered_data = [
-            record for record in metrics_data
-            if datetime.fromisoformat(record["timestamp"]) >= start_time
-        ]
+        filtered_data = []
+        for record in metrics_data:
+            try:
+                record_time = datetime.fromisoformat(record["timestamp"])
+                # No need to add timezone since we're using local time consistently
+                if record_time >= start_time:
+                    filtered_data.append(record)
+            except (ValueError, TypeError):
+                continue
         
         if not filtered_data:
             return {
@@ -601,13 +722,13 @@ def get_performance_trends(timeframe: str = "24h"):
         time_span_hours = (now - start_time).total_seconds() / 3600
         data_points = len(filtered_data)
         
-        # Group data into 5-minute intervals
+        # Group data into configurable intervals
         quadrant_data = {}
-        quadrant_size_minutes = 5
+        quadrant_size_minutes = interval_minutes
         
         for record in filtered_data:
             timestamp = datetime.fromisoformat(record["timestamp"])
-            # Round down to nearest 5-minute interval
+            # Round down to nearest interval
             quadrant_time = timestamp.replace(
                 minute=(timestamp.minute // quadrant_size_minutes) * quadrant_size_minutes,
                 second=0,
@@ -642,16 +763,25 @@ def get_performance_trends(timeframe: str = "24h"):
         trends = []
         for quadrant_key, data in sorted(quadrant_data.items()):
             if data["count"] > 0:
+                # Ensure we have valid data before creating trend point
+                cpu_avg = sum(data["cpu_percent"]) / len(data["cpu_percent"]) if data["cpu_percent"] else 0
+                memory_avg = sum(data["memory_percent"]) / len(data["memory_percent"]) if data["memory_percent"] else 0
+                disk_avg = sum(data["disk_percent"]) / len(data["disk_percent"]) if data["disk_percent"] else 0
+                gpu_avg = sum(data["gpu_percent"]) / len(data["gpu_percent"]) if data["gpu_percent"] else 0
+                app_cpu_avg = sum(data["app_cpu_percent"]) / len(data["app_cpu_percent"]) if data["app_cpu_percent"] else 0
+                app_memory_avg = sum(data["app_memory_percent"]) / len(data["app_memory_percent"]) if data["app_memory_percent"] else 0
+                app_gpu_avg = sum(data["app_gpu_percent"]) / len(data["app_gpu_percent"]) if data["app_gpu_percent"] else 0
+                
                 trend_point = {
                     "timestamp": quadrant_key,
-                    "cpu_percent": sum(data["cpu_percent"]) / len(data["cpu_percent"]),
-                    "memory_percent": sum(data["memory_percent"]) / len(data["memory_percent"]),
-                    "disk_percent": sum(data["disk_percent"]) / len(data["disk_percent"]),
-                    "gpu_percent": sum(data["gpu_percent"]) / len(data["gpu_percent"]) if data["gpu_percent"] else 0,
-                    "app_cpu_percent": sum(data["app_cpu_percent"]) / len(data["app_cpu_percent"]),
-                    "app_memory_percent": sum(data["app_memory_percent"]) / len(data["app_memory_percent"]),
-                    "app_gpu_percent": sum(data["app_gpu_percent"]) / len(data["app_gpu_percent"]) if data["app_gpu_percent"] else 0,
-                    "app_memory_mb": sum(data["app_memory_percent"]) / len(data["app_memory_percent"]) * 100,  # Approximate
+                    "cpu_percent": round(cpu_avg, 2),
+                    "memory_percent": round(memory_avg, 2),
+                    "disk_percent": round(disk_avg, 2),
+                    "gpu_percent": round(gpu_avg, 2),
+                    "app_cpu_percent": round(app_cpu_avg, 2),
+                    "app_memory_percent": round(app_memory_avg, 2),
+                    "app_gpu_percent": round(app_gpu_avg, 2),
+                    "app_memory_mb": round(app_memory_avg * 100, 2),  # Approximate conversion
                     "app_threads": 0,  # Not tracked in historical data
                     "app_fds": 0  # Not tracked in historical data
                 }
@@ -663,7 +793,7 @@ def get_performance_trends(timeframe: str = "24h"):
             "data_points": len(trends),
             "total_data_points": data_points,
             "time_span_hours": round(time_span_hours, 2),
-            "quadrant_size_minutes": quadrant_size_minutes
+            "interval_minutes": quadrant_size_minutes
         }
     except Exception as e:
         return {"error": str(e)}
@@ -676,10 +806,17 @@ def get_groq_analytics(timeframe: str = "24h"):
         start_time = get_timeframe_filter(timeframe)
         
         # Filter data by timeframe
-        filtered_data = [
-            record for record in usage_data
-            if datetime.fromisoformat(record["timestamp"]) >= start_time
-        ]
+        filtered_data = []
+        for record in usage_data:
+            try:
+                record_time = datetime.fromisoformat(record["timestamp"])
+                # Make record time timezone-aware if it's naive
+                if record_time.tzinfo is None:
+                    record_time = record_time.replace(tzinfo=timezone.utc)
+                if record_time >= start_time:
+                    filtered_data.append(record)
+            except (ValueError, TypeError):
+                continue
         
         if not filtered_data:
             return {
@@ -771,10 +908,17 @@ def get_error_metrics(timeframe: str = "24h"):
         start_time = get_timeframe_filter(timeframe)
         
         # Filter data by timeframe
-        filtered_data = [
-            record for record in usage_data
-            if datetime.fromisoformat(record["timestamp"]) >= start_time
-        ]
+        filtered_data = []
+        for record in usage_data:
+            try:
+                record_time = datetime.fromisoformat(record["timestamp"])
+                # Make record time timezone-aware if it's naive
+                if record_time.tzinfo is None:
+                    record_time = record_time.replace(tzinfo=timezone.utc)
+                if record_time >= start_time:
+                    filtered_data.append(record)
+            except (ValueError, TypeError):
+                continue
         
         # Calculate error metrics
         total_requests = len(filtered_data)
@@ -886,10 +1030,17 @@ def get_throughput_metrics(timeframe: str = "24h"):
         start_time = get_timeframe_filter(timeframe)
         
         # Filter data by timeframe
-        filtered_data = [
-            record for record in usage_data
-            if datetime.fromisoformat(record["timestamp"]) >= start_time
-        ]
+        filtered_data = []
+        for record in usage_data:
+            try:
+                record_time = datetime.fromisoformat(record["timestamp"])
+                # Make record time timezone-aware if it's naive
+                if record_time.tzinfo is None:
+                    record_time = record_time.replace(tzinfo=timezone.utc)
+                if record_time >= start_time:
+                    filtered_data.append(record)
+            except (ValueError, TypeError):
+                continue
         
         if not filtered_data:
             return {
@@ -941,7 +1092,7 @@ def get_evaluation_metrics(timeframe: str = "24h"):
     try:
         # Load real evaluation data, excluding automation evaluations
         all_evaluations = load_evaluations()
-        evaluations = [eval for eval in all_evaluations if not hasattr(eval, 'automationId') or not eval.automationId]
+        evaluations = [eval for eval in all_evaluations if not eval.get('automationId')]
         
         if not evaluations:
             return {
@@ -982,10 +1133,6 @@ def get_evaluation_metrics(timeframe: str = "24h"):
                         eval_dt = datetime.fromisoformat(eval_timestamp).replace(tzinfo=timezone.utc)
                 else:
                     eval_dt = eval_timestamp
-                
-                # Ensure start_time is also timezone-aware
-                if start_time.tzinfo is None:
-                    start_time = start_time.replace(tzinfo=timezone.utc)
                 
                 if eval_dt >= start_time:
                     filtered_evaluations.append(eval)
@@ -1046,7 +1193,12 @@ def get_evaluation_metrics(timeframe: str = "24h"):
             model_stats[model_id]["evaluations"] += 1
             
             # Extract individual scores
-            if "rouge" in results:
+            # Handle ROUGE scores - use rougeL as the primary ROUGE score
+            if "rougeL" in results:
+                score = results["rougeL"]
+                rouge_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["rouge_scores"].append(score)
+            elif "rouge" in results:
                 score = results["rouge"]
                 rouge_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
                 model_stats[model_id]["rouge_scores"].append(score)
@@ -1126,7 +1278,12 @@ def get_evaluation_metrics(timeframe: str = "24h"):
             "accuracy_scores": accuracy_scores[-10:],
             "precision_scores": precision_scores[-10:],
             "recall_scores": recall_scores[-10:],
-            "model_comparison": model_comparison
+            "model_comparison": model_comparison,
+            "debug_info": {
+                "all_evaluations_count": len(all_evaluations),
+                "after_automation_filter": len(evaluations),
+                "filtered_evaluations_count": len(filtered_evaluations)
+            }
         }
         
     except Exception as e:

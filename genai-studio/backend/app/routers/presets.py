@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import json
 from pathlib import Path
+from typing import Dict, Any
 
 router = APIRouter()
 
@@ -10,7 +11,7 @@ PRESETS_FILE = Path(__file__).resolve().parents[2] / "data" / "presets.json"
 class PresetIn(BaseModel):
     type: str  # "ocr" | "prompt" | "chat"
     name: str
-    content: str
+    content: Dict[str, Any]  # Changed from str to Dict to match actual format
 
 def load_presets():
     if PRESETS_FILE.exists():
@@ -59,6 +60,22 @@ def create_preset(preset: PresetIn):
     data[preset.type].append({"name": preset.name, "content": preset.content})
     save_presets(data)
     return {"ok": True}
+
+@router.put("/{preset_type}/{name}")
+def update_preset(preset_type: str, name: str, preset: PresetIn):
+    """Update an existing preset"""
+    data = load_presets()
+    if preset_type not in data:
+        raise HTTPException(400, "Invalid preset type")
+    
+    # Find and update the preset
+    for i, p in enumerate(data[preset_type]):
+        if p["name"] == name:
+            data[preset_type][i] = {"name": preset.name, "content": preset.content}
+            save_presets(data)
+            return {"ok": True}
+    
+    raise HTTPException(404, "Preset not found")
 
 @router.delete("/{preset_type}/{name}")
 def delete_preset(preset_type: str, name: str):

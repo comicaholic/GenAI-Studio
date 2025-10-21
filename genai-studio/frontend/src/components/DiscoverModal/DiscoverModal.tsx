@@ -1,5 +1,6 @@
 import React from "react";
 import { HFItem, searchHF } from "@/services/models";
+import { api } from "@/services/api";
 
 type Props = {
   open: boolean;
@@ -13,12 +14,30 @@ export default function DiscoverModal({ open, onClose, onAdd }: Props) {
   const [results, setResults] = React.useState<HFItem[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [hfTokenStatus, setHfTokenStatus] = React.useState<{hasToken: boolean, connected: boolean}>({hasToken: false, connected: false});
 
   React.useEffect(() => {
     if (!open) {
       setQ(""); setResults([]); setError(null);
+    } else {
+      // Check Hugging Face token status when modal opens
+      checkHfTokenStatus();
     }
   }, [open]);
+
+  const checkHfTokenStatus = async () => {
+    try {
+      const res = await api.get("/settings/settings");
+      const hfSettings = res.data?.huggingface || {};
+      setHfTokenStatus({
+        hasToken: Boolean(hfSettings.token && hfSettings.token.trim()),
+        connected: Boolean(hfSettings.connected)
+      });
+    } catch (err) {
+      console.warn("Failed to check HF token status:", err);
+      setHfTokenStatus({hasToken: false, connected: false});
+    }
+  };
 
   if (!open) return null;
 
@@ -64,6 +83,39 @@ export default function DiscoverModal({ open, onClose, onAdd }: Props) {
 
         {/* Body */}
         <div style={{overflow:"auto"}}>
+          {/* Hugging Face Token Warning */}
+          {!hfTokenStatus.hasToken && (
+            <div style={{
+              padding: "16px",
+              margin: "12px",
+              background: "linear-gradient(135deg, #f59e0b, #d97706)",
+              border: "1px solid #f59e0b",
+              borderRadius: "8px",
+              color: "#ffffff"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12,2L13.09,8.26L22,9L13.09,9.74L12,16L10.91,9.74L2,9L10.91,8.26L12,2M12,4.5L11.5,7.5L8.5,8L11.5,8.5L12,11.5L12.5,8.5L15.5,8L12.5,7.5L12,4.5Z"/>
+                </svg>
+                <strong style={{ fontSize: "14px" }}>Hugging Face Token Required</strong>
+              </div>
+              <div style={{ fontSize: "13px", lineHeight: "1.4", marginBottom: "8px" }}>
+                To discover and add models from Hugging Face, you need to configure your access token first.
+              </div>
+              <div style={{ fontSize: "12px", opacity: "0.9" }}>
+                Go to Settings → Hugging Face to add your token from{" "}
+                <a 
+                  href="https://huggingface.co/settings/tokens" 
+                  target="_blank" 
+                  rel="noreferrer"
+                  style={{ color: "#ffffff", textDecoration: "underline" }}
+                >
+                  huggingface.co/settings/tokens
+                </a>
+              </div>
+            </div>
+          )}
+          
           {busy && <div style={{padding:12, color:"#a3a3a3"}}>Searching…</div>}
           {error && <div style={{padding:12, color:"#fca5a5"}}>{String(error)}</div>}
           {!busy && !error && results.length === 0 && (
