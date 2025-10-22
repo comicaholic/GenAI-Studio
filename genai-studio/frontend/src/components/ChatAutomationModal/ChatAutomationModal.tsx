@@ -155,6 +155,120 @@ export default function ChatAutomationModal({
     onClose();
   }, [selected, automationName, runs, onStart, onClose, showError]);
 
+  // Export current automation config to JSON
+  const handleExport = useCallback(() => {
+    const payload = {
+      // Automation metadata
+      name: automationName || 'Chat Automation',
+      type: 'chat',
+      createdAt: new Date().toISOString(),
+      
+      // Model information
+      model: {
+        id: selected?.id || 'unknown',
+        provider: selected?.provider || 'local',
+        label: selected?.label || selected?.id || 'unknown'
+      },
+      
+      // Default parameters
+      defaultParameters: DEFAULT_PARAMS,
+      
+      // Runs with complete information
+      runs: runs.map(r => ({
+        id: r.id,
+        name: r.name,
+        chatId: r.chatId,
+        chatTitle: r.chatTitle,
+        prompts: r.prompts.map(p => ({
+          id: p.id,
+          name: p.name,
+          content: p.content,
+          parameters: p.parameters,
+          context: p.context
+        })),
+        modelId: r.modelId || selected?.id,
+        modelProvider: r.modelProvider || selected?.provider,
+        status: r.status,
+        error: r.error
+      })),
+      
+      // Available chats
+      availableChats: existingChats
+    };
+    
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(automationName || 'chat_automation').replace(/[^a-z0-9\-_]+/gi, '_')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  }, [automationName, runs, selected, existingChats]);
+
+  const handleImportClick = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = handleImport;
+    input.click();
+  }, []);
+
+  const handleImport = useCallback(async (evt: Event) => {
+    const target = evt.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (!file) return;
+    
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      
+      // Set automation name
+      if (data.name) setAutomationName(String(data.name));
+      
+      // Import runs with all their data
+      if (Array.isArray(data.runs)) {
+        const imported: ChatRun[] = data.runs.map((r: any, i: number) => ({
+          id: r.id || crypto.randomUUID(),
+          name: r.name || `Run ${i + 1}`,
+          chatId: r.chatId,
+          chatTitle: r.chatTitle || `Chat ${i + 1}`,
+          prompts: Array.isArray(r.prompts) ? r.prompts.map((p: any, j: number) => ({
+            id: p.id || crypto.randomUUID(),
+            name: p.name || `Prompt ${j + 1}`,
+            content: p.content || '',
+            parameters: { ...DEFAULT_PARAMS, ...(p.parameters || {}) },
+            context: p.context || ''
+          })) : [{
+            id: crypto.randomUUID(),
+            name: 'Prompt 1',
+            content: '',
+            parameters: DEFAULT_PARAMS,
+            context: ''
+          }],
+          modelId: r.modelId || data.model?.id,
+          modelProvider: r.modelProvider || data.model?.provider,
+          status: 'pending' as const,
+          error: undefined
+        }));
+        
+        setRuns(imported);
+        setNumRuns(imported.length);
+        
+        // Try to set the model if it's available and different from current
+        if (data.model?.id && data.model?.provider) {
+          // This would ideally trigger a model selection, but since we don't have direct access
+          // to the model context here, we'll just show a message about the model
+          showError("Import Successful", `Imported ${imported.length} runs from ${data.name || 'chat automation'}. Model: ${data.model.label || data.model.id} (${data.model.provider}). Please ensure this model is selected in the header.`);
+        } else {
+          showError("Import Successful", `Imported ${imported.length} runs from ${data.name || 'chat automation'}.`);
+        }
+      }
+    } catch (e: any) {
+      showError('Import Failed', e?.message ?? 'Could not import automation configuration');
+    }
+  }, [showError]);
+
   if (!isOpen) return null;
 
   const currentRun = runs[activeRunIndex];
@@ -450,35 +564,67 @@ export default function ChatAutomationModal({
         </div>
 
         {/* Actions */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-          <button
-            onClick={onClose}
-            style={{
-              padding: "10px 20px",
-              border: "1px solid #334155",
-              borderRadius: 6,
-              background: "#0f172a",
-              color: "#e2e8f0",
-              cursor: "pointer",
-              fontSize: 14,
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleStart}
-            style={{
-              padding: "10px 20px",
-              border: "1px solid #2563eb",
-              borderRadius: 6,
-              background: "#2563eb",
-              color: "#fff",
-              cursor: "pointer",
-              fontSize: 14,
-            }}
-          >
-            Start Automation
-          </button>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={handleImportClick}
+              style={{
+                padding: "10px 16px",
+                border: "1px solid #334155",
+                borderRadius: 6,
+                background: "#0f172a",
+                color: "#e2e8f0",
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              Import
+            </button>
+            <button
+              onClick={handleExport}
+              style={{
+                padding: "10px 16px",
+                border: "1px solid #334155",
+                borderRadius: 6,
+                background: "#0f172a",
+                color: "#e2e8f0",
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              Export
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={onClose}
+              style={{
+                padding: "10px 20px",
+                border: "1px solid #334155",
+                borderRadius: 6,
+                background: "#0f172a",
+                color: "#e2e8f0",
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleStart}
+              style={{
+                padding: "10px 20px",
+                border: "1px solid #2563eb",
+                borderRadius: 6,
+                background: "#2563eb",
+                color: "#fff",
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              Start Automation
+            </button>
+          </div>
         </div>
       </div>
     </div>

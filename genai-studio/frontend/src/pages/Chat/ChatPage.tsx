@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import LayoutShell from "@/components/Layout/LayoutShell";
+import { useLocation } from "react-router-dom";
 
 import FileDrop from "@/components/FileDrop/FileDrop";
 import ExpandableTextarea from "@/components/ExpandableTextarea/ExpandableTextarea";
@@ -106,6 +107,59 @@ export default function ChatPage() {
   const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
   const [isAutomationProgressModalOpen, setIsAutomationProgressModalOpen] = useState(false);
   const [automationResults, setAutomationResults] = useState<Record<string, any>>({});
+
+  // Handle navigation state loading
+  const location = useLocation();
+  useEffect(() => {
+    const state: any = location.state;
+    const chatToLoad = state?.loadChat;
+    const automationToLoad = state?.loadAutomation;
+    
+    if (chatToLoad) {
+      try {
+        // Load chat session from history
+        const chatSession: ChatSession = {
+          id: chatToLoad.id,
+          title: chatToLoad.title,
+          messages: chatToLoad.usedText?.chatHistory || [],
+          createdAt: chatToLoad.lastActivityAt,
+          lastActivityAt: chatToLoad.lastActivityAt,
+          modelId: chatToLoad.model.id,
+          modelProvider: chatToLoad.model.provider,
+          parameters: chatToLoad.parameters || DEFAULT_PARAMS,
+          context: chatToLoad.context || "",
+        };
+        
+        setSessions(prev => [chatSession, ...prev]);
+        setCurrentSessionId(chatSession.id);
+        setContextPrompt(chatSession.context || "");
+        setParams(chatSession.parameters || DEFAULT_PARAMS);
+      } catch {}
+    } else if (automationToLoad?.type === 'chat') {
+      try {
+        // Load automation data
+        const firstRun = automationToLoad.runs?.[0];
+        if (firstRun) {
+          const chatSession: ChatSession = {
+            id: crypto.randomUUID(),
+            title: firstRun.chatTitle || "Automation Chat",
+            messages: [],
+            createdAt: new Date().toISOString(),
+            lastActivityAt: new Date().toISOString(),
+            modelId: firstRun.modelId || selected?.id,
+            modelProvider: firstRun.modelProvider || selected?.provider,
+            parameters: firstRun.parameters || DEFAULT_PARAMS,
+            context: "",
+          };
+          
+          setSessions(prev => [chatSession, ...prev]);
+          setCurrentSessionId(chatSession.id);
+          setContextPrompt("");
+          setParams(chatSession.parameters || DEFAULT_PARAMS);
+        }
+      } catch {}
+    }
+  }, [location.state, selected]);
 
   // load sessions from localStorage and history service on mount
   useEffect(() => {
@@ -685,6 +739,7 @@ export default function ChatPage() {
         const automationAggregate = {
           id: config.id,
           name: config.name,
+          type: 'chat',
           model: { id: selected?.id || "unknown", provider: selected?.provider || "local" },
           parameters: params,
           runs: config.runs.map(run => ({
@@ -693,9 +748,13 @@ export default function ChatPage() {
             chatTitle: run.chatTitle,
             prompts: results[run.id]?.prompts || [],
             error: results[run.id]?.error || null,
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            status: results[run.id]?.error ? "error" : "completed",
           })),
           status: errorCount === 0 ? "completed" : successCount === 0 ? "error" : "completed",
-          completedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          completedAt: new Date(),
         };
         await api.post("/history/automations", automationAggregate);
       } catch (e) {
@@ -1459,7 +1518,7 @@ export default function ChatPage() {
                       Automation
                     </button>
                     
-                    <AutomationProgressIndicator />
+                    <AutomationProgressIndicator onOpenModal={() => setIsAutomationProgressModalOpen(true)} />
                   </div>
 
                   <button

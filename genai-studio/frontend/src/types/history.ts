@@ -34,6 +34,7 @@ export interface SavedEvaluation {
   results?: Record<string, any>;
   startedAt: string;
   finishedAt?: string;
+  automationSetId?: string;
   automationId?: string;
   runId?: string;
   promptId?: string;
@@ -94,5 +95,6 @@ export interface SavedAutomation {
   createdAt: string;
   completedAt?: string;
   error?: string;
+  automationSetId?: string;
 }
 

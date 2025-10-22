@@ -46,6 +46,9 @@ class SavedEvaluation(BaseModel):
     results: Optional[Dict[str, Any]] = None
     startedAt: datetime
     finishedAt: Optional[datetime] = None
+    automationSetId: Optional[str] = None  # Links evaluation to automation set
+    automationId: Optional[str] = None  # Links evaluation to specific automation
+    runId: Optional[str] = None  # Links evaluation to specific run
 
 class SavedChat(BaseModel):
     id: str
@@ -59,19 +62,34 @@ class SavedChat(BaseModel):
 
 class AutomationRun(BaseModel):
     id: str
+    name: str
+    prompt: str
+    parameters: Dict[str, Any]
+    metrics: Dict[str, Any]
+    modelId: Optional[str] = None
+    modelProvider: Optional[str] = None
+    # File information for OCR/Prompt automations
+    sourceFileName: Optional[str] = None
+    referenceFileName: Optional[str] = None
+    promptFileName: Optional[str] = None
+    # Results and status
+    results: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
     startedAt: datetime
     completedAt: Optional[datetime] = None
-    status: str
-    results: Optional[Dict[str, Any]] = None
+    status: str = "pending"
 
 class SavedAutomation(BaseModel):
     id: str
     name: str
+    type: str  # 'ocr' | 'prompt' | 'chat'
     model: ModelInfo
     parameters: Dict[str, Any]
     runs: List[AutomationRun] = []
     status: str = "unknown"
+    createdAt: str
     completedAt: Optional[datetime] = None
+    automationSetId: Optional[str] = None  # Groups related automations together
 
 # Helper functions
 def load_evaluations() -> List[SavedEvaluation]:
@@ -296,6 +314,67 @@ def get_automation_aggregates():
     try:
         automations = load_automations()
         return [automation.dict() for automation in automations]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/automations/sets")
+def get_automation_sets():
+    """Get automation sets grouped by automationSetId"""
+    try:
+        automations = load_automations()
+        evaluations = load_evaluations()
+        
+        # Group automations by automationSetId
+        automation_sets = {}
+        
+        for automation in automations:
+            set_id = automation.automationSetId or automation.name  # Fallback to name if no set ID
+            if set_id not in automation_sets:
+                automation_sets[set_id] = {
+                    "setId": set_id,
+                    "name": automation.name,
+                    "automations": [],
+                    "evaluations": [],
+                    "totalRuns": 0,
+                    "successCount": 0,
+                    "errorCount": 0,
+                    "createdAt": automation.createdAt,
+                    "lastRunAt": None
+                }
+            
+            automation_sets[set_id]["automations"].append(automation.dict())
+            automation_sets[set_id]["totalRuns"] += len(automation.runs or [])
+            
+            # Count success/error runs
+            for run in automation.runs or []:
+                if run.error:
+                    automation_sets[set_id]["errorCount"] += 1
+                else:
+                    automation_sets[set_id]["successCount"] += 1
+            
+            # Track latest run date
+            if automation.completedAt:
+                if not automation_sets[set_id]["lastRunAt"] or automation.completedAt > automation_sets[set_id]["lastRunAt"]:
+                    automation_sets[set_id]["lastRunAt"] = automation.completedAt
+        
+        # Add evaluations that belong to automation sets
+        for evaluation in evaluations:
+            if evaluation.automationSetId:
+                set_id = evaluation.automationSetId
+                if set_id in automation_sets:
+                    automation_sets[set_id]["evaluations"].append(evaluation.dict())
+                    # Count evaluation results
+                    if evaluation.results:
+                        automation_sets[set_id]["successCount"] += 1
+                    else:
+                        automation_sets[set_id]["errorCount"] += 1
+                    
+                    # Track latest evaluation date
+                    if evaluation.finishedAt:
+                        if not automation_sets[set_id]["lastRunAt"] or evaluation.finishedAt > automation_sets[set_id]["lastRunAt"]:
+                            automation_sets[set_id]["lastRunAt"] = evaluation.finishedAt
+        
+        return list(automation_sets.values())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -3,9 +3,10 @@ import { automationStore, AutomationProgress } from '@/stores/automationStore';
 
 interface AutomationProgressIndicatorProps {
   className?: string;
+  onOpenModal?: () => void;
 }
 
-export default function AutomationProgressIndicator({ className = "" }: AutomationProgressIndicatorProps) {
+export default function AutomationProgressIndicator({ className = "", onOpenModal }: AutomationProgressIndicatorProps) {
   const [progress, setProgress] = useState<AutomationProgress[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -26,11 +27,19 @@ export default function AutomationProgressIndicator({ className = "" }: Automati
 
   if (progress.length === 0) return null;
 
+  const handleClick = () => {
+    if (onOpenModal) {
+      onOpenModal();
+    } else {
+      setIsExpanded(!isExpanded);
+    }
+  };
+
   return (
     <div className={`automation-progress-indicator ${className}`} style={{ position: "relative" }}>
       {/* Main Indicator */}
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={handleClick}
         style={{
           display: "flex",
           alignItems: "center",
@@ -213,3 +222,4 @@ export default function AutomationProgressIndicator({ className = "" }: Automati
     </div>
   );
 }
+

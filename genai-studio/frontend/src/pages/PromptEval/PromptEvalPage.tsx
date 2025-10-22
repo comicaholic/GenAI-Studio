@@ -16,6 +16,7 @@ import { callLLM, estimateTokens } from '@/lib/llm';
 import { RunResult } from '@/types/promptEval';
 import { api } from '@/services/api';
 import { listFiles, loadReferenceByName } from '@/services/files';
+import { makePathRelative } from '@/lib/pathUtils';
 import { computeMetrics, downloadCSV, downloadPDF } from '@/services/eval';
 import { useNotifications } from '@/components/Notification/Notification';
 import UploadPanel from './components/UploadPanel';
@@ -75,6 +76,8 @@ export default function PromptEvalPage() {
   useEffect(() => {
     const state: any = location.state;
     const evalToLoad = state?.loadEvaluation;
+    const automationToLoad = state?.loadAutomation;
+    
     if (evalToLoad?.type === 'prompt') {
       try {
         const used = evalToLoad.usedText || {};
@@ -103,6 +106,39 @@ export default function PromptEvalPage() {
               setReference(data.text);
             } catch {}
           })();
+        }
+      } catch {}
+    } else if (automationToLoad?.type === 'prompt') {
+      try {
+        // Load automation data
+        const firstRun = automationToLoad.runs?.[0];
+        if (firstRun) {
+          setDraft((d) => ({ 
+            ...d, 
+            prompt: firstRun.prompt ?? d.prompt, 
+            context: d.context 
+          }));
+          setReference("");
+          
+          // Load files from the first run
+          if (firstRun.promptFileName) {
+            (async () => {
+              try {
+                const res = await api.get(`/files/load`, { params: { kind: 'source', name: firstRun.promptFileName }, responseType: 'blob' });
+                const file = new File([res.data], firstRun.promptFileName);
+                await onPromptUpload(file);
+              } catch {}
+            })();
+          }
+          if (firstRun.referenceFileName) {
+            (async () => {
+              try {
+                const data = await loadReferenceByName(firstRun.referenceFileName);
+                setRefFileName(data.filename);
+                setReference(data.text);
+              } catch {}
+            })();
+          }
         }
       } catch {}
     }
@@ -376,13 +412,75 @@ export default function PromptEvalPage() {
   // Download handlers
   const onDownloadCSV = useCallback(() => {
     if (!scores) return;
-    downloadCSV([scores], { filename: "prompt-eval-results.csv" });
-  }, [scores]);
+    
+    // Enhanced CSV with model, parameters, and metrics info
+    const enhancedData = {
+      ...scores,
+      // Model information
+      model_id: selected?.id || 'unknown',
+      model_provider: selected?.provider || 'local',
+      model_label: selected?.label || selected?.id || 'unknown',
+      
+      // Parameters used
+      temperature: params.temperature,
+      max_tokens: params.max_tokens,
+      top_p: params.top_p,
+      top_k: params.top_k,
+      
+      // Metrics configuration
+      selected_metrics: selectedMetrics.join(', '),
+      
+      // File information
+      prompt_file: promptFileName || 'none',
+      reference_file: refFileName || 'none',
+      
+      // Timestamp
+      evaluation_timestamp: new Date().toISOString(),
+      
+      // Prompt and reference text (truncated for CSV)
+      prompt_text: draft.prompt?.substring(0, 500) + (draft.prompt?.length > 500 ? '...' : ''),
+      reference_text: reference?.substring(0, 500) + (reference?.length > 500 ? '...' : ''),
+      llm_output: llmOutput?.substring(0, 500) + (llmOutput?.length > 500 ? '...' : ''),
+    };
+    
+    downloadCSV([enhancedData], { filename: "prompt-eval-results.csv" });
+  }, [scores, selected, params, selectedMetrics, promptFileName, refFileName, draft.prompt, reference, llmOutput]);
 
   const onDownloadPDF = useCallback(() => {
     if (!scores) return;
-    downloadPDF([scores], { filename: "prompt-eval-results.pdf" });
-  }, [scores]);
+    
+    // Enhanced PDF with model, parameters, and metrics info
+    const enhancedData = {
+      ...scores,
+      // Model information
+      model_id: selected?.id || 'unknown',
+      model_provider: selected?.provider || 'local',
+      model_label: selected?.label || selected?.id || 'unknown',
+      
+      // Parameters used
+      temperature: params.temperature,
+      max_tokens: params.max_tokens,
+      top_p: params.top_p,
+      top_k: params.top_k,
+      
+      // Metrics configuration
+      selected_metrics: selectedMetrics.join(', '),
+      
+      // File information
+      prompt_file: promptFileName || 'none',
+      reference_file: refFileName || 'none',
+      
+      // Timestamp
+      evaluation_timestamp: new Date().toISOString(),
+      
+      // Full text content for PDF
+      prompt_text: draft.prompt || '',
+      reference_text: reference || '',
+      llm_output: llmOutput || '',
+    };
+    
+    downloadPDF([enhancedData], { filename: "prompt-eval-results.pdf" });
+  }, [scores, selected, params, selectedMetrics, promptFileName, refFileName, draft.prompt, reference, llmOutput]);
 
   // Automation functionality
   const handleAutomationStart = useCallback(async (config: AutomationConfig) => {
@@ -583,6 +681,7 @@ export default function PromptEvalPage() {
         const automationAggregate = {
           id: config.id,
           name: config.name,
+          type: 'prompt',
           model: { id: selected?.id || "unknown", provider: selected?.provider || "local" },
           parameters: params,
           runs: config.runs.map(run => ({
@@ -591,11 +690,19 @@ export default function PromptEvalPage() {
             prompt: run.prompt,
             parameters: run.parameters,
             metrics: run.metrics,
+            modelId: run.modelId || selected?.id,
+            modelProvider: run.modelProvider || selected?.provider,
+            promptFileName: run.promptFileName ? makePathRelative(run.promptFileName) : (promptFileName ? makePathRelative(promptFileName) : null),
+            referenceFileName: run.referenceFileName ? makePathRelative(run.referenceFileName) : (refFileName ? makePathRelative(refFileName) : null),
             results: results[run.id]?.scores || null,
             error: results[run.id]?.error || null,
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            status: results[run.id]?.error ? "error" : "completed",
           })),
           status: errorCount === 0 ? "completed" : successCount === 0 ? "error" : "completed",
-          completedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          completedAt: new Date(),
         };
         await api.post("/history/automations", automationAggregate);
       } catch (e) {
@@ -1420,7 +1527,7 @@ export default function PromptEvalPage() {
               Run Automation
             </button>
             
-            <AutomationProgressIndicator />
+            <AutomationProgressIndicator onOpenModal={() => setIsAutomationProgressModalOpen(true)} />
           </div>
           <button onClick={onDownloadCSV} disabled={!scores} style={{ 
             padding: "12px 20px", 
@@ -1575,7 +1682,71 @@ export default function PromptEvalPage() {
           {/* Automation Results */}
           {Object.keys(automationResults).length > 0 && (
             <div style={{ marginTop: 24 }}>
-              <h4 style={{ color: "#e2e8f0", marginBottom: 16 }}>Automation Results</h4>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                <h4 style={{ color: "#e2e8f0", margin: 0 }}>Automation Results</h4>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button 
+                    onClick={() => {
+                      // Export automation results as CSV
+                      const automationData = Object.values(automationResults).map((result: any) => ({
+                        run_name: result.runName,
+                        model_id: result.model?.id || 'unknown',
+                        model_provider: result.model?.provider || 'local',
+                        status: result.error ? 'error' : 'success',
+                        error: result.error || '',
+                        scores: result.scores ? JSON.stringify(result.scores) : '',
+                        prompt_file: result.files?.promptFileName || 'none',
+                        reference_file: result.files?.referenceFileName || 'none',
+                        timestamp: new Date().toISOString()
+                      }));
+                      downloadCSV(automationData, { filename: "automation-results.csv" });
+                    }}
+                    style={{
+                      padding: "8px 16px",
+                      background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                      border: "none",
+                      color: "#ffffff",
+                      borderRadius: 6,
+                      fontSize: 12,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    Export CSV
+                  </button>
+                  <button 
+                    onClick={() => {
+                      // Export automation results as PDF
+                      const automationData = Object.values(automationResults).map((result: any) => ({
+                        run_name: result.runName,
+                        model_id: result.model?.id || 'unknown',
+                        model_provider: result.model?.provider || 'local',
+                        status: result.error ? 'error' : 'success',
+                        error: result.error || '',
+                        scores: result.scores || {},
+                        prompt_file: result.files?.promptFileName || 'none',
+                        reference_file: result.files?.referenceFileName || 'none',
+                        timestamp: new Date().toISOString()
+                      }));
+                      downloadPDF(automationData, { filename: "automation-results.pdf" });
+                    }}
+                    style={{
+                      padding: "8px 16px",
+                      background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                      border: "none",
+                      color: "#ffffff",
+                      borderRadius: 6,
+                      fontSize: 12,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              </div>
               <div style={{ display: "grid", gap: 16 }}>
                 {Object.entries(automationResults).map(([runId, result]) => (
                   <div key={runId} style={{ 

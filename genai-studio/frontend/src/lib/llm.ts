@@ -1,5 +1,6 @@
 // frontend/src/lib/llm.ts
 import { LLMInput, ResourceForTransport } from '@/types/promptEval';
+import { analyzeGroqError, getAutomaticMitigation, isPromptLikelyTooLong } from '@/lib/groqErrorMitigation';
 
 // Simple token estimation (4 chars ≈ 1 token)
 export function estimateTokens(text: string): number {
@@ -15,8 +16,8 @@ export function convertResourcesForTransport(resources: any[]): ResourceForTrans
   }));
 }
 
-// Mock LLM call with streaming
-export async function* callLLM(input: LLMInput): AsyncGenerator<string, void, unknown> {
+// Mock LLM call with streaming and error mitigation
+export async function* callLLM(input: LLMInput, retryCount: number = 0): AsyncGenerator<string, void, unknown> {
   const { modelId, prompt, context, resources, parameters, signal } = input;
 
   // Check for cancellation
@@ -24,23 +25,72 @@ export async function* callLLM(input: LLMInput): AsyncGenerator<string, void, un
     throw new Error('Request cancelled');
   }
 
-  // Mock response chunks
-  const mockResponse = `This is a mock response from ${modelId}.\n\nPrompt: "${prompt}"\n\nContext: "${context || 'None'}"\n\nParameters: Temperature=${parameters.temperature}, Top-p=${parameters.topP}, Max tokens=${parameters.maxTokens}\n\nResources attached: ${resources?.length || 0} files\n\nThis is a streaming response that simulates real LLM output. Each chunk is delivered with a small delay to demonstrate the streaming functionality. The response includes information about the input parameters and resources to show that the data is being processed correctly.`;
+  // Pre-check for potential length issues
+  const fullPrompt = prompt + (context ? '\n\nContext: ' + context : '');
+  if (isPromptLikelyTooLong(fullPrompt, parameters.maxTokens || 4000)) {
+    console.warn('Prompt may be too long for the model. Consider reducing length.');
+  }
 
-  const chunks = mockResponse.split(' ');
-  let currentChunk = 0;
+  try {
+    // Mock response chunks
+    const mockResponse = `This is a mock response from ${modelId}.\n\nPrompt: "${prompt}"\n\nContext: "${context || 'None'}"\n\nParameters: Temperature=${parameters.temperature}, Top-p=${parameters.topP}, Max tokens=${parameters.maxTokens}\n\nResources attached: ${resources?.length || 0} files\n\nThis is a streaming response that simulates real LLM output. Each chunk is delivered with a small delay to demonstrate the streaming functionality. The response includes information about the input parameters and resources to show that the data is being processed correctly.`;
 
-  for (const chunk of chunks) {
-    // Check for cancellation
-    if (signal?.aborted) {
-      throw new Error('Request cancelled');
+    const chunks = mockResponse.split(' ');
+    let currentChunk = 0;
+
+    for (const chunk of chunks) {
+      // Check for cancellation
+      if (signal?.aborted) {
+        throw new Error('Request cancelled');
+      }
+
+      // Simulate streaming delay
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      yield currentChunk === 0 ? chunk : ' ' + chunk;
+      currentChunk++;
     }
-
-    // Simulate streaming delay
-    await new Promise(resolve => setTimeout(resolve, 50));
+  } catch (error: any) {
+    console.error('LLM streaming failed:', error);
     
-    yield currentChunk === 0 ? chunk : ' ' + chunk;
-    currentChunk++;
+    // Check if this is a Groq error that we can mitigate
+    const errorMessage = error?.response?.data?.detail || error?.message || String(error);
+    const mitigation = getAutomaticMitigation(errorMessage, fullPrompt);
+    
+    if (mitigation.shouldRetry && retryCount < 2) {
+      console.log('Attempting automatic mitigation for streaming LLM:', mitigation);
+      
+      // Show user notification about mitigation
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('groq-mitigation', {
+          detail: {
+            error: errorMessage,
+            mitigation: mitigation,
+            retryCount: retryCount + 1,
+            type: 'streaming'
+          }
+        }));
+      }
+      
+      // Wait before retry
+      if (mitigation.delayMs) {
+        await new Promise(resolve => setTimeout(resolve, mitigation.delayMs));
+      }
+      
+      // Create modified input
+      const modifiedInput: LLMInput = {
+        ...input,
+        prompt: mitigation.modifiedPrompt || prompt,
+        parameters: mitigation.modifiedParams ? { ...parameters, ...mitigation.modifiedParams } : parameters
+      };
+      
+      // Retry with modified parameters
+      yield* callLLM(modifiedInput, retryCount + 1);
+      return;
+    }
+    
+    // If we can't mitigate or have exceeded retries, throw the original error
+    throw error;
   }
 }
 

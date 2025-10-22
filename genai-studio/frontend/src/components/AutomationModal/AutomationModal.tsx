@@ -230,15 +230,47 @@ export default function AutomationModal({
   // Export current automation config to JSON
   const handleExport = useCallback(() => {
     const payload = {
+      // Automation metadata
       name: automationName || 'Automation',
+      type: kind,
+      createdAt: new Date().toISOString(),
+      
+      // Model information
+      model: {
+        id: selected?.id || 'unknown',
+        provider: selected?.provider || 'local',
+        label: selected?.label || selected?.id || 'unknown'
+      },
+      
+      // Default parameters and metrics
+      defaultParameters: DEFAULT_PARAMS,
+      defaultMetrics: DEFAULT_METRICS,
+      
+      // Runs with complete information
       runs: runs.map(r => ({
         id: r.id,
         name: r.name,
         prompt: r.prompt,
         parameters: r.parameters,
         metrics: r.metrics,
+        modelId: r.modelId || selected?.id,
+        modelProvider: r.modelProvider || selected?.provider,
+        sourceFileName: r.sourceFileName,
+        promptFileName: r.promptFileName,
+        referenceFileName: r.referenceFileName,
+        presetTitle: r.presetTitle,
+        status: r.status,
+        error: r.error,
+        results: r.results
       })),
+      
+      // File information
+      files: {
+        sourceChoices,
+        referenceChoices
+      }
     };
+    
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -247,7 +279,7 @@ export default function AutomationModal({
     a.click();
     a.remove();
     URL.revokeObjectURL(a.href);
-  }, [automationName, runs]);
+  }, [automationName, runs, kind, selected, sourceChoices, referenceChoices]);
 
   const handleImportClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -259,7 +291,11 @@ export default function AutomationModal({
     try {
       const text = await file.text();
       const data = JSON.parse(text);
+      
+      // Set automation name
       if (data.name) setAutomationName(String(data.name));
+      
+      // Import runs with all their data
       if (Array.isArray(data.runs)) {
         const imported: AutomationRun[] = data.runs.map((r: any, i: number) => ({
           id: r.id || crypto.randomUUID(),
@@ -267,11 +303,26 @@ export default function AutomationModal({
           prompt: r.prompt ?? defaultPrompt,
           parameters: { ...DEFAULT_PARAMS, ...(r.parameters || {}) },
           metrics: { ...DEFAULT_METRICS, ...(r.metrics || {}) },
+          modelId: r.modelId || data.model?.id,
+          modelProvider: r.modelProvider || data.model?.provider,
+          sourceFileName: r.sourceFileName,
+          promptFileName: r.promptFileName,
+          referenceFileName: r.referenceFileName,
+          presetTitle: r.presetTitle,
           status: 'pending',
         }));
         setRuns(imported);
         setNumRuns(imported.length);
         setActiveRunIndex(0);
+        
+        // Try to set the model if it's available and different from current
+        if (data.model?.id && data.model?.provider) {
+          // This would ideally trigger a model selection, but since we don't have direct access
+          // to the model context here, we'll just show a message about the model
+          showError("Import Successful", `Imported ${imported.length} runs from ${data.name || 'automation'}. Model: ${data.model.label || data.model.id} (${data.model.provider}). Please ensure this model is selected in the header.`);
+        } else {
+          showError("Import Successful", `Imported ${imported.length} runs from ${data.name || 'automation'}.`);
+        }
       }
       evt.target.value = '';
     } catch (e: any) {

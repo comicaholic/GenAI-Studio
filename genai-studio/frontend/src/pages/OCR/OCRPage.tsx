@@ -15,6 +15,7 @@ import { computeMetrics, downloadCSV, downloadPDF } from "@/services/eval";
 import { chatComplete } from "@/services/llm";
 import { api } from "@/services/api";
 import { listFiles, loadReferenceByName } from "@/services/files";
+import { makePathRelative } from "@/lib/pathUtils";
 import { useSelectedModelId } from "@/hooks/useSelectedModelId";
 import { useModel } from "@/context/ModelContext";
 import { completeLLM } from "@/services/llm";
@@ -135,6 +136,8 @@ export default function OCRPage() {
   useEffect(() => {
     const state: any = location.state;
     const evalToLoad = state?.loadEvaluation;
+    const automationToLoad = state?.loadAutomation;
+    
     if (evalToLoad?.type === "ocr") {
       try {
         const used = evalToLoad.usedText || {};
@@ -166,6 +169,37 @@ export default function OCRPage() {
               setRefText(data.text ?? "");
             } catch {}
           })();
+        }
+      } catch {}
+    } else if (automationToLoad?.type === "ocr") {
+      try {
+        // Load automation data
+        const firstRun = automationToLoad.runs?.[0];
+        if (firstRun) {
+          setOcrText(firstRun.prompt || "");
+          setReference("");
+          setTextareaContent(firstRun.prompt || "");
+          
+          // Load files from the first run
+          if (firstRun.sourceFileName) {
+            (async () => {
+              try {
+                const res = await api.get(`/files/load`, { params: { kind: "source", name: firstRun.sourceFileName }, responseType: "blob" });
+                const file = new File([res.data], firstRun.sourceFileName);
+                await onSourceUpload(file);
+              } catch {}
+            })();
+          }
+          if (firstRun.referenceFileName) {
+            (async () => {
+              try {
+                const data = await loadReferenceByName(firstRun.referenceFileName);
+                setRefFileName(data.filename);
+                setReference(data.text);
+                setRefText(data.text ?? "");
+              } catch {}
+            })();
+          }
         }
       } catch {}
     }
@@ -435,24 +469,86 @@ export default function OCRPage() {
 
   const onDownloadCSV = async () => {
     if (!scores) return;
-    const rows = [{ ...scores, source_file: srcFileName, reference_file: refFileName }];
+    
+    // Enhanced CSV with model, parameters, and metrics info
+    const enhancedData = {
+      ...scores,
+      // Model information
+      model_id: selected?.id || 'unknown',
+      model_provider: selected?.provider || 'local',
+      model_label: selected?.label || selected?.id || 'unknown',
+      
+      // Parameters used
+      temperature: params.temperature,
+      max_tokens: params.max_tokens,
+      top_p: params.top_p,
+      top_k: params.top_k,
+      
+      // Metrics configuration
+      selected_metrics: selectedMetrics.join(', '),
+      
+      // File information
+      source_file: srcFileName || 'none',
+      reference_file: refFileName || 'none',
+      
+      // Timestamp
+      evaluation_timestamp: new Date().toISOString(),
+      
+      // OCR and reference text (truncated for CSV)
+      ocr_text: ocrText?.substring(0, 500) + (ocrText?.length > 500 ? '...' : ''),
+      reference_text: reference?.substring(0, 500) + (reference?.length > 500 ? '...' : ''),
+      llm_output: llmOutput?.substring(0, 500) + (llmOutput?.length > 500 ? '...' : ''),
+    };
+    
+    const rows = [enhancedData];
     const blob = await downloadCSV(rows, meta);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "evaluation.csv";
+    a.download = "ocr-evaluation.csv";
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const onDownloadPDF = async () => {
     if (!scores) return;
-    const rows = [{ metric: "results", ...scores }];
+    
+    // Enhanced PDF with model, parameters, and metrics info
+    const enhancedData = {
+      ...scores,
+      // Model information
+      model_id: selected?.id || 'unknown',
+      model_provider: selected?.provider || 'local',
+      model_label: selected?.label || selected?.id || 'unknown',
+      
+      // Parameters used
+      temperature: params.temperature,
+      max_tokens: params.max_tokens,
+      top_p: params.top_p,
+      top_k: params.top_k,
+      
+      // Metrics configuration
+      selected_metrics: selectedMetrics.join(', '),
+      
+      // File information
+      source_file: srcFileName || 'none',
+      reference_file: refFileName || 'none',
+      
+      // Timestamp
+      evaluation_timestamp: new Date().toISOString(),
+      
+      // Full text content for PDF
+      ocr_text: ocrText || '',
+      reference_text: reference || '',
+      llm_output: llmOutput || '',
+    };
+    
+    const rows = [{ metric: "results", ...enhancedData }];
     const blob = await downloadPDF(rows, meta);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "evaluation.pdf";
+    a.download = "ocr-evaluation.pdf";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -654,6 +750,7 @@ export default function OCRPage() {
         const automationAggregate = {
           id: config.id,
           name: config.name,
+          type: 'ocr',
           model: { id: selected?.id || "unknown", provider: selected?.provider || "local" },
           parameters: params,
           runs: config.runs.map(run => ({
@@ -662,11 +759,19 @@ export default function OCRPage() {
             prompt: run.prompt,
             parameters: run.parameters,
             metrics: run.metrics,
+            modelId: run.modelId || selected?.id,
+            modelProvider: run.modelProvider || selected?.provider,
+            sourceFileName: run.sourceFileName ? makePathRelative(run.sourceFileName) : (srcFileName ? makePathRelative(srcFileName) : null),
+            referenceFileName: run.referenceFileName ? makePathRelative(run.referenceFileName) : (refFileName ? makePathRelative(refFileName) : null),
             results: results[run.id]?.scores || null,
             error: results[run.id]?.error || null,
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            status: results[run.id]?.error ? "error" : "completed",
           })),
           status: errorCount === 0 ? "completed" : successCount === 0 ? "error" : "completed",
-          completedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          completedAt: new Date(),
         };
         await api.post("/history/automations", automationAggregate);
       } catch (e) {
@@ -1498,7 +1603,7 @@ export default function OCRPage() {
             Run Automation
           </button>
           
-          <AutomationProgressIndicator />
+          <AutomationProgressIndicator onOpenModal={() => setIsAutomationProgressModalOpen(true)} />
         </div>
         <button
           onClick={onDownloadCSV}
@@ -1557,7 +1662,71 @@ export default function OCRPage() {
       {/* Automation Results */}
       {Object.keys(automationResults).length > 0 && (
         <section style={{ marginTop: 24 }}>
-          <h3 style={{ margin: "0 0 16px 0", color: "#e2e8f0" }}>Automation Results</h3>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <h3 style={{ margin: 0, color: "#e2e8f0" }}>Automation Results</h3>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button 
+                onClick={() => {
+                  // Export automation results as CSV
+                  const automationData = Object.values(automationResults).map((result: any) => ({
+                    run_name: result.runName,
+                    model_id: result.model?.id || 'unknown',
+                    model_provider: result.model?.provider || 'local',
+                    status: result.error ? 'error' : 'success',
+                    error: result.error || '',
+                    scores: result.scores ? JSON.stringify(result.scores) : '',
+                    source_file: result.files?.sourceFileName || 'none',
+                    reference_file: result.files?.referenceFileName || 'none',
+                    timestamp: new Date().toISOString()
+                  }));
+                  downloadCSV(automationData, { filename: "ocr-automation-results.csv" });
+                }}
+                style={{
+                  padding: "8px 16px",
+                  background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                  border: "none",
+                  color: "#ffffff",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                Export CSV
+              </button>
+              <button 
+                onClick={() => {
+                  // Export automation results as PDF
+                  const automationData = Object.values(automationResults).map((result: any) => ({
+                    run_name: result.runName,
+                    model_id: result.model?.id || 'unknown',
+                    model_provider: result.model?.provider || 'local',
+                    status: result.error ? 'error' : 'success',
+                    error: result.error || '',
+                    scores: result.scores || {},
+                    source_file: result.files?.sourceFileName || 'none',
+                    reference_file: result.files?.referenceFileName || 'none',
+                    timestamp: new Date().toISOString()
+                  }));
+                  downloadPDF(automationData, { filename: "ocr-automation-results.pdf" });
+                }}
+                style={{
+                  padding: "8px 16px",
+                  background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                  border: "none",
+                  color: "#ffffff",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                Export PDF
+              </button>
+            </div>
+          </div>
           <div style={{ display: "grid", gap: 16 }}>
             {Object.entries(automationResults).map(([runId, result]) => (
               <div key={runId} style={{ 
