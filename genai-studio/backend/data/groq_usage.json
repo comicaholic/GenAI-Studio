@@ -196,5 +196,95 @@
     "cost_usd": 0.0,
     "request_duration_ms": 305,
     "success": false
+  },
+  {
+    "id": "groq_1761105165508",
+    "model": "meta-llama/llama-prompt-guard-2-86m",
+    "timestamp": "2025-10-22T14:52:45.508626",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 327,
+    "success": false
+  },
+  {
+    "id": "groq_1761105166154",
+    "model": "meta-llama/llama-guard-4-12b",
+    "timestamp": "2025-10-22T14:52:46.154942",
+    "tokens_used": 1585,
+    "cost_usd": 0.0007924999999999999,
+    "request_duration_ms": 618,
+    "success": true
+  },
+  {
+    "id": "groq_1761105175920",
+    "model": "whisper-large-v3-turbo",
+    "timestamp": "2025-10-22T14:52:55.920897",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 416,
+    "success": false
+  },
+  {
+    "id": "groq_1761105180580",
+    "model": "groq/compound",
+    "timestamp": "2025-10-22T14:53:00.580222",
+    "tokens_used": 7343,
+    "cost_usd": 0.0036715,
+    "request_duration_ms": 4628,
+    "success": true
+  },
+  {
+    "id": "groq_1761105190831",
+    "model": "qwen/qwen3-32b",
+    "timestamp": "2025-10-22T14:53:10.831537",
+    "tokens_used": 2115,
+    "cost_usd": 0.0010574999999999998,
+    "request_duration_ms": 1600,
+    "success": true
+  },
+  {
+    "id": "groq_1761105201056",
+    "model": "openai/gpt-oss-20b",
+    "timestamp": "2025-10-22T14:53:21.056875",
+    "tokens_used": 2095,
+    "cost_usd": 0.0010475,
+    "request_duration_ms": 1496,
+    "success": true
+  },
+  {
+    "id": "groq_1761105204062",
+    "model": "llama-3.3-70b-versatile",
+    "timestamp": "2025-10-22T14:53:24.062300",
+    "tokens_used": 1719,
+    "cost_usd": 0.0008594999999999999,
+    "request_duration_ms": 1069,
+    "success": true
+  },
+  {
+    "id": "groq_1761105215322",
+    "model": "groq/compound-mini",
+    "timestamp": "2025-10-22T14:53:35.322687",
+    "tokens_used": 4186,
+    "cost_usd": 0.002093,
+    "request_duration_ms": 2596,
+    "success": true
+  },
+  {
+    "id": "groq_1761105224402",
+    "model": "whisper-large-v3",
+    "timestamp": "2025-10-22T14:53:44.402199",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 326,
+    "success": false
+  },
+  {
+    "id": "groq_1761105225283",
+    "model": "llama-3.1-8b-instant",
+    "timestamp": "2025-10-22T14:53:45.283507",
+    "tokens_used": 1789,
+    "cost_usd": 0.00035779999999999997,
+    "request_duration_ms": 849,
+    "success": true
   }
 ]

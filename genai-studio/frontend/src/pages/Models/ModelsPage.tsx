@@ -25,6 +25,21 @@ interface ModelInfo {
   pipeline_tag?: string;
   author?: string;
   description?: string;
+  // Additional metadata fields
+  intended_uses?: string;
+  background?: string;
+  training_data?: any;
+  library_name?: string;
+  // Requirements checking
+  requirements?: {
+    can_run: boolean;
+    warnings: string[];
+    errors: string[];
+    recommended_gpu_memory?: string;
+    estimated_memory?: string;
+  };
+  // Full model card data
+  full_model_card?: any;
 }
 
 interface DiscoverModalProps {
@@ -37,13 +52,18 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
   const [sortBy, setSortBy] = useState("downloads");
   const [searchResults, setSearchResults] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null);
+  const [selectedModelDetails, setSelectedModelDetails] = useState<ModelInfo | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingPopular, setIsLoadingPopular] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<{[key: string]: any}>({});
   const [hasMoreResults, setHasMoreResults] = useState(true);
   const [currentOffset, setCurrentOffset] = useState(0);
   const [hfTokenStatus, setHfTokenStatus] = useState({ hasToken: false, connected: false });
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [activeTab, setActiveTab] = useState<"info" | "card">("info");
 
   const checkHfTokenStatus = async () => {
     try {
@@ -55,6 +75,133 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
     } catch (error) {
       console.log("Could not check HF token status:", error);
       setHfTokenStatus({ hasToken: false, connected: false });
+    }
+  };
+
+  const fetchModelDetails = async (modelId: string) => {
+    if (!hfTokenStatus.hasToken) return;
+    
+    setIsLoadingDetails(true);
+    try {
+      const response = await api.get(`/models/discover/details/${modelId}`);
+      setSelectedModelDetails(response.data);
+    } catch (error: any) {
+      console.error("Failed to fetch model details:", error);
+      if (error.response?.status === 401) {
+        alert("Hugging Face token not configured or invalid. Please check your token in Settings.");
+      } else if (error.response?.status === 404) {
+        alert("Model details not found.");
+      } else {
+        alert("Failed to fetch model details: " + (error.message || error));
+      }
+    } finally {
+      setIsLoadingDetails(false);
+    }
+  };
+
+  const downloadModel = async (modelId: string) => {
+    if (!hfTokenStatus.hasToken) {
+      alert("Hugging Face token required for downloading models. Please configure your token in Settings.");
+      return;
+    }
+
+    console.log(`Starting download for model: ${modelId}`);
+    setIsDownloading(true);
+
+    try {
+      // Start download using queue system
+      console.log("Sending download request to backend...");
+      const response = await api.post("/models/download", { model_id: modelId });
+      console.log("Download request response:", response.data);
+      
+      if (response.data.download_id) {
+        const downloadId = response.data.download_id;
+        console.log(`Download queued with ID: ${downloadId}`);
+        setDownloadProgress(prev => ({ ...prev, [modelId]: { status: "queued", progress: 0, downloadId } }));
+        
+        // Poll for download status
+        const pollStatus = async () => {
+          try {
+            console.log(`Polling status for download: ${downloadId}`);
+            const statusResponse = await api.get(`/models/download/status/${downloadId}`);
+            const status = statusResponse.data;
+            console.log("Download status:", status);
+            
+            setDownloadProgress(prev => ({ ...prev, [modelId]: status }));
+            
+            if (status.status === "completed") {
+              console.log("Download completed successfully");
+              setIsDownloading(false);
+              alert(`Model "${modelId}" downloaded successfully! It will appear in your local models list.`);
+              
+              // Trigger model refresh
+              window.dispatchEvent(new Event("models:changed"));
+              
+              // Clear progress
+              setDownloadProgress(prev => {
+                const newProgress = { ...prev };
+                delete newProgress[modelId];
+                return newProgress;
+              });
+            } else if (status.status === "failed") {
+              console.log("Download failed:", status.error);
+              setIsDownloading(false);
+              alert(`Download failed: ${status.error || "Unknown error"}`);
+              
+              // Clear progress
+              setDownloadProgress(prev => {
+                const newProgress = { ...prev };
+                delete newProgress[modelId];
+                return newProgress;
+              });
+            } else if (status.status === "cancelled") {
+              console.log("Download cancelled");
+              setIsDownloading(false);
+              alert("Download cancelled");
+              
+              // Clear progress
+              setDownloadProgress(prev => {
+                const newProgress = { ...prev };
+                delete newProgress[modelId];
+                return newProgress;
+              });
+            } else {
+              // Continue polling
+              console.log("Download still in progress, continuing to poll...");
+              setTimeout(pollStatus, 2000);
+            }
+          } catch (error) {
+            console.error("Error polling download status:", error);
+            setIsDownloading(false);
+            alert("Failed to check download status");
+            
+            // Clear progress
+            setDownloadProgress(prev => {
+              const newProgress = { ...prev };
+              delete newProgress[modelId];
+              return newProgress;
+            });
+          }
+        };
+        
+        // Start polling after a short delay
+        setTimeout(pollStatus, 1000);
+      } else {
+        console.error("No download ID received from backend");
+        setIsDownloading(false);
+        alert("Failed to start download - no download ID received");
+      }
+    } catch (error: any) {
+      console.error("Download request failed:", error);
+      setIsDownloading(false);
+      alert(`Download failed: ${error.response?.data?.detail || error.message || "Unknown error"}`);
+      
+      // Clear progress
+      setDownloadProgress(prev => {
+        const newProgress = { ...prev };
+        delete newProgress[modelId];
+        return newProgress;
+      });
     }
   };
 
@@ -87,13 +234,19 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
         if (models.length > 0 && !selectedModel) {
           setSelectedModel(models[0]);
         }
+        setCurrentOffset(models.length);
       } else {
-        setSearchResults(prev => [...prev, ...models]);
+        // Only add models that aren't already in the list to prevent duplicates
+        setSearchResults(prev => {
+          const existingIds = new Set(prev.map((m: ModelInfo) => m.id));
+          const newModels = models.filter((m: ModelInfo) => !existingIds.has(m.id));
+          return [...prev, ...newModels];
+        });
+        setCurrentOffset(prev => prev + models.length);
       }
       
-      // Check if there are more results
+      // Check if there are more results - if we got less than requested, we've reached the end
       setHasMoreResults(models.length === 20);
-      setCurrentOffset(offset + models.length);
       
     } catch (error: any) {
       console.error("Failed to load models:", error);
@@ -365,7 +518,26 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                   borderRadius: 8,
                   border: "1px solid #334155"
                 }}>
-                  <div style={{ fontSize: 14 }}>Loading models...</div>
+                  <div style={{ 
+                    fontSize: 14, 
+                    display: "flex", 
+                    alignItems: "center", 
+                    justifyContent: "center", 
+                    gap: 8 
+                  }}>
+                    <svg 
+                      width="16" 
+                      height="16" 
+                      viewBox="0 0 24 24" 
+                      fill="currentColor" 
+                      style={{ 
+                        animation: "spin 1s linear infinite" 
+                      }}
+                    >
+                      <path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/>
+                    </svg>
+                    Loading models...
+                  </div>
                 </div>
               )}
               
@@ -382,7 +554,10 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                     transition: "all 0.2s ease",
                     position: "relative"
                   }}
-                  onClick={() => setSelectedModel(model)}
+                  onClick={() => {
+                    setSelectedModel(model);
+                    fetchModelDetails(model.id);
+                  }}
                   onMouseEnter={(e) => {
                     if (selectedModel?.id !== model.id) {
                       e.currentTarget.style.background = "#1e293b";
@@ -585,6 +760,38 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
           <div style={{ width: "50%", padding: 16, overflow: "auto" }}>
             {selectedModel ? (
               <div>
+                {isLoadingDetails && (
+                  <div style={{ 
+                    color: "#94a3b8", 
+                    textAlign: "center", 
+                    padding: 20,
+                    background: "#1e293b",
+                    borderRadius: 8,
+                    border: "1px solid #334155",
+                    marginBottom: 16
+                  }}>
+                    <div style={{ 
+                      fontSize: 14, 
+                      display: "flex", 
+                      alignItems: "center", 
+                      justifyContent: "center", 
+                      gap: 8 
+                    }}>
+                      <svg 
+                        width="16" 
+                        height="16" 
+                        viewBox="0 0 24 24" 
+                        fill="currentColor" 
+                        style={{ 
+                          animation: "spin 1s linear infinite" 
+                        }}
+                      >
+                        <path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/>
+                      </svg>
+                      Loading model details...
+                    </div>
+                  </div>
+                )}
                 {/* Header */}
                 <div style={{ marginBottom: 24 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -619,11 +826,16 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                       <div style={{ fontSize: 12, color: "#64748b" }}>
                         ❤️ {selectedModel.likes?.toLocaleString() || "0"}
                       </div>
+                      {(selectedModelDetails?.size || selectedModel.size) && (
+                        <div style={{ fontSize: 12, color: "#64748b" }}>
+                          💾 {selectedModelDetails?.size || selectedModel.size}
+                        </div>
+                      )}
                     </div>
                   </div>
                   
                   {/* Description */}
-                  {selectedModel.description && (
+                  {(selectedModelDetails?.description || selectedModel.description) && (
                     <div style={{
                       fontSize: 13,
                       color: "#cbd5e1",
@@ -633,16 +845,57 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                       borderRadius: 8,
                       border: "1px solid #334155"
                     }}>
-                      {selectedModel.description}
+                      {selectedModelDetails?.description || selectedModel.description}
                     </div>
                   )}
                 </div>
 
-                {/* Model Information */}
+                {/* Tabs */}
                 <div style={{ marginBottom: 24 }}>
-                  <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 16 }}>
-                    Model Information
-                  </h4>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                    <button
+                      onClick={() => setActiveTab("info")}
+                      style={{
+                        padding: "8px 16px",
+                        background: activeTab === "info" ? "#3b82f6" : "transparent",
+                        border: "1px solid #334155",
+                        borderRadius: 6,
+                        color: activeTab === "info" ? "#ffffff" : "#94a3b8",
+                        cursor: "pointer",
+                        fontSize: 14,
+                        fontWeight: 500,
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      Model Information
+                    </button>
+                    <button
+                      onClick={() => setActiveTab("card")}
+                      style={{
+                        padding: "8px 16px",
+                        background: activeTab === "card" ? "#3b82f6" : "transparent",
+                        border: "1px solid #334155",
+                        borderRadius: 6,
+                        color: activeTab === "card" ? "#ffffff" : "#94a3b8",
+                        cursor: "pointer",
+                        fontSize: 14,
+                        fontWeight: 500,
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      Model Card
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tab Content */}
+                {activeTab === "info" && (
+                  <div>
+                    {/* Model Information */}
+                    <div style={{ marginBottom: 24 }}>
+                      <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 16 }}>
+                        Model Information
+                      </h4>
                   
                   <div style={{ display: "grid", gap: 12 }}>
                     <div style={{
@@ -725,6 +978,29 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                         ) : "N/A"}
                       </div>
                     </div>
+                    
+                    <div style={{
+                      background: "#1e293b",
+                      border: "1px solid #334155",
+                      borderRadius: 8,
+                      padding: 12
+                    }}>
+                      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Download Size</div>
+                      <div style={{ fontSize: 14, color: "#e2e8f0" }}>
+                        {selectedModel.size ? (
+                          <span style={{
+                            padding: "4px 8px",
+                            background: "#f59e0b",
+                            color: "white",
+                            borderRadius: 4,
+                            fontSize: 12,
+                            fontWeight: 500
+                          }}>
+                            {selectedModel.size}
+                          </span>
+                        ) : "Unknown"}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -754,42 +1030,302 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                   </div>
                 )}
 
-                {/* Download Button */}
-                <button 
-                  style={{
-                    width: "100%",
-                    padding: "12px 16px",
-                    background: "linear-gradient(135deg, #10b981, #059669)",
-                    border: "none",
-                    borderRadius: 8,
-                    color: "#ffffff",
-                    cursor: "pointer",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    transition: "all 0.2s ease",
-                    boxShadow: "0 2px 4px rgba(16, 185, 129, 0.3)"
-                  }}
-                  onClick={() => {
-                    alert("Download functionality would be implemented here");
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = "translateY(-1px)";
-                    e.currentTarget.style.boxShadow = "0 4px 8px rgba(16, 185, 129, 0.4)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = "translateY(0)";
-                    e.currentTarget.style.boxShadow = "0 2px 4px rgba(16, 185, 129, 0.3)";
-                  }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/>
-                  </svg>
-                  Download Model
-                </button>
+                {/* System Requirements */}
+                {selectedModelDetails?.requirements && (
+                  <div style={{ marginBottom: 24 }}>
+                    <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 12 }}>
+                      System Requirements
+                    </h4>
+                    <div style={{
+                      background: "#1e293b",
+                      border: "1px solid #334155",
+                      borderRadius: 8,
+                      padding: 12
+                    }}>
+                      {selectedModelDetails.requirements.estimated_memory && (
+                        <div style={{ marginBottom: 8 }}>
+                          <span style={{ fontSize: 12, color: "#94a3b8" }}>Estimated Memory: </span>
+                          <span style={{ fontSize: 13, color: "#e2e8f0" }}>{selectedModelDetails.requirements.estimated_memory}</span>
+                        </div>
+                      )}
+                      {selectedModelDetails.requirements.recommended_gpu_memory && (
+                        <div style={{ marginBottom: 8 }}>
+                          <span style={{ fontSize: 12, color: "#94a3b8" }}>Recommended GPU Memory: </span>
+                          <span style={{ fontSize: 13, color: "#e2e8f0" }}>{selectedModelDetails.requirements.recommended_gpu_memory}</span>
+                        </div>
+                      )}
+                      {selectedModelDetails.requirements.warnings && selectedModelDetails.requirements.warnings.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 4 }}>⚠️ Warnings:</div>
+                          {selectedModelDetails.requirements.warnings.map((warning: string, index: number) => (
+                            <div key={index} style={{ fontSize: 12, color: "#fbbf24", marginLeft: 8, marginBottom: 2 }}>
+                              • {warning}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {selectedModelDetails.requirements.errors && selectedModelDetails.requirements.errors.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 4 }}>❌ Errors:</div>
+                          {selectedModelDetails.requirements.errors.map((error: string, index: number) => (
+                            <div key={index} style={{ fontSize: 12, color: "#f87171", marginLeft: 8, marginBottom: 2 }}>
+                              • {error}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Additional Metadata Sections */}
+                {selectedModelDetails?.intended_uses && (
+                  <div style={{ marginBottom: 24 }}>
+                    <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 12 }}>
+                      Intended Uses
+                    </h4>
+                    <div style={{
+                      fontSize: 13,
+                      color: "#cbd5e1",
+                      lineHeight: "1.5",
+                      background: "#1e293b",
+                      padding: 12,
+                      borderRadius: 8,
+                      border: "1px solid #334155"
+                    }}>
+                      {selectedModelDetails.intended_uses}
+                    </div>
+                  </div>
+                )}
+
+                {selectedModelDetails?.background && (
+                  <div style={{ marginBottom: 24 }}>
+                    <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 12 }}>
+                      Background
+                    </h4>
+                    <div style={{
+                      fontSize: 13,
+                      color: "#cbd5e1",
+                      lineHeight: "1.5",
+                      background: "#1e293b",
+                      padding: 12,
+                      borderRadius: 8,
+                      border: "1px solid #334155"
+                    }}>
+                      {selectedModelDetails.background}
+                    </div>
+                  </div>
+                )}
+
+                {selectedModelDetails?.training_data && (
+                  <div style={{ marginBottom: 24 }}>
+                    <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 12 }}>
+                      Training Data
+                    </h4>
+                    <div style={{
+                      background: "#1e293b",
+                      border: "1px solid #334155",
+                      borderRadius: 8,
+                      overflow: "hidden"
+                    }}>
+                      {Array.isArray(selectedModelDetails.training_data) ? (
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "#334155" }}>
+                              <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>
+                                Dataset
+                              </th>
+                              <th style={{ padding: 12, textAlign: "left", color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>
+                                Description
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedModelDetails.training_data.map((dataset: any, index: number) => (
+                              <tr key={index} style={{ borderBottom: "1px solid #334155" }}>
+                                <td style={{ padding: 12, color: "#e2e8f0", fontSize: 13 }}>
+                                  {dataset.name || dataset.dataset || "Unknown"}
+                                </td>
+                                <td style={{ padding: 12, color: "#cbd5e1", fontSize: 13 }}>
+                                  {dataset.description || dataset.info || "No description available"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <div style={{ padding: 12, color: "#cbd5e1", fontSize: 13 }}>
+                          {typeof selectedModelDetails.training_data === 'string' 
+                            ? selectedModelDetails.training_data 
+                            : JSON.stringify(selectedModelDetails.training_data, null, 2)
+                          }
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
+                  <button 
+                    style={{
+                      flex: 1,
+                      padding: "12px 16px",
+                      background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                      border: "none",
+                      borderRadius: 8,
+                      color: "#ffffff",
+                      cursor: "pointer",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      transition: "all 0.2s ease",
+                      boxShadow: "0 2px 4px rgba(59, 130, 246, 0.3)",
+                      opacity: (!hfTokenStatus.hasToken || isDownloading) ? 0.6 : 1
+                    }}
+                    onClick={() => {
+                      if (selectedModel?.id) {
+                        downloadModel(selectedModel.id);
+                      }
+                    }}
+                    disabled={isDownloading || !hfTokenStatus.hasToken}
+                    onMouseEnter={(e) => {
+                      if (!e.currentTarget.disabled) {
+                        e.currentTarget.style.transform = "translateY(-1px)";
+                        e.currentTarget.style.boxShadow = "0 4px 8px rgba(59, 130, 246, 0.4)";
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!e.currentTarget.disabled) {
+                        e.currentTarget.style.transform = "translateY(0)";
+                        e.currentTarget.style.boxShadow = "0 2px 4px rgba(59, 130, 246, 0.3)";
+                      }
+                    }}
+                  >
+                    {isDownloading && selectedModel?.id && downloadProgress[selectedModel.id] ? (
+                      <div style={{ width: "100%", textAlign: "center" }}>
+                        <div style={{ marginBottom: 8 }}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ animation: "spin 1s linear infinite" }}>
+                            <path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/>
+                          </svg>
+                          {downloadProgress[selectedModel.id].status === "queued" ? "Queued..." :
+                           downloadProgress[selectedModel.id].status === "downloading" ? "Downloading..." :
+                           "Processing..."}
+                        </div>
+                        <div style={{
+                          width: "100%",
+                          height: 4,
+                          background: "#334155",
+                          borderRadius: 2,
+                          overflow: "hidden"
+                        }}>
+                          <div style={{
+                            width: `${downloadProgress[selectedModel.id].progress || 0}%`,
+                            height: "100%",
+                            background: "linear-gradient(90deg, #3b82f6, #1d4ed8)",
+                            transition: "width 0.3s ease"
+                          }} />
+                        </div>
+                        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                          {downloadProgress[selectedModel.id].progress ? `${Math.round(downloadProgress[selectedModel.id].progress)}%` : "0%"}
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/>
+                        </svg>
+                        Download Model
+                        {selectedModelDetails?.size && (
+                          <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.8 }}>
+                            ({selectedModelDetails.size})
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </button>
+                  
+                  <button 
+                    style={{
+                      flex: 1,
+                      padding: "12px 16px",
+                      background: "linear-gradient(135deg, #10b981, #059669)",
+                      border: "none",
+                      borderRadius: 8,
+                      color: "#ffffff",
+                      cursor: "pointer",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      transition: "all 0.2s ease",
+                      boxShadow: "0 2px 4px rgba(16, 185, 129, 0.3)"
+                    }}
+                    onClick={() => {
+                      if (selectedModel?.id) {
+                        // Open Hugging Face model page in new tab for download
+                        const hfUrl = `https://huggingface.co/${selectedModel.id}`;
+                        window.open(hfUrl, '_blank', 'noopener,noreferrer');
+                      }
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = "translateY(-1px)";
+                      e.currentTarget.style.boxShadow = "0 4px 8px rgba(16, 185, 129, 0.4)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = "translateY(0)";
+                      e.currentTarget.style.boxShadow = "0 2px 4px rgba(16, 185, 129, 0.3)";
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M14,3V5H17.59L7.76,14.83L9.17,16.24L19,6.41V10H21V3M19,19H5V5H12V3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V12H19V19Z"/>
+                    </svg>
+                    Open on Hugging Face
+                  </button>
+                </div>
+                  </div>
+                )}
+
+                {activeTab === "card" && (
+                  <div>
+                    {/* Model Card Content */}
+                    <div style={{ marginBottom: 24 }}>
+                      <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 16 }}>
+                        Full Model Card
+                      </h4>
+                      <div style={{
+                        background: "#1e293b",
+                        border: "1px solid #334155",
+                        borderRadius: 8,
+                        padding: 16,
+                        maxHeight: 400,
+                        overflow: "auto"
+                      }}>
+                        {selectedModelDetails?.full_model_card ? (
+                          <pre style={{
+                            color: "#cbd5e1",
+                            fontSize: 12,
+                            lineHeight: "1.4",
+                            margin: 0,
+                            whiteSpace: "pre-wrap",
+                            fontFamily: "monospace"
+                          }}>
+                            {JSON.stringify(selectedModelDetails.full_model_card, null, 2)}
+                          </pre>
+                        ) : (
+                          <div style={{ color: "#94a3b8", fontSize: 14, textAlign: "center" }}>
+                            No model card data available
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div style={{ 
@@ -892,7 +1428,20 @@ export default function ModelsPage() {
 
   useEffect(() => {
     loadLocalModels();
+    loadCurrentDirectory();
   }, []);
+
+  const loadCurrentDirectory = async () => {
+    try {
+      const response = await api.get("/settings/paths");
+      const resolvedPaths = response.data.resolved;
+      if (resolvedPaths?.source_dir) {
+        setModelsDirectory(resolvedPaths.source_dir);
+      }
+    } catch (error) {
+      console.error("Failed to load current directory:", error);
+    }
+  };
 
   // Warn about models missing IDs
   useEffect(() => {
@@ -962,14 +1511,56 @@ export default function ModelsPage() {
     persistEnabled(next);
   };
 
-  const handleDirectoryChange = (newPath: string) => {
+  const handleDirectoryChange = async (newPath: string) => {
     setModelsDirectory(newPath);
-    // In a real implementation, this would update the backend configuration
+    try {
+      // Update the backend configuration with the new models directory
+      await api.post("/settings/paths", {
+        source_dir: newPath,
+        reference_dir: "./data/reference", // Keep existing values
+        context_dir: "./data/context"
+      });
+      console.log("Models directory updated successfully");
+    } catch (error) {
+      console.error("Failed to update models directory:", error);
+      // Revert the change if backend update failed
+      setModelsDirectory("./data/models");
+      alert("Failed to update models directory. Please check the path and try again.");
+    }
   };
 
-  const openFileExplorer = () => {
-    // In a real implementation, this would open the file explorer
-    alert("File explorer would open to: " + modelsDirectory);
+  const openFileExplorer = async () => {
+    try {
+      // Use the File System Access API if available (modern browsers)
+      if ('showDirectoryPicker' in window) {
+        try {
+          const dirHandle = await (window as any).showDirectoryPicker();
+          const newPath = await dirHandle.getDirectoryHandle ? dirHandle.name : dirHandle;
+          if (newPath) {
+            await handleDirectoryChange(newPath);
+          }
+        } catch (error) {
+          console.log("Directory picker cancelled or failed:", error);
+        }
+      } else {
+        // Fallback: copy path to clipboard and show instructions
+        try {
+          await navigator.clipboard.writeText(modelsDirectory);
+          alert(`Path copied to clipboard: ${modelsDirectory}\n\nPlease paste this path into your file explorer's address bar to browse the directory.`);
+        } catch (clipboardError) {
+          alert(`Models directory: ${modelsDirectory}\n\nPlease copy this path and open it in your file explorer.`);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to open file explorer:", error);
+      // Final fallback
+      try {
+        await navigator.clipboard.writeText(modelsDirectory);
+        alert(`Path copied to clipboard: ${modelsDirectory}\n\nPlease paste this path into your file explorer's address bar.`);
+      } catch (clipboardError) {
+        alert(`Models directory: ${modelsDirectory}\n\nPlease copy this path and open it in your file explorer.`);
+      }
+    }
   };
 
   const resetToDefault = () => {

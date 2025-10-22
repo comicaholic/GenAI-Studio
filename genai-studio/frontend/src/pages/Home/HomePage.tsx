@@ -6,6 +6,7 @@ import { historyService } from "@/services/history";
 import { useNavigate } from "react-router-dom";
 import { useModel } from "@/context/ModelContext";
 import HistoryModal from "@/components/HistoryModal/HistoryModal"; // keep if you already have it
+import AutomationProgressModal from "@/components/AutomationProgress/AutomationProgressModal";
 import { api } from "@/services/api";
 
 type Item = (SavedEvaluation & { itemType: "evaluation" }) | (SavedChat & { itemType: "chat" }) | (SavedAutomation & { itemType: "automation" });
@@ -20,6 +21,7 @@ export default function HomePage() {
   const [groqConnected, setGroqConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
+  const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
 
   const navigate = useNavigate();
   const { setSelected } = useModel();
@@ -103,8 +105,8 @@ export default function HomePage() {
   // actions
   const handleLoad = async (item: Item) => {
     if (item.itemType === "automation") {
-      // For automations, just show the modal with run details
-      setSelectedItem(item);
+      // For automations, show the automation progress modal
+      setIsAutomationModalOpen(true);
       return;
     }
 
@@ -962,6 +964,12 @@ export default function HomePage() {
           onDelete={handleDelete}
         />
       )}
+      
+      {/* Automation Progress Modal */}
+      <AutomationProgressModal
+        isOpen={isAutomationModalOpen}
+        onClose={() => setIsAutomationModalOpen(false)}
+      />
     </div>
   );
 }

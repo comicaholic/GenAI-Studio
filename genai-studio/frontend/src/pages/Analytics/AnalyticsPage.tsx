@@ -249,8 +249,42 @@ function StatCard({ title, value, subtitle, color = "#3b82f6" }: { title: string
   );
 }
 
+/* Loading spinner component */
+function LoadingSpinner({ size = 24 }: { size?: number }) {
+  return (
+    <div style={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: size,
+      height: size,
+      animation: 'spin 1s linear infinite'
+    }}>
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10" stroke="#334155" strokeWidth="2" opacity="0.3"/>
+        <path d="M12 2a10 10 0 0 1 10 10" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round"/>
+      </svg>
+    </div>
+  );
+}
+
+/* Skeleton loading component */
+function SkeletonCard({ width = "100%", height = 200 }: { width?: string; height?: string | number }) {
+  return (
+    <div style={{
+      width,
+      height,
+      background: "linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%)",
+      backgroundSize: "200% 100%",
+      animation: "shimmer 1.5s infinite",
+      borderRadius: 12,
+      border: "1px solid #334155"
+    }} />
+  );
+}
+
 /* Chart card wrapper */
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+function ChartCard({ title, children, isLoading = false }: { title: string; children: React.ReactNode; isLoading?: boolean }) {
   return (
     <div style={{ 
       padding: 24, 
@@ -261,8 +295,11 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
     }}>
       <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 18, fontWeight: 600 }}>{title}</h3>
+        {isLoading && <LoadingSpinner size={20} />}
       </div>
-      <div style={{ width: "100%", height: 360 }}>{children}</div>
+      <div style={{ width: "100%", height: 360 }}>
+        {isLoading ? <SkeletonCard height="100%" /> : children}
+      </div>
     </div>
   );
 }
@@ -307,8 +344,11 @@ export default function AnalyticsPage() {
   const loadSystem = useCallback(async () => {
     try {
       const r = await api.get("/analytics/system");
+      console.log('System API Response:', r.data);
       setSystemMetrics(r.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error loading system data:', e);
+    }
   }, []);
 
   const loadPerf = useCallback(async () => {
@@ -320,6 +360,8 @@ export default function AnalyticsPage() {
                              dataInterval === "1h" ? 60 : 5;
       
       const r = await api.get(`/analytics/performance?timeframe=${timeFilter}&interval_minutes=${intervalMinutes}`);
+      
+      console.log('Performance API Response:', r.data);
       
       // Ensure we have valid data structure
       const trends = r.data?.trends ?? [];
@@ -333,6 +375,7 @@ export default function AnalyticsPage() {
         return hasTimestamp && hasValidData;
       });
       
+      console.log('Valid trends count:', validTrends.length);
       setPerformanceTrends(validTrends);
     } catch (e) {
       console.error('Error loading performance data:', e);
@@ -344,35 +387,59 @@ export default function AnalyticsPage() {
   const loadGroq = useCallback(async () => {
     try {
       const r = await api.get(`/analytics/groq?timeframe=${timeFilter}`);
+      console.log('Groq API Response:', r.data);
+      console.log('Total requests:', r.data?.total_requests);
+      console.log('Total tokens:', r.data?.total_tokens);
+      console.log('Hourly usage count:', r.data?.hourly_usage?.length);
       setGroqAnalytics(r.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error loading Groq data:', e);
+    }
   }, [timeFilter]);
 
   const loadErrors = useCallback(async () => {
     try {
       const r = await api.get(`/analytics/errors?timeframe=${timeFilter}`);
+      console.log('Errors API Response:', r.data);
+      console.log('Total errors:', r.data?.total_errors);
+      console.log('Error rate:', r.data?.error_rate);
       setErrorMetrics(r.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error loading error metrics:', e);
+    }
   }, [timeFilter]);
 
   const loadLatency = useCallback(async () => {
     try {
       const r = await api.get(`/analytics/latency?timeframe=${timeFilter}`);
+      console.log('Latency API Response:', r.data);
+      console.log('Average latency:', r.data?.average_response_time_ms);
+      console.log('P95 latency:', r.data?.p95_response_time_ms);
       setLatencyMetrics(r.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error loading latency metrics:', e);
+    }
   }, [timeFilter]);
 
   const loadThroughput = useCallback(async () => {
     try {
       const r = await api.get(`/analytics/throughput?timeframe=${timeFilter}`);
+      console.log('Throughput API Response:', r.data);
+      console.log('Requests per second:', r.data?.requests_per_second);
+      console.log('Evaluations per minute:', r.data?.evaluations_per_minute);
       setThroughputMetrics(r.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error loading throughput metrics:', e);
+    }
   }, [timeFilter]);
 
   const loadEvals = useCallback(async () => {
     try {
       const r = await api.get(`/analytics/evaluations?timeframe=${timeFilter}`);
       console.log('Evaluations API Response:', r.data);
+      console.log('Total evaluations:', r.data?.total_evaluations);
+      console.log('Rouge scores count:', r.data?.rouge_scores?.length);
+      console.log('Bleu scores count:', r.data?.bleu_scores?.length);
       setEvaluationMetrics(r.data);
     } catch (e) {
       console.error('Error loading evaluation data:', e);
@@ -558,6 +625,16 @@ export default function AnalyticsPage() {
   /* -------------------- Render -------------------- */
   return (
     <LayoutShell title="Analytics">
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+      `}</style>
       <div style={{ 
         width: "100%", 
         maxWidth: 1400, 
@@ -973,26 +1050,28 @@ export default function AnalyticsPage() {
                     
                   </div>
 
-                  <ChartCard title="Resource Usage">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={[
-                          { name: "CPU", application: appCPU, total: 100 },
-                          { name: "Memory", application: appMemPct, total: 100 },
-                          { name: "GPU", application: appGPU, total: 100 },
-                        ]}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                        <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
-                        <YAxis stroke={colors.muted} fontSize={12} domain={[0, 100]} />
-                        <Tooltip 
-                          contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
-                          formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
-                        />
-                        <Legend />
-                        <Bar dataKey="application" fill={colors.accent} name="Application %" />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  <ChartCard title="Resource Usage" isLoading={isLoading}>
+                    {!isLoading && (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={[
+                            { name: "CPU", application: appCPU, total: 100 },
+                            { name: "Memory", application: appMemPct, total: 100 },
+                            { name: "GPU", application: appGPU, total: 100 },
+                          ]}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                          <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
+                          <YAxis stroke={colors.muted} fontSize={12} domain={[0, 100]} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                            formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
+                          />
+                          <Legend />
+                          <Bar dataKey="application" fill={colors.accent} name="Application %" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
                   </ChartCard>
 
                   {/* Chart Controls */}
@@ -1058,53 +1137,55 @@ export default function AnalyticsPage() {
                     </div>
                   </div>
 
-                  <ChartCard title={`Historical Performance (System vs Application) - Last ${timeFilter} (${dataInterval} intervals)`}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart
-                        data={systemChartData}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                        <XAxis 
-                          dataKey="time" 
-                          stroke={colors.muted} 
-                          fontSize={11}
-                          interval="preserveStartEnd"
-                          tick={{ fill: colors.muted }}
-                          angle={-45}
-                          textAnchor="end"
-                          height={60}
-                        />
-                        <YAxis 
-                          stroke={colors.muted} 
-                          fontSize={12} 
-                          domain={[0, 100]}
-                          tick={{ fill: colors.muted }}
-                          label={{ value: 'Usage %', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: colors.muted } }}
-                        />
-                        <Tooltip 
-                          contentStyle={{ 
-                            backgroundColor: colors.panel, 
-                            border: `1px solid ${colors.slate}`, 
-                            borderRadius: 8, 
-                            color: colors.text,
-                            fontSize: 12
-                          }}
-                          formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
-                          labelStyle={{ color: colors.text, fontSize: 12 }}
-                        />
-                        <Legend />
-                        {/* System metrics */}
-                        <Area type="monotone" dataKey="cpu" stackId="1" stroke={colors.accent} fill={colors.accent} fillOpacity={0.15} name="System CPU %" />
-                        <Area type="monotone" dataKey="memory" stackId="1" stroke={colors.primary} fill={colors.primary} fillOpacity={0.10} name="System Memory %" />
-                        <Area type="monotone" dataKey="disk" stackId="1" stroke={colors.secondary} fill={colors.secondary} fillOpacity={0.10} name="System Disk %" />
-                        {showGPU && <Area type="monotone" dataKey="gpu" stackId="1" stroke={colors.purple} fill={colors.purple} fillOpacity={0.10} name="System GPU %" />}
-                        
-                        {/* Application metrics */}
-                        <Area type="monotone" dataKey="appCpu" stackId="2" stroke={colors.accent} fill={colors.accent} fillOpacity={0.25} name="App CPU %" strokeDasharray="5 5" />
-                        <Area type="monotone" dataKey="appMemory" stackId="2" stroke={colors.primary} fill={colors.primary} fillOpacity={0.20} name="App Memory %" strokeDasharray="5 5" />
-                        {showGPU && <Area type="monotone" dataKey="appGpu" stackId="2" stroke={colors.purple} fill={colors.purple} fillOpacity={0.20} name="App GPU %" strokeDasharray="5 5" />}
-                      </AreaChart>
-                    </ResponsiveContainer>
+                  <ChartCard title={`Historical Performance (Overlapping Metrics) - Last ${timeFilter} (${dataInterval} intervals)`} isLoading={isLoading}>
+                    {!isLoading && (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart
+                          data={systemChartData}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                          <XAxis 
+                            dataKey="time" 
+                            stroke={colors.muted} 
+                            fontSize={11}
+                            interval="preserveStartEnd"
+                            tick={{ fill: colors.muted }}
+                            angle={-45}
+                            textAnchor="end"
+                            height={60}
+                          />
+                          <YAxis 
+                            stroke={colors.muted} 
+                            fontSize={12} 
+                            domain={[0, 100]}
+                            tick={{ fill: colors.muted }}
+                            label={{ value: 'Usage %', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: colors.muted } }}
+                          />
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: colors.panel, 
+                              border: `1px solid ${colors.slate}`, 
+                              borderRadius: 8, 
+                              color: colors.text,
+                              fontSize: 12
+                            }}
+                            formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
+                            labelStyle={{ color: colors.text, fontSize: 12 }}
+                          />
+                          <Legend />
+                          {/* System metrics - overlapping areas, not stacked */}
+                          <Area type="monotone" dataKey="cpu" stroke={colors.accent} fill={colors.accent} fillOpacity={0.15} name="System CPU %" />
+                          <Area type="monotone" dataKey="memory" stroke={colors.primary} fill={colors.primary} fillOpacity={0.10} name="System Memory %" />
+                          <Area type="monotone" dataKey="disk" stroke={colors.secondary} fill={colors.secondary} fillOpacity={0.10} name="System Disk %" />
+                          {showGPU && <Area type="monotone" dataKey="gpu" stroke={colors.purple} fill={colors.purple} fillOpacity={0.10} name="System GPU %" />}
+                          
+                          {/* Application metrics - overlapping areas with dashed lines */}
+                          <Area type="monotone" dataKey="appCpu" stroke={colors.accent} fill={colors.accent} fillOpacity={0.25} name="App CPU %" strokeDasharray="5 5" />
+                          <Area type="monotone" dataKey="appMemory" stroke={colors.primary} fill={colors.primary} fillOpacity={0.20} name="App Memory %" strokeDasharray="5 5" />
+                          {showGPU && <Area type="monotone" dataKey="appGpu" stroke={colors.purple} fill={colors.purple} fillOpacity={0.20} name="App GPU %" strokeDasharray="5 5" />}
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    )}
                   </ChartCard>
                   <div style={{ display:"flex", gap:12, alignItems:"center", color:colors.muted }}>
                     <label style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
@@ -1123,29 +1204,31 @@ export default function AnalyticsPage() {
                     <StatCard title="Throughput" value={throughputMetrics ? `${(throughputMetrics.requests_per_second ?? 0).toFixed(1)} /s` : "N/A"} subtitle={`${typeof throughputMetrics?.evaluations_per_minute === "number" ? throughputMetrics.evaluations_per_minute.toFixed(1) : "N/A"} eval/min`} color={colors.secondary} />
                   </div>
 
-                  <ChartCard title="Error Trends (hourly)">
-                    {errorTrendData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={errorTrendData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                          <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
-                          <YAxis stroke={colors.muted} fontSize={12} />
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
-                            formatter={(value: any, name: string) => {
-                              if (name === "Error Rate %") {
-                                return [`${Number(value).toFixed(1)}%`, name];
-                              }
-                              return [value, name];
-                            }}
-                          />
-                          <Legend />
-                          <Line type="monotone" dataKey="errors" stroke={colors.danger} strokeWidth={2} name="Errors" />
-                          <Line type="monotone" dataKey="error_rate_pct" stroke={colors.accent} strokeWidth={2} name="Error Rate %" />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No error trend data</div>
+                  <ChartCard title="Error Trends (hourly)" isLoading={isLoading}>
+                    {!isLoading && (
+                      errorTrendData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={errorTrendData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                            <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
+                            <YAxis stroke={colors.muted} fontSize={12} />
+                            <Tooltip 
+                              contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                              formatter={(value: any, name: string) => {
+                                if (name === "Error Rate %") {
+                                  return [`${Number(value).toFixed(1)}%`, name];
+                                }
+                                return [value, name];
+                              }}
+                            />
+                            <Legend />
+                            <Line type="monotone" dataKey="errors" stroke={colors.danger} strokeWidth={2} name="Errors" />
+                            <Line type="monotone" dataKey="error_rate_pct" stroke={colors.accent} strokeWidth={2} name="Error Rate %" />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No error trend data</div>
+                      )
                     )}
                   </ChartCard>
                 </div>
@@ -1184,57 +1267,59 @@ export default function AnalyticsPage() {
                         ))}
                       </div>
 
-                      <ChartCard title="Evaluation Metrics Graph">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={(() => {
-                            const maxLen = Math.max(
-                              evaluationMetrics?.rouge_scores?.length || 0,
-                              evaluationMetrics?.bleu_scores?.length || 0,
-                              evaluationMetrics?.f1_scores?.length || 0,
-                              evaluationMetrics?.exact_match_scores?.length || 0,
-                              evaluationMetrics?.bertscore_scores?.length || 0,
-                              evaluationMetrics?.perplexity_scores?.length || 0,
-                              evaluationMetrics?.accuracy_scores?.length || 0,
-                              evaluationMetrics?.precision_scores?.length || 0,
-                              evaluationMetrics?.recall_scores?.length || 0,
-                            );
-                            return Array.from({ length: maxLen }, (_, i) => ({
-                              idx: i,
-                              rouge: evaluationMetrics?.rouge_scores?.[i]?.score,
-                              bleu: evaluationMetrics?.bleu_scores?.[i]?.score,
-                              f1: evaluationMetrics?.f1_scores?.[i]?.score,
-                              em: evaluationMetrics?.exact_match_scores?.[i]?.score,
-                              bert: evaluationMetrics?.bertscore_scores?.[i]?.score,
-                              perplexity: evaluationMetrics?.perplexity_scores?.[i]?.score,
-                              accuracy: evaluationMetrics?.accuracy_scores?.[i]?.score,
-                              precision: evaluationMetrics?.precision_scores?.[i]?.score,
-                              recall: evaluationMetrics?.recall_scores?.[i]?.score,
-                            }));
-                          })()}>
-                            <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                            <XAxis dataKey="idx" stroke={colors.muted} fontSize={12} />
-                            <YAxis stroke={colors.muted} fontSize={12} />
-                            <Tooltip 
-                              contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
-                              formatter={(value: any, name: string) => {
-                                if (name === "Perplexity") {
-                                  return [`${Number(value).toFixed(2)}`, name];
-                                }
-                                return [`${Number(value).toFixed(3)}`, name];
-                              }}
-                            />
-                            <Legend />
-                            {evalToggles.rouge && <Line type="monotone" dataKey="rouge" stroke={colors.primary} name="ROUGE" dot={false} />}
-                            {evalToggles.bleu && <Line type="monotone" dataKey="bleu" stroke={colors.secondary} name="BLEU" dot={false} />}
-                            {evalToggles.f1 && <Line type="monotone" dataKey="f1" stroke={colors.accent} name="F1" dot={false} />}
-                            {evalToggles.em && <Line type="monotone" dataKey="em" stroke={colors.cyan} name="EM" dot={false} />}
-                            {evalToggles.bert && <Line type="monotone" dataKey="bert" stroke={colors.green} name="BERTScore" dot={false} />}
-                            {evalToggles.perplexity && <Line type="monotone" dataKey="perplexity" stroke={colors.danger} name="Perplexity" dot={false} />}
-                            {evalToggles.accuracy && <Line type="monotone" dataKey="accuracy" stroke={colors.yellow} name="Accuracy" dot={false} />}
-                            {evalToggles.precision && <Line type="monotone" dataKey="precision" stroke={colors.purple} name="Precision" dot={false} />}
-                            {evalToggles.recall && <Line type="monotone" dataKey="recall" stroke={colors.pink} name="Recall" dot={false} />}
-                          </LineChart>
-                        </ResponsiveContainer>
+                      <ChartCard title="Evaluation Metrics Graph" isLoading={isLoading}>
+                        {!isLoading && (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={(() => {
+                              const maxLen = Math.max(
+                                evaluationMetrics?.rouge_scores?.length || 0,
+                                evaluationMetrics?.bleu_scores?.length || 0,
+                                evaluationMetrics?.f1_scores?.length || 0,
+                                evaluationMetrics?.exact_match_scores?.length || 0,
+                                evaluationMetrics?.bertscore_scores?.length || 0,
+                                evaluationMetrics?.perplexity_scores?.length || 0,
+                                evaluationMetrics?.accuracy_scores?.length || 0,
+                                evaluationMetrics?.precision_scores?.length || 0,
+                                evaluationMetrics?.recall_scores?.length || 0,
+                              );
+                              return Array.from({ length: maxLen }, (_, i) => ({
+                                idx: i,
+                                rouge: evaluationMetrics?.rouge_scores?.[i]?.score,
+                                bleu: evaluationMetrics?.bleu_scores?.[i]?.score,
+                                f1: evaluationMetrics?.f1_scores?.[i]?.score,
+                                em: evaluationMetrics?.exact_match_scores?.[i]?.score,
+                                bert: evaluationMetrics?.bertscore_scores?.[i]?.score,
+                                perplexity: evaluationMetrics?.perplexity_scores?.[i]?.score,
+                                accuracy: evaluationMetrics?.accuracy_scores?.[i]?.score,
+                                precision: evaluationMetrics?.precision_scores?.[i]?.score,
+                                recall: evaluationMetrics?.recall_scores?.[i]?.score,
+                              }));
+                            })()}>
+                              <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                              <XAxis dataKey="idx" stroke={colors.muted} fontSize={12} />
+                              <YAxis stroke={colors.muted} fontSize={12} />
+                              <Tooltip 
+                                contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                                formatter={(value: any, name: string) => {
+                                  if (name === "Perplexity") {
+                                    return [`${Number(value).toFixed(2)}`, name];
+                                  }
+                                  return [`${Number(value).toFixed(3)}`, name];
+                                }}
+                              />
+                              <Legend />
+                              {evalToggles.rouge && <Line type="monotone" dataKey="rouge" stroke={colors.primary} name="ROUGE" dot={false} />}
+                              {evalToggles.bleu && <Line type="monotone" dataKey="bleu" stroke={colors.secondary} name="BLEU" dot={false} />}
+                              {evalToggles.f1 && <Line type="monotone" dataKey="f1" stroke={colors.accent} name="F1" dot={false} />}
+                              {evalToggles.em && <Line type="monotone" dataKey="em" stroke={colors.cyan} name="EM" dot={false} />}
+                              {evalToggles.bert && <Line type="monotone" dataKey="bert" stroke={colors.green} name="BERTScore" dot={false} />}
+                              {evalToggles.perplexity && <Line type="monotone" dataKey="perplexity" stroke={colors.danger} name="Perplexity" dot={false} />}
+                              {evalToggles.accuracy && <Line type="monotone" dataKey="accuracy" stroke={colors.yellow} name="Accuracy" dot={false} />}
+                              {evalToggles.precision && <Line type="monotone" dataKey="precision" stroke={colors.purple} name="Precision" dot={false} />}
+                              {evalToggles.recall && <Line type="monotone" dataKey="recall" stroke={colors.pink} name="Recall" dot={false} />}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        )}
                       </ChartCard>
                     </>
                   ) : (
@@ -1255,56 +1340,60 @@ export default function AnalyticsPage() {
                         <StatCard title="Success Rate" value={groqAnalytics.success_rate ? `${(groqAnalytics.success_rate * 100).toFixed(1)}%` : "N/A"} subtitle="Requests success" color={colors.purple} />
                       </div>
 
-                      <ChartCard title="Usage by Model">
-                        {modelUsageData.length > 0 ? (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={modelUsageData}>
-                              <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                              <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
-                              <YAxis stroke={colors.muted} fontSize={12} />
-                              <Tooltip 
-                                contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
-                                formatter={(value: any, name: string) => {
-                                  if (name === "Cost (USD)") {
-                                    return [`$${Number(value).toFixed(4)}`, name];
-                                  }
-                                  return [value, name];
-                                }}
-                              />
-                              <Legend />
-                              <Bar dataKey="requests" fill={colors.primary} name="Requests" />
-                              <Bar dataKey="tokens" fill={colors.secondary} name="Tokens" />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        ) : (
-                          <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No model usage data</div>
+                      <ChartCard title="Usage by Model" isLoading={isLoading}>
+                        {!isLoading && (
+                          modelUsageData.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={modelUsageData}>
+                                <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                                <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
+                                <YAxis stroke={colors.muted} fontSize={12} />
+                                <Tooltip 
+                                  contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                                  formatter={(value: any, name: string) => {
+                                    if (name === "Cost (USD)") {
+                                      return [`$${Number(value).toFixed(4)}`, name];
+                                    }
+                                    return [value, name];
+                                  }}
+                                />
+                                <Legend />
+                                <Bar dataKey="requests" fill={colors.primary} name="Requests" />
+                                <Bar dataKey="tokens" fill={colors.secondary} name="Tokens" />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          ) : (
+                            <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No model usage data</div>
+                          )
                         )}
                       </ChartCard>
 
-                      <ChartCard title="Hourly Usage">
-                        {groqChartData.length > 0 ? (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={groqChartData}>
-                              <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                              <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
-                              <YAxis stroke={colors.muted} fontSize={12} />
-                              <Tooltip 
-                                contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
-                                formatter={(value: any, name: string) => {
-                                  if (name === "Cost (USD)") {
-                                    return [`$${Number(value).toFixed(4)}`, name];
-                                  }
-                                  return [value, name];
-                                }}
-                              />
-                              <Legend />
-                              <Line type="monotone" dataKey="requests" stroke={colors.primary} strokeWidth={2} name="Requests" />
-                              <Line type="monotone" dataKey="tokens" stroke={colors.secondary} strokeWidth={2} name="Tokens" />
-                              <Line type="monotone" dataKey="cost_usd" stroke={colors.accent} strokeWidth={2} name="Cost (USD)" />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        ) : (
-                          <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No hourly usage data</div>
+                      <ChartCard title="Hourly Usage" isLoading={isLoading}>
+                        {!isLoading && (
+                          groqChartData.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={groqChartData}>
+                                <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                                <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
+                                <YAxis stroke={colors.muted} fontSize={12} />
+                                <Tooltip 
+                                  contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                                  formatter={(value: any, name: string) => {
+                                    if (name === "Cost (USD)") {
+                                      return [`$${Number(value).toFixed(4)}`, name];
+                                    }
+                                    return [value, name];
+                                  }}
+                                />
+                                <Legend />
+                                <Line type="monotone" dataKey="requests" stroke={colors.primary} strokeWidth={2} name="Requests" />
+                                <Line type="monotone" dataKey="tokens" stroke={colors.secondary} strokeWidth={2} name="Tokens" />
+                                <Line type="monotone" dataKey="cost_usd" stroke={colors.accent} strokeWidth={2} name="Cost (USD)" />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          ) : (
+                            <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No hourly usage data</div>
+                          )
                         )}
                       </ChartCard>
                     </>

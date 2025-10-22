@@ -24,6 +24,8 @@ import { historyService } from "@/services/history";
 import LayoutShell from "@/components/Layout/LayoutShell";
 import AutomationModal, { AutomationConfig } from "@/components/AutomationModal/AutomationModal";
 import { automationStore } from "@/stores/automationStore";
+import AutomationProgressIndicator from "@/components/AutomationProgress/AutomationProgressIndicator";
+import AutomationProgressModal from "@/components/AutomationProgress/AutomationProgressModal";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.2, max_tokens: 1024, top_p: 1.0, top_k: 40 };
 
@@ -116,6 +118,7 @@ export default function OCRPage() {
   
   // Automation state
   const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
+  const [isAutomationProgressModalOpen, setIsAutomationProgressModalOpen] = useState(false);
   const [automationResults, setAutomationResults] = useState<Record<string, any>>({});
   // Automation progress overlay state
   const [automationProgress, setAutomationProgress] = useState<{
@@ -458,14 +461,17 @@ export default function OCRPage() {
   const handleAutomationStart = async (config: AutomationConfig) => {
     const automationId = automationStore.startAutomation('ocr', config);
     setBusy("Running automation...");
+    setIsAutomationProgressModalOpen(true);
 
     try {
       const results: Record<string, any> = {};
+      let successCount = 0;
+      let errorCount = 0;
 
       for (let i = 0; i < config.runs.length; i++) {
         const run = config.runs[i];
         
-        // Update progress
+        // Update progress with animation
         automationStore.updateProgress(automationId, { currentRunIndex: i });
 
         try {
@@ -621,6 +627,7 @@ export default function OCRPage() {
           }
 
         } catch (error: any) {
+          errorCount++;
           results[run.id] = {
             runName: run.name,
             error: error?.message ?? String(error),
@@ -629,7 +636,18 @@ export default function OCRPage() {
       }
 
       setAutomationResults(results);
-      automationStore.completeAutomation(automationId);
+      
+      // Count successes
+      successCount = config.runs.length - errorCount;
+      
+      // Complete automation with appropriate status
+      if (errorCount === 0) {
+        automationStore.completeAutomation(automationId);
+      } else if (successCount === 0) {
+        automationStore.completeAutomation(automationId, "All runs failed");
+      } else {
+        automationStore.completeAutomation(automationId, `${errorCount} runs failed`);
+      }
       
       // Save automation aggregate to history
       try {
@@ -647,7 +665,7 @@ export default function OCRPage() {
             results: results[run.id]?.scores || null,
             error: results[run.id]?.error || null,
           })),
-          status: "completed",
+          status: errorCount === 0 ? "completed" : successCount === 0 ? "error" : "completed",
           completedAt: new Date().toISOString(),
         };
         await api.post("/history/automations", automationAggregate);
@@ -655,7 +673,14 @@ export default function OCRPage() {
         console.warn("Failed to save automation aggregate:", e);
       }
       
-      showSuccess("Automation Complete", `Completed ${config.runs.length} runs successfully!`);
+      // Show appropriate success/error message
+      if (errorCount === 0) {
+        showSuccess("Automation Complete", `All ${config.runs.length} runs completed successfully!`);
+      } else if (successCount === 0) {
+        showError("Automation Failed", `All ${config.runs.length} runs failed. Check the progress modal for details.`);
+      } else {
+        showSuccess("Automation Partially Complete", `${successCount} runs succeeded, ${errorCount} failed. Check the progress modal for details.`);
+      }
 
     } catch (error: any) {
       automationStore.completeAutomation(automationId, error?.message ?? String(error));
@@ -1448,29 +1473,33 @@ export default function OCRPage() {
           </svg>
           {busy === "Computing metrics..." ? "Computing..." : "Run Evaluation"}
         </button>
-        <button
-          onClick={() => setIsAutomationModalOpen(true)}
-          style={{ 
-            padding: "12px 20px", 
-            background: "linear-gradient(135deg, #7c3aed, #6d28d9)", 
-            border: "none", 
-            color: "#ffffff", 
-            borderRadius: 8,
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "all 0.2s ease",
-            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: 8 }}>
-            <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
-          </svg>
-          Run Automation
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            onClick={() => setIsAutomationModalOpen(true)}
+            style={{ 
+              padding: "12px 20px", 
+              background: "linear-gradient(135deg, #7c3aed, #6d28d9)", 
+              border: "none", 
+              color: "#ffffff", 
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+              boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: 8 }}>
+              <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
+            </svg>
+            Run Automation
+          </button>
+          
+          <AutomationProgressIndicator />
+        </div>
         <button
           onClick={onDownloadCSV}
           disabled={!scores}
@@ -1593,6 +1622,12 @@ export default function OCRPage() {
         presetStore={ocrPresetStore}
         defaultPrompt={textareaContent}
         kind="ocr"
+      />
+      
+      {/* Automation Progress Modal */}
+      <AutomationProgressModal
+        isOpen={isAutomationProgressModalOpen}
+        onClose={() => setIsAutomationProgressModalOpen(false)}
       />
       {/* Prompt Enlarge Modal */}
       {isPromptModalOpen && (

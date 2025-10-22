@@ -1,9 +1,13 @@
 # backend/app/routers/models.py
 import os, requests
-from fastapi import APIRouter, HTTPException, Query
+from pathlib import Path
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel
+from dataclasses import asdict
 from app.services.models import scan_models_dir as get_local_models, save_local_models, get_groq_models
 from app.services.models_visibility import load_enabled_ids, save_enabled_ids
+from app.services.model_downloader import ModelDownloader
+from app.services.download_queue import download_queue
 
 router = APIRouter()
 
@@ -258,6 +262,130 @@ def discover_models(q: str = "", sort: str = "downloads", limit: int = 20, offse
     except requests.exceptions.RequestException as e:
         print(f"HF Discover error: {e}")
         raise HTTPException(502, f"Hugging Face API error: {e}")
+
+@router.get("/discover/details/{model_id}")
+def get_model_details(model_id: str):
+    """
+    Get detailed information about a specific model from Hugging Face
+    """
+    try:
+        downloader = ModelDownloader()
+        model_info = downloader.get_model_info(model_id)
+        requirements = downloader.check_system_requirements(model_id, model_info)
+        
+        return {
+            **model_info,
+            "requirements": requirements
+        }
+        
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Failed to get model details: {e}")
+
+class DownloadRequest(BaseModel):
+    model_id: str
+
+@router.post("/download")
+def download_model(request: DownloadRequest):
+    """
+    Add a model to the download queue
+    """
+    try:
+        download_id = download_queue.add_download(request.model_id)
+        return {"message": "Download queued", "download_id": download_id, "model_id": request.model_id}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to queue download: {e}")
+
+@router.get("/download/status/{download_id}")
+def get_download_status(download_id: str):
+    """
+    Get download status by download ID
+    """
+    try:
+        download_item = download_queue.get_download_status(download_id)
+        if not download_item:
+            raise HTTPException(404, "Download not found")
+        
+        return {
+            "id": download_item.id,
+            "model_id": download_item.model_id,
+            "status": download_item.status.value,
+            "progress": download_item.progress,
+            "downloaded_bytes": download_item.downloaded_bytes,
+            "total_bytes": download_item.total_bytes,
+            "speed": download_item.speed,
+            "eta": download_item.eta,
+            "error": download_item.error,
+            "started_at": download_item.started_at,
+            "completed_at": download_item.completed_at,
+            "local_path": download_item.local_path
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get download status: {e}")
+
+@router.get("/download/queue")
+def get_download_queue():
+    """
+    Get all downloads in the queue
+    """
+    try:
+        all_downloads = download_queue.get_all_downloads()
+        active_downloads = download_queue.get_active_downloads()
+        completed_downloads = download_queue.get_completed_downloads()
+        
+        return {
+            "all": [asdict(item) for item in all_downloads],
+            "active": [asdict(item) for item in active_downloads],
+            "completed": [asdict(item) for item in completed_downloads]
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get download queue: {e}")
+
+@router.post("/download/cancel/{download_id}")
+def cancel_download(download_id: str):
+    """
+    Cancel a download
+    """
+    try:
+        success = download_queue.cancel_download(download_id)
+        if success:
+            return {"message": "Download cancelled"}
+        else:
+            raise HTTPException(404, "Download not found or cannot be cancelled")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to cancel download: {e}")
+
+@router.delete("/download/{download_id}")
+def remove_download(download_id: str):
+    """
+    Remove a download from the queue
+    """
+    try:
+        success = download_queue.remove_download(download_id)
+        if success:
+            return {"message": "Download removed"}
+        else:
+            raise HTTPException(404, "Download not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to remove download: {e}")
+
+@router.post("/download/clear-completed")
+def clear_completed_downloads():
+    """
+    Clear all completed downloads
+    """
+    try:
+        count = download_queue.clear_completed()
+        return {"message": f"Cleared {count} completed downloads"}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to clear completed downloads: {e}")
 
 @router.get("/discover/popular")
 def get_popular_models(limit: int = 20, offset: int = 0):

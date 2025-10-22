@@ -17,6 +17,8 @@ import { useBackgroundState } from "@/stores/backgroundState";
 import { historyService } from "@/services/history";
 import ChatAutomationModal, { ChatAutomationConfig } from "@/components/ChatAutomationModal/ChatAutomationModal";
 import { automationStore } from "@/stores/automationStore";
+import AutomationProgressIndicator from "@/components/AutomationProgress/AutomationProgressIndicator";
+import AutomationProgressModal from "@/components/AutomationProgress/AutomationProgressModal";
 import { api } from "@/services/api";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.7, max_tokens: 1024, top_p: 1.0, top_k: 40 };
@@ -102,6 +104,7 @@ export default function ChatPage() {
 
   // Automation state
   const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
+  const [isAutomationProgressModalOpen, setIsAutomationProgressModalOpen] = useState(false);
   const [automationResults, setAutomationResults] = useState<Record<string, any>>({});
 
   // load sessions from localStorage and history service on mount
@@ -482,14 +485,17 @@ export default function ChatPage() {
   const handleAutomationStart = async (config: ChatAutomationConfig) => {
     const automationId = automationStore.startAutomation('chat', config);
     setIsLoading(true);
+    setIsAutomationProgressModalOpen(true);
 
     try {
       const results: Record<string, any> = {};
+      let successCount = 0;
+      let errorCount = 0;
 
       for (let i = 0; i < config.runs.length; i++) {
         const run = config.runs[i];
         
-        // Update progress
+        // Update progress with animation
         automationStore.updateProgress(automationId, { currentRunIndex: i });
 
         try {
@@ -652,6 +658,7 @@ export default function ChatPage() {
           };
 
         } catch (error: any) {
+          errorCount++;
           results[run.id] = {
             runName: run.name,
             error: error?.message ?? String(error),
@@ -660,7 +667,18 @@ export default function ChatPage() {
       }
 
       setAutomationResults(results);
-      automationStore.completeAutomation(automationId);
+      
+      // Count successes
+      successCount = config.runs.length - errorCount;
+      
+      // Complete automation with appropriate status
+      if (errorCount === 0) {
+        automationStore.completeAutomation(automationId);
+      } else if (successCount === 0) {
+        automationStore.completeAutomation(automationId, "All runs failed");
+      } else {
+        automationStore.completeAutomation(automationId, `${errorCount} runs failed`);
+      }
       
       // Save automation aggregate to history
       try {
@@ -676,7 +694,7 @@ export default function ChatPage() {
             prompts: results[run.id]?.prompts || [],
             error: results[run.id]?.error || null,
           })),
-          status: "completed",
+          status: errorCount === 0 ? "completed" : successCount === 0 ? "error" : "completed",
           completedAt: new Date().toISOString(),
         };
         await api.post("/history/automations", automationAggregate);
@@ -684,7 +702,14 @@ export default function ChatPage() {
         console.warn("Failed to save automation aggregate:", e);
       }
       
-      showSuccess("Automation Complete", `Completed ${config.runs.length} chat runs successfully!`);
+      // Show appropriate success/error message
+      if (errorCount === 0) {
+        showSuccess("Automation Complete", `All ${config.runs.length} chat runs completed successfully!`);
+      } else if (successCount === 0) {
+        showError("Automation Failed", `All ${config.runs.length} runs failed. Check the progress modal for details.`);
+      } else {
+        showSuccess("Automation Partially Complete", `${successCount} runs succeeded, ${errorCount} failed. Check the progress modal for details.`);
+      }
 
     } catch (error: any) {
       automationStore.completeAutomation(automationId, error?.message ?? String(error));
@@ -1407,31 +1432,35 @@ export default function ChatPage() {
                     Send
                   </LoadingButton>
 
-                  <button
-                    onClick={() => setIsAutomationModalOpen(true)}
-                    style={{ 
-                      padding: "10px 16px", 
-                      borderRadius: 8, 
-                      border: "1px solid #7c3aed", 
-                      background: "linear-gradient(135deg, #7c3aed, #6d28d9)", 
-                      color: "#fff",
-                      fontSize: 13,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      transition: "all 0.2s ease",
-                      boxShadow: "0 2px 4px rgba(124, 58, 237, 0.3)"
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.transform = "translateY(-1px)";
-                      e.currentTarget.style.boxShadow = "0 4px 8px rgba(124, 58, 237, 0.4)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.transform = "translateY(0)";
-                      e.currentTarget.style.boxShadow = "0 2px 4px rgba(124, 58, 237, 0.3)";
-                    }}
-                  >
-                    Automation
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button
+                      onClick={() => setIsAutomationModalOpen(true)}
+                      style={{ 
+                        padding: "10px 16px", 
+                        borderRadius: 8, 
+                        border: "1px solid #7c3aed", 
+                        background: "linear-gradient(135deg, #7c3aed, #6d28d9)", 
+                        color: "#fff",
+                        fontSize: 13,
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        transition: "all 0.2s ease",
+                        boxShadow: "0 2px 4px rgba(124, 58, 237, 0.3)"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = "translateY(-1px)";
+                        e.currentTarget.style.boxShadow = "0 4px 8px rgba(124, 58, 237, 0.4)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = "translateY(0)";
+                        e.currentTarget.style.boxShadow = "0 2px 4px rgba(124, 58, 237, 0.3)";
+                      }}
+                    >
+                      Automation
+                    </button>
+                    
+                    <AutomationProgressIndicator />
+                  </div>
 
                   <button
                     onClick={async () => {
@@ -1583,6 +1612,12 @@ export default function ChatPage() {
         onStart={handleAutomationStart}
         existingChats={sessions.map(s => ({ id: s.id, title: s.title }))}
         presetStore={chatPresetStore}
+      />
+      
+      {/* Automation Progress Modal */}
+      <AutomationProgressModal
+        isOpen={isAutomationProgressModalOpen}
+        onClose={() => setIsAutomationProgressModalOpen(false)}
       />
 
       {/* Context Menu - Rendered at root level to escape scrollable container */}

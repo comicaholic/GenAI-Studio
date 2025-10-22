@@ -103,6 +103,9 @@ body { overflow: auto; background: #0b1220; }
 @keyframes rb-spin {
   to { transform: rotate(360deg); }
 }
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 @keyframes rb-pulse-bg {
   0%, 100% { filter: brightness(1); }
   50% { filter: brightness(1.15); }
@@ -146,6 +149,78 @@ body { overflow: auto; background: #0b1220; }
 
 /* Spinners */
 .rb-spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.35); border-top-color: #e2e8f0; border-radius: 9999px; animation: rb-spin .8s linear infinite; }
+
+/* Automation Progress Animations */
+.rb-spin {
+  animation: rb-spin 1s linear infinite;
+}
+
+@keyframes rb-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.rb-bounce-in {
+  animation: rb-bounce-in 0.4s ease-out;
+}
+
+@keyframes rb-bounce-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.8) translateY(-10px);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05) translateY(-5px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.rb-fade-in {
+  animation: rb-fade-in 0.3s ease-out;
+}
+
+@keyframes rb-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rb-pulse {
+  animation: rb-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes rb-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.rb-slide-up {
+  animation: rb-slide-up 0.3s ease-out;
+}
+
+@keyframes rb-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
 /* Background themes */
 .bg-grid {

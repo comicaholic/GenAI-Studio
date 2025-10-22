@@ -121,3 +121,5 @@ def validate_gpu_selection(gpu_id: str) -> bool:
     """Validate if the selected GPU is actually available"""
     available_gpus = detect_available_gpus()
     return gpu_id in available_gpus
+
+

@@ -203,8 +203,7 @@ def record_system_metrics():
             print(f"WARNING: Memory usage over 100%: {memory.percent}%")
         if disk_percent > 100:
             print(f"WARNING: Disk usage over 100%: {disk_percent}% (used: {disk.used}, total: {disk.total})")
-        if gpu_percent and gpu_percent > 100:
-            print(f"WARNING: GPU usage over 100%: {gpu_percent}%")
+        # Note: gpu_percent is defined later in the function, so we can't check it here
         
         metric_record = {
             "timestamp": datetime.now().isoformat(),
@@ -515,8 +514,7 @@ def get_system_metrics():
             print(f"WARNING: Memory usage over 100%: {memory_percent}%")
         if disk_percent > 100:
             print(f"WARNING: Disk usage over 100%: {disk_percent}% (used: {disk.used}, total: {disk.total})")
-        if gpu_percent and gpu_percent > 100:
-            print(f"WARNING: GPU usage over 100%: {gpu_percent}%")
+        # Note: gpu_percent is defined later in the function, so we can't check it here
         
         # GPU usage - improved detection with multiple methods
         gpu_percent = None
@@ -709,11 +707,20 @@ def get_performance_trends(timeframe: str = "24h", interval_minutes: int = 5):
                 continue
         
         if not filtered_data:
-            return {
-                "trends": [],
-                "period": timeframe,
-                "note": f"No data available for the last {timeframe}."
-            }
+            # If no data in timeframe, try to return at least some recent data for debugging
+            recent_data = metrics_data[-50:] if len(metrics_data) >= 50 else metrics_data
+            if recent_data:
+                return {
+                    "trends": recent_data[-20:],  # Return last 20 data points
+                    "period": timeframe,
+                    "note": f"No data available for the last {timeframe}, showing recent data instead."
+                }
+            else:
+                return {
+                    "trends": [],
+                    "period": timeframe,
+                    "note": f"No data available for the last {timeframe}."
+                }
         
         # Sort by timestamp (oldest first)
         filtered_data.sort(key=lambda x: x["timestamp"])
@@ -810,9 +817,8 @@ def get_groq_analytics(timeframe: str = "24h"):
         for record in usage_data:
             try:
                 record_time = datetime.fromisoformat(record["timestamp"])
-                # Make record time timezone-aware if it's naive
-                if record_time.tzinfo is None:
-                    record_time = record_time.replace(tzinfo=timezone.utc)
+                # Keep record time as naive (local time) to match start_time
+                # No need to convert to UTC since start_time is also naive
                 if record_time >= start_time:
                     filtered_data.append(record)
             except (ValueError, TypeError):
@@ -912,9 +918,8 @@ def get_error_metrics(timeframe: str = "24h"):
         for record in usage_data:
             try:
                 record_time = datetime.fromisoformat(record["timestamp"])
-                # Make record time timezone-aware if it's naive
-                if record_time.tzinfo is None:
-                    record_time = record_time.replace(tzinfo=timezone.utc)
+                # Keep record time as naive (local time) to match start_time
+                # No need to convert to UTC since start_time is also naive
                 if record_time >= start_time:
                     filtered_data.append(record)
             except (ValueError, TypeError):
@@ -1034,9 +1039,8 @@ def get_throughput_metrics(timeframe: str = "24h"):
         for record in usage_data:
             try:
                 record_time = datetime.fromisoformat(record["timestamp"])
-                # Make record time timezone-aware if it's naive
-                if record_time.tzinfo is None:
-                    record_time = record_time.replace(tzinfo=timezone.utc)
+                # Keep record time as naive (local time) to match start_time
+                # No need to convert to UTC since start_time is also naive
                 if record_time >= start_time:
                     filtered_data.append(record)
             except (ValueError, TypeError):
@@ -1111,7 +1115,7 @@ def get_evaluation_metrics(timeframe: str = "24h"):
                 "note": "No evaluation data available yet."
             }
         
-        # Filter by timeframe
+        # Filter by timeframe - but be more lenient with timeframe filtering
         start_time = get_timeframe_filter(timeframe)
         filtered_evaluations = []
         
@@ -1129,15 +1133,26 @@ def get_evaluation_metrics(timeframe: str = "24h"):
                         # Already timezone-aware
                         eval_dt = datetime.fromisoformat(eval_timestamp)
                     else:
-                        # Naive timestamp, assume UTC
-                        eval_dt = datetime.fromisoformat(eval_timestamp).replace(tzinfo=timezone.utc)
+                        # Naive timestamp, assume local time (not UTC)
+                        eval_dt = datetime.fromisoformat(eval_timestamp)
+                        # Make it timezone-aware by assuming local timezone
+                        if eval_dt.tzinfo is None:
+                            eval_dt = eval_dt.replace(tzinfo=timezone.utc)
                 else:
                     eval_dt = eval_timestamp
                 
-                if eval_dt >= start_time:
+                # Convert start_time to timezone-aware if needed
+                if start_time.tzinfo is None:
+                    start_time_tz = start_time.replace(tzinfo=timezone.utc)
+                else:
+                    start_time_tz = start_time
+                
+                # For debugging - include all evaluations if timeframe is "all" or if no recent data
+                if timeframe == "all" or eval_dt >= start_time_tz:
                     filtered_evaluations.append(eval)
             except (ValueError, TypeError) as e:
-                # Skip invalid timestamps
+                # Skip invalid timestamps but log for debugging
+                print(f"Skipping evaluation with invalid timestamp: {e}")
                 continue
         
         if not filtered_evaluations:
@@ -1196,6 +1211,10 @@ def get_evaluation_metrics(timeframe: str = "24h"):
             # Handle ROUGE scores - use rougeL as the primary ROUGE score
             if "rougeL" in results:
                 score = results["rougeL"]
+                rouge_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["rouge_scores"].append(score)
+            elif "rouge1" in results:
+                score = results["rouge1"]
                 rouge_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
                 model_stats[model_id]["rouge_scores"].append(score)
             elif "rouge" in results:
@@ -1282,7 +1301,12 @@ def get_evaluation_metrics(timeframe: str = "24h"):
             "debug_info": {
                 "all_evaluations_count": len(all_evaluations),
                 "after_automation_filter": len(evaluations),
-                "filtered_evaluations_count": len(filtered_evaluations)
+                "filtered_evaluations_count": len(filtered_evaluations),
+                "timeframe": timeframe,
+                "rouge_scores_count": len(rouge_scores),
+                "bleu_scores_count": len(bleu_scores),
+                "f1_scores_count": len(f1_scores),
+                "sample_evaluation": filtered_evaluations[0] if filtered_evaluations else None
             }
         }
         

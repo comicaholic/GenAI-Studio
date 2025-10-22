@@ -84,6 +84,28 @@ export default function AutomationModal({
   const { showError } = useNotifications();
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
+  // Initialize runs on first load with default preset
+  React.useEffect(() => {
+    if (runs.length === 0 && numRuns > 0) {
+      const defaultPreset = presetStore.getPresets()[0];
+      const defaultPresetParams = defaultPreset?.parameters || DEFAULT_PARAMS;
+      const defaultPresetMetrics = defaultPreset?.metrics || DEFAULT_METRICS;
+      
+      const initialRuns: AutomationRun[] = Array.from({ length: numRuns }, (_, i) => ({
+        id: crypto.randomUUID(),
+        name: `Run ${i + 1}`,
+        prompt: defaultPrompt,
+        parameters: { ...defaultPresetParams },
+        metrics: { ...defaultPresetMetrics },
+        modelId: selected?.id,
+        modelProvider: selected?.provider as any,
+        presetTitle: defaultPreset?.title,
+        status: 'pending',
+      }));
+      setRuns(initialRuns);
+    }
+  }, [numRuns, defaultPrompt, selected?.id, selected?.provider, presetStore, runs.length]);
+
   // Initialize runs when numRuns changes (preserve existing selections)
   React.useEffect(() => {
     setRuns(prev => {
@@ -98,22 +120,28 @@ export default function AutomationModal({
       const template = current[current.length - 1];
       const baseModelId = template?.modelId || selected?.id;
       const baseModelProvider = template?.modelProvider || selected?.provider;
+      
+      // Get default preset from preset store to apply its parameters and metrics
+      const defaultPreset = presetStore.getPresets()[0];
+      const defaultPresetParams = defaultPreset?.parameters || DEFAULT_PARAMS;
+      const defaultPresetMetrics = defaultPreset?.metrics || DEFAULT_METRICS;
+      
       const appended: AutomationRun[] = Array.from({ length: toAdd }, (_, j) => ({
         id: crypto.randomUUID(),
         name: `Run ${current.length + j + 1}`,
         prompt: template?.prompt ?? defaultPrompt,
-        parameters: { ...(template?.parameters || DEFAULT_PARAMS) },
-        metrics: { ...(template?.metrics || DEFAULT_METRICS) },
+        parameters: { ...(template?.parameters || defaultPresetParams) },
+        metrics: { ...(template?.metrics || defaultPresetMetrics) },
         modelId: baseModelId,
         modelProvider: baseModelProvider,
-        presetTitle: template?.presetTitle,
+        presetTitle: template?.presetTitle || defaultPreset?.title,
         status: 'pending',
       }));
       return [...current, ...appended];
     });
     // keep activeRunIndex if still valid
     setActiveRunIndex((idx) => Math.min(idx, Math.max(0, numRuns - 1)));
-  }, [numRuns, defaultPrompt, selected?.id, selected?.provider]);
+  }, [numRuns, defaultPrompt, selected?.id, selected?.provider, presetStore]);
 
   // Load file lists if needed
   React.useEffect(() => {
