@@ -66,3 +66,4 @@ export function getFileKind(path: string): 'source' | 'reference' | 'context' {
 export function getFilename(path: string): string {
   return path.split('/').pop() || path.split('\\').pop() || path;
 }
+

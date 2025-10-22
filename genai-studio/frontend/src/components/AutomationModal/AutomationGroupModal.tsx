@@ -25,10 +25,10 @@ export default function AutomationGroupModal({
   const totalRuns = automations.reduce((total, automation) => total + (automation.runs?.length || 0), 0) + evaluations.length;
   const successCount = automations.reduce((total, automation) => 
     total + (automation.runs?.filter(run => run.status === 'completed' && !run.error).length || 0), 0) +
-    evaluations.filter(eval => eval.results && Object.keys(eval.results).length > 0).length;
+    evaluations.filter(evaluation => evaluation.results && Object.keys(evaluation.results).length > 0).length;
   const errorCount = automations.reduce((total, automation) => 
     total + (automation.runs?.filter(run => run.status === 'error' || run.error).length || 0), 0) +
-    evaluations.filter(eval => !eval.results || Object.keys(eval.results).length === 0).length;
+    evaluations.filter(evaluation => !evaluation.results || Object.keys(evaluation.results).length === 0).length;
 
   return (
     <div
