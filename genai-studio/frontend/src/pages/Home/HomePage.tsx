@@ -911,48 +911,90 @@ export default function HomePage() {
                         borderBottom: "1px solid #334155"
                       }}>
                         <div style={{ 
-                          display: "flex", 
-                          justifyContent: "space-between", 
-                          alignItems: "center",
-                          marginBottom: 8
+                          display: "grid", 
+                          gridTemplateColumns: "1fr 1fr", 
+                          gap: 12,
+                          marginBottom: 12
                         }}>
-                          <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 500 }}>Automations</span>
-                          <span style={{ fontSize: 14, color: "#e2e8f0", fontWeight: 600 }}>
-                            {(item as any).automations.length}
-                          </span>
+                          <div style={{ 
+                            display: "flex", 
+                            justifyContent: "space-between", 
+                            alignItems: "center",
+                            padding: "8px 12px",
+                            background: "#1e293b",
+                            borderRadius: 6,
+                            border: "1px solid #334155"
+                          }}>
+                            <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>Automations</span>
+                            <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 600 }}>
+                              {(item as any).automations.length}
+                            </span>
+                          </div>
+                          <div style={{ 
+                            display: "flex", 
+                            justifyContent: "space-between", 
+                            alignItems: "center",
+                            padding: "8px 12px",
+                            background: "#1e293b",
+                            borderRadius: 6,
+                            border: "1px solid #334155"
+                          }}>
+                            <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>Total Runs</span>
+                            <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 600 }}>
+                              {(item as any).totalRuns}
+                            </span>
+                          </div>
                         </div>
                         <div style={{ 
-                          display: "flex", 
-                          justifyContent: "space-between", 
-                          alignItems: "center",
-                          marginBottom: 8
+                          display: "grid", 
+                          gridTemplateColumns: "1fr 1fr", 
+                          gap: 12
                         }}>
-                          <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 500 }}>Total Runs</span>
-                          <span style={{ fontSize: 14, color: "#e2e8f0", fontWeight: 600 }}>
-                            {(item as any).totalRuns}
-                          </span>
+                          <div style={{ 
+                            display: "flex", 
+                            justifyContent: "space-between", 
+                            alignItems: "center",
+                            padding: "8px 12px",
+                            background: "#0f172a",
+                            borderRadius: 6,
+                            border: "1px solid #10b981"
+                          }}>
+                            <span style={{ fontSize: 12, color: "#10b981", fontWeight: 500 }}>Success</span>
+                            <span style={{ fontSize: 13, color: "#10b981", fontWeight: 600 }}>
+                              {(item as any).successCount}
+                            </span>
+                          </div>
+                          <div style={{ 
+                            display: "flex", 
+                            justifyContent: "space-between", 
+                            alignItems: "center",
+                            padding: "8px 12px",
+                            background: "#0f172a",
+                            borderRadius: 6,
+                            border: "1px solid #ef4444"
+                          }}>
+                            <span style={{ fontSize: 12, color: "#ef4444", fontWeight: 500 }}>Errors</span>
+                            <span style={{ fontSize: 13, color: "#ef4444", fontWeight: 600 }}>
+                              {(item as any).errorCount}
+                            </span>
+                          </div>
                         </div>
-                        <div style={{ 
-                          display: "flex", 
-                          justifyContent: "space-between", 
-                          alignItems: "center",
-                          marginBottom: 8
-                        }}>
-                          <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 500 }}>Success</span>
-                          <span style={{ fontSize: 14, color: "#10b981", fontWeight: 600 }}>
-                            {(item as any).successCount}
-                          </span>
-                        </div>
-                        <div style={{ 
-                          display: "flex", 
-                          justifyContent: "space-between", 
-                          alignItems: "center"
-                        }}>
-                          <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 500 }}>Errors</span>
-                          <span style={{ fontSize: 14, color: "#ef4444", fontWeight: 600 }}>
-                            {(item as any).errorCount}
-                          </span>
-                        </div>
+                        {(item as any).automations.length > 0 && (
+                          <div style={{ 
+                            marginTop: 12,
+                            padding: "8px 12px",
+                            background: "#1e293b",
+                            borderRadius: 6,
+                            border: "1px solid #334155"
+                          }}>
+                            <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
+                              Latest Automation Type
+                            </div>
+                            <div style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 500 }}>
+                              {(item as any).automations[0]?.type?.toUpperCase() || 'UNKNOWN'}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 

@@ -3,12 +3,14 @@ import os
 import json
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Callable
 from huggingface_hub import hf_hub_download, HfApi, snapshot_download
 from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
 import requests
 import psutil
 import torch
+import threading
+import time
 
 class ModelDownloader:
     """Service for downloading and managing Hugging Face models"""
@@ -29,141 +31,118 @@ class ModelDownloader:
             self.api = HfApi()
             print(f"Model downloader initialized without HF token and cache directory: {self.cache_dir}")
     
+    def _headers(self) -> Dict[str, str]:
+        try:
+            token = getattr(self.api, "token", None)
+            return {"Authorization": f"Bearer {token}"} if token else {}
+        except Exception:
+            return {}
+    
+    def _sum_dir_bytes(self, directory: Path) -> int:
+        total = 0
+        if directory.exists():
+            for p in directory.rglob("*"):
+                if p.is_file():
+                    try:
+                        total += p.stat().st_size
+                    except Exception:
+                        pass
+        return total
+    
+    def _fetch_model_card_text(self, model_id: str) -> Optional[str]:
+        try:
+            card = self.api.model_card(model_id)
+            if hasattr(card, "text"):
+                return card.text
+            # Fallback via raw README from hub
+            r = requests.get(f"https://huggingface.co/{model_id}/raw/main/README.md", headers=self._headers(), timeout=15)
+            if r.status_code == 200:
+                return r.text
+        except Exception:
+            pass
+        return None
+    
+    def _fetch_hub_model_json(self, model_id: str) -> Optional[Dict]:
+        try:
+            r = requests.get(f"https://huggingface.co/api/models/{model_id}", headers=self._headers(), timeout=20)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+        return None
+    
     def get_model_info(self, model_id: str) -> Dict:
         """Get comprehensive model information from Hugging Face"""
         try:
             print(f"Fetching model info for: {model_id}")
-            model_info = self.api.model_info(model_id)
+            # Ensure files metadata to get sizes
+            model_info = self.api.model_info(model_id, files_metadata=True)
             print(f"Model info fetched successfully for: {model_id}")
             
             # Extract basic info
-            result = {
+            result: Dict = {
                 "id": model_id,
-                "author": model_info.author,
-                "description": model_info.card_data.get("description", "") if model_info.card_data else "",
-                "likes": model_info.likes,
-                "downloads": model_info.downloads,
-                "tags": model_info.tags,
-                "pipeline_tag": model_info.pipeline_tag,
-                "library_name": model_info.library_name,
+                "author": getattr(model_info, "author", None),
+                "description": (model_info.card_data.get("description", "") if getattr(model_info, "card_data", None) else ""),
+                "likes": getattr(model_info, "likes", 0),
+                "downloads": getattr(model_info, "downloads", 0),
+                "tags": getattr(model_info, "tags", []) or [],
+                "pipeline_tag": getattr(model_info, "pipeline_tag", None),
+                "library_name": getattr(model_info, "library_name", None),
                 "size": None,
+                "total_bytes": 0,
                 "files": [],
-                "intended_uses": None,
-                "background": None,
-                "training_data": None,
+                "params": None,
                 "model_card": None,
                 "full_model_card": None
             }
             
             # Extract file information and calculate total size
             total_size = 0
-            print(f"Processing {len(model_info.siblings)} files for {model_id}")
-            
-            for sibling in model_info.siblings:
-                file_size = sibling.size if sibling.size else 0
+            siblings = getattr(model_info, "siblings", []) or []
+            print(f"Processing {len(siblings)} files for {model_id}")
+            for sibling in siblings:
+                file_size = getattr(sibling, "size", None) or 0
                 file_info = {
-                    "filename": sibling.rfilename,
+                    "filename": getattr(sibling, "rfilename", None),
                     "size": file_size,
                     "size_mb": file_size / (1024 * 1024) if file_size else 0,
                     "size_gb": file_size / (1024 * 1024 * 1024) if file_size else 0
                 }
                 result["files"].append(file_info)
                 total_size += file_size
-                print(f"File: {sibling.rfilename}, Size: {file_size} bytes")
-            
-            # If we couldn't get sizes from API, try to estimate from model config
-            if total_size == 0:
-                print(f"No file sizes available from API for {model_id}, trying to estimate...")
-                
-                # Try to get model config to estimate size
-                try:
-                    from transformers import AutoConfig
-                    config = AutoConfig.from_pretrained(model_id, token=self.api.token)
-                    
-                    # Estimate size based on model parameters
-                    if hasattr(config, 'vocab_size') and hasattr(config, 'hidden_size'):
-                        # Rough estimation for transformer models
-                        vocab_size = config.vocab_size
-                        hidden_size = config.hidden_size
-                        num_layers = getattr(config, 'num_hidden_layers', 12)
-                        num_heads = getattr(config, 'num_attention_heads', 12)
-                        
-                        # Rough calculation: embedding + transformer layers + output layer
-                        embedding_size = vocab_size * hidden_size * 4  # 4 bytes per float32
-                        layer_size = (hidden_size * hidden_size * 4 * 4) * num_layers  # attention + feedforward
-                        output_size = vocab_size * hidden_size * 4
-                        
-                        estimated_size = embedding_size + layer_size + output_size
-                        total_size = estimated_size
-                        result["size"] = f"{total_size / (1024**3):.2f} GB (estimated)"
-                        print(f"Estimated model size: {result['size']}")
-                    else:
-                        result["size"] = "Unknown"
-                        print(f"Could not estimate model size for {model_id}")
-                        
-                except Exception as e:
-                    print(f"Failed to estimate model size: {e}")
-                    result["size"] = "Unknown"
-            else:
+            result["total_bytes"] = int(total_size)
+            if total_size > 0:
                 result["size"] = f"{total_size / (1024**3):.2f} GB"
                 print(f"Total model size: {result['size']}")
             
-            # Extract model card data with more comprehensive parsing
-            if model_info.card_data:
-                card_data = model_info.card_data
-                
-                # Store full model card
-                result["full_model_card"] = card_data
-                
-                # Extract intended uses with multiple possible keys
-                intended_uses_keys = ["intended_uses", "usage", "intended_use", "use_cases", "applications"]
-                for key in intended_uses_keys:
-                    if key in card_data and card_data[key]:
-                        result["intended_uses"] = card_data[key]
-                        break
-                
-                # Extract background with multiple possible keys
-                background_keys = ["background", "model_description", "description", "overview", "about"]
-                for key in background_keys:
-                    if key in card_data and card_data[key]:
-                        result["background"] = card_data[key]
-                        break
-                
-                # Extract training data with multiple possible keys
-                training_data_keys = ["training_data", "dataset", "datasets", "training_datasets", "data"]
-                for key in training_data_keys:
-                    if key in card_data and card_data[key]:
-                        result["training_data"] = card_data[key]
-                        break
-                
-                # If we still don't have description, try to get it from the main description
-                if not result["description"] and model_info.card_data.get("description"):
-                    result["description"] = model_info.card_data["description"]
+            # Pull hub JSON for config/params and richer cardData
+            hub_json = self._fetch_hub_model_json(model_id)
+            if hub_json:
+                config = hub_json.get("config") or {}
+                # Parameters count may be provided directly
+                params_count = config.get("num_parameters") or hub_json.get("parameterCount")
+                if not params_count:
+                    # Try common fields for estimation
+                    hidden_size = config.get("hidden_size") or config.get("d_model") or config.get("n_embd")
+                    num_layers = config.get("num_hidden_layers") or config.get("n_layer") or config.get("n_layers")
+                    vocab_size = config.get("vocab_size") or 50257
+                    if hidden_size and num_layers:
+                        try:
+                            params_count = int((hidden_size * hidden_size * 4 + hidden_size * vocab_size) * num_layers)
+                        except Exception:
+                            pass
+                if params_count:
+                    result["params"] = params_count
+                # Use cardData text as a short description fallback
+                if not result["description"] and hub_json.get("cardData", {}).get("text"):
+                    result["description"] = (hub_json.get("cardData", {}).get("text") or "")
             
-            # Try to get README content for additional metadata
-            try:
-                readme_content = self.api.model_info(model_id).card_data.get("README.md", "")
-                if readme_content and not result["intended_uses"]:
-                    # Try to extract intended uses from README
-                    import re
-                    intended_uses_match = re.search(r'##?\s*Intended\s*Uses?.*?(?=##|\Z)', readme_content, re.IGNORECASE | re.DOTALL)
-                    if intended_uses_match:
-                        result["intended_uses"] = intended_uses_match.group(0).strip()
-                
-                if readme_content and not result["background"]:
-                    # Try to extract background from README
-                    background_match = re.search(r'##?\s*Background.*?(?=##|\Z)', readme_content, re.IGNORECASE | re.DOTALL)
-                    if background_match:
-                        result["background"] = background_match.group(0).strip()
-                
-                if readme_content and not result["training_data"]:
-                    # Try to extract training data from README
-                    training_match = re.search(r'##?\s*Training\s*Data.*?(?=##|\Z)', readme_content, re.IGNORECASE | re.DOTALL)
-                    if training_match:
-                        result["training_data"] = training_match.group(0).strip()
-                        
-            except Exception as e:
-                print(f"Failed to parse README for {model_id}: {e}")
+            # Model card markdown text
+            card_text = self._fetch_model_card_text(model_id)
+            if card_text:
+                result["model_card"] = card_text
+                result["full_model_card"] = card_text
             
             return result
             
@@ -233,14 +212,15 @@ class ModelDownloader:
             requirements["errors"].append(f"Failed to check requirements: {e}")
             return requirements
     
-    def download_model(self, model_id: str, progress_callback=None) -> Dict:
+    def download_model(self, model_id: str, progress_callback: Optional[Callable[[Dict], None]] = None) -> Dict:
         """Download a model from Hugging Face with progress tracking"""
         try:
             print(f"Starting download process for: {model_id}")
             
-            # Get model info first
+            # Get model info first (ensures we have expected total size)
             model_info = self.get_model_info(model_id)
             print(f"Model info retrieved for: {model_id}")
+            total_bytes_expected = int(model_info.get("total_bytes") or 0)
             
             # Check requirements
             requirements = self.check_system_requirements(model_id, model_info)
@@ -253,9 +233,42 @@ class ModelDownloader:
             
             print(f"Starting download of {model_id} to {model_dir}")
             
-            # Download the model with progress tracking
-            if progress_callback:
-                progress_callback("Starting download...")
+            # Progress monitoring thread
+            stop_event = threading.Event()
+            start_time = time.time()
+            last_bytes = 0
+            last_time = start_time
+            
+            def monitor_progress():
+                while not stop_event.is_set():
+                    try:
+                        downloaded = self._sum_dir_bytes(model_dir)
+                        now = time.time()
+                        dt = max(now - last_time, 1e-6)
+                        delta = max(downloaded - monitor_progress.last_bytes_seen, 0)
+                        speed = delta / dt  # bytes/sec
+                        progress = 0.0
+                        eta = None
+                        if total_bytes_expected > 0:
+                            progress = min(100.0, (downloaded / total_bytes_expected) * 100.0)
+                            remaining = max(total_bytes_expected - downloaded, 0)
+                            eta = int(remaining / speed) if speed > 0 else None
+                        if progress_callback:
+                            progress_callback({
+                                "downloaded_bytes": int(downloaded),
+                                "total_bytes": int(total_bytes_expected),
+                                "progress": float(progress),
+                                "speed": float(speed),
+                                "eta": eta
+                            })
+                        monitor_progress.last_bytes_seen = downloaded
+                    except Exception:
+                        pass
+                    stop_event.wait(1.5)
+            monitor_progress.last_bytes_seen = 0
+            
+            monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
+            monitor_thread.start()
             
             # Use snapshot_download to get all model files
             print(f"Calling snapshot_download for: {model_id}")
@@ -274,9 +287,22 @@ class ModelDownloader:
             )
             
             print(f"Download completed for {model_id} at {local_path}")
+            stop_event.set()
+            try:
+                monitor_thread.join(timeout=5)
+            except Exception:
+                pass
             
             if progress_callback:
-                progress_callback("Download completed!")
+                # Final callback to mark 100%
+                final_downloaded = self._sum_dir_bytes(model_dir)
+                progress_callback({
+                    "downloaded_bytes": int(final_downloaded),
+                    "total_bytes": int(total_bytes_expected),
+                    "progress": 100.0,
+                    "speed": 0.0,
+                    "eta": 0
+                })
             
             # Register the model in the local registry
             self._register_local_model(model_id, str(model_dir), model_info)

@@ -23,5 +23,13 @@
   "huggingface": {
     "token": "",
     "connected": true
+  },
+  "lmstudio": {
+    "baseUrl": "http://localhost:1234",
+    "connected": true
+  },
+  "ollama": {
+    "baseUrl": "http://localhost:11434",
+    "connected": true
   }
 }

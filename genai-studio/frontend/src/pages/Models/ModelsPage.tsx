@@ -222,7 +222,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
         params: { 
           q: searchQuery, 
           sort: sortBy, 
-          limit: 20, 
+          limit: 50, 
           offset: offset 
         }
       });
@@ -246,7 +246,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
       }
       
       // Check if there are more results - if we got less than requested, we've reached the end
-      setHasMoreResults(models.length === 20);
+      setHasMoreResults(models.length === 50);
       
     } catch (error: any) {
       console.error("Failed to load models:", error);
@@ -1531,29 +1531,35 @@ export default function ModelsPage() {
 
   const openFileExplorer = async () => {
     try {
-      // Use the File System Access API if available (modern browsers)
-      if ('showDirectoryPicker' in window) {
+      // Prefer native directory picker if available (Chromium/Edge)
+      if (typeof (window as any).showDirectoryPicker === "function") {
         try {
-          const dirHandle = await (window as any).showDirectoryPicker();
-          const newPath = await dirHandle.getDirectoryHandle ? dirHandle.name : dirHandle;
-          if (newPath) {
-            await handleDirectoryChange(newPath);
-          }
+          const handle = await (window as any).showDirectoryPicker({ mode: "read" });
+          const folderName = handle?.name || "Selected Folder";
+          await handleDirectoryChange(folderName);
+          return;
         } catch (error) {
           console.log("Directory picker cancelled or failed:", error);
         }
-      } else {
-        // Fallback: copy path to clipboard and show instructions
-        try {
-          await navigator.clipboard.writeText(modelsDirectory);
-          alert(`Path copied to clipboard: ${modelsDirectory}\n\nPlease paste this path into your file explorer's address bar to browse the directory.`);
-        } catch (clipboardError) {
-          alert(`Models directory: ${modelsDirectory}\n\nPlease copy this path and open it in your file explorer.`);
-        }
       }
+
+      // Fallback: hidden input with webkitdirectory (also Chromium)
+      const input = document.createElement("input");
+      (input as any).webkitdirectory = true;
+      input.type = "file";
+      input.onchange = async (ev: any) => {
+        const files: FileList = ev?.target?.files;
+        if (files && files.length) {
+          const first: any = files[0];
+          const relPath = first.webkitRelativePath || first.name;
+          const topFolder = (relPath.split("/")[0] || "Selected Folder");
+          await handleDirectoryChange(topFolder);
+        }
+      };
+      input.click();
     } catch (error) {
       console.error("Failed to open file explorer:", error);
-      // Final fallback
+      // Final fallback: assist user manually
       try {
         await navigator.clipboard.writeText(modelsDirectory);
         alert(`Path copied to clipboard: ${modelsDirectory}\n\nPlease paste this path into your file explorer's address bar.`);

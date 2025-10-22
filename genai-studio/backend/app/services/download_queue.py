@@ -116,10 +116,28 @@ class DownloadQueue:
                 next_item.started_at = time.time()
                 self._save_queue()
                 
+                def on_progress(update: Dict):
+                    try:
+                        with self._lock:
+                            # Item could be removed or cancelled; guard access
+                            current = self.downloads.get(next_item.id)
+                            if not current or current.status not in [DownloadStatus.DOWNLOADING, DownloadStatus.QUEUED]:
+                                return
+                            current.downloaded_bytes = int(update.get("downloaded_bytes", current.downloaded_bytes))
+                            if update.get("total_bytes") is not None:
+                                current.total_bytes = int(update.get("total_bytes", current.total_bytes))
+                            current.progress = float(update.get("progress", current.progress))
+                            current.speed = float(update.get("speed", current.speed))
+                            if update.get("eta") is not None:
+                                current.eta = int(update.get("eta", current.eta))
+                            self._save_queue()
+                    except Exception as e:
+                        print(f"Failed to update progress: {e}")
+                
                 try:
                     print(f"Starting download for {next_item.model_id}")
-                    # Download the model
-                    result = self.downloader.download_model(next_item.model_id)
+                    # Download the model with progress callback
+                    result = self.downloader.download_model(next_item.model_id, progress_callback=on_progress)
                     print(f"Download result for {next_item.model_id}: {result}")
                     
                     if result["success"]:
@@ -127,6 +145,9 @@ class DownloadQueue:
                         next_item.progress = 100.0
                         next_item.completed_at = time.time()
                         next_item.local_path = result["local_path"]
+                        # Ensure final size is recorded
+                        if isinstance(result.get("model_info"), dict) and result["model_info"].get("total_bytes"):
+                            next_item.total_bytes = int(result["model_info"]["total_bytes"]) 
                         print(f"Download completed successfully for {next_item.model_id}")
                     else:
                         next_item.status = DownloadStatus.FAILED

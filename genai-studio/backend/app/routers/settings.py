@@ -121,6 +121,15 @@ def get_settings():
             "token": "",
             "connected": False
         },
+        # New: local model servers
+        "lmstudio": {
+            "baseUrl": "http://localhost:1234",
+            "connected": False
+        },
+        "ollama": {
+            "baseUrl": "http://localhost:11434",
+            "connected": False
+        },
         "localModels": {
             "selectedGpu": "auto",
             "availableGpus": detect_available_gpus()
@@ -173,6 +182,11 @@ def get_settings():
     if "huggingface" in cfg:
         hf_token = cfg["huggingface"].get("token", "") or os.getenv("HUGGINGFACE_TOKEN", "")
         cfg["huggingface"]["connected"] = bool(hf_token.strip())
+
+    # Ensure lmstudio/ollama blocks exist
+    for key, url in ("lmstudio", "http://localhost:1234"), ("ollama", "http://localhost:11434"):
+        if key not in cfg:
+            cfg[key] = {"baseUrl": url, "connected": False}
     
     return cfg
 
@@ -208,6 +222,13 @@ def save_settings(settings: SettingsIn):
     if "huggingface" in cfg:
         hf_token = cfg["huggingface"].get("token", "") or os.getenv("HUGGINGFACE_TOKEN", "")
         cfg["huggingface"]["connected"] = bool(hf_token.strip())
+
+    # Normalize lmstudio/ollama shapes
+    for key in ["lmstudio", "ollama"]:
+        if key not in cfg:
+            cfg[key] = {}
+        cfg[key]["baseUrl"] = cfg[key].get("baseUrl") or ("http://localhost:1234" if key=="lmstudio" else "http://localhost:11434")
+        cfg[key]["connected"] = bool(cfg[key].get("connected", False))
     
     # Ensure directories exist
     paths = cfg.get("paths", {})
@@ -258,6 +279,58 @@ def test_groq_connection(request: dict):
         cfg["groq"]["connected"] = False
         save_config(cfg)
         
+        return {"connected": False, "error": str(e)}
+
+@router.post("/lmstudio/test")
+def test_lmstudio_connection(request: dict):
+    """Test LM Studio server (OpenAI-compatible) by listing models"""
+    base_url = (request or {}).get("baseUrl") or load_config().get("lmstudio", {}).get("baseUrl", "http://localhost:1234")
+    try:
+        r = requests.get(f"{base_url.rstrip('/')}/v1/models", timeout=10)
+        ok = r.status_code == 200
+        cfg = load_config()
+        if "lmstudio" not in cfg:
+            cfg["lmstudio"] = {}
+        cfg["lmstudio"]["baseUrl"] = base_url
+        cfg["lmstudio"]["connected"] = ok
+        save_config(cfg)
+        if ok:
+            data = r.json() or {}
+            return {"connected": True, "models_count": len((data.get("data") or []))}
+        return {"connected": False, "error": f"HTTP {r.status_code}"}
+    except Exception as e:
+        cfg = load_config()
+        if "lmstudio" not in cfg:
+            cfg["lmstudio"] = {}
+        cfg["lmstudio"]["baseUrl"] = base_url
+        cfg["lmstudio"]["connected"] = False
+        save_config(cfg)
+        return {"connected": False, "error": str(e)}
+
+@router.post("/ollama/test")
+def test_ollama_connection(request: dict):
+    """Test Ollama server by listing tags"""
+    base_url = (request or {}).get("baseUrl") or load_config().get("ollama", {}).get("baseUrl", "http://localhost:11434")
+    try:
+        r = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=10)
+        ok = r.status_code == 200
+        cfg = load_config()
+        if "ollama" not in cfg:
+            cfg["ollama"] = {}
+        cfg["ollama"]["baseUrl"] = base_url
+        cfg["ollama"]["connected"] = ok
+        save_config(cfg)
+        if ok:
+            data = r.json() or {}
+            return {"connected": True, "models_count": len((data.get("models") or []))}
+        return {"connected": False, "error": f"HTTP {r.status_code}"}
+    except Exception as e:
+        cfg = load_config()
+        if "ollama" not in cfg:
+            cfg["ollama"] = {}
+        cfg["ollama"]["baseUrl"] = base_url
+        cfg["ollama"]["connected"] = False
+        save_config(cfg)
         return {"connected": False, "error": str(e)}
 
 @router.get("/gpu/info")

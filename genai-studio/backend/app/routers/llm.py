@@ -164,6 +164,94 @@ class ChatIn(BaseModel):
 
 @router.post("/complete")
 def complete(body: CompleteIn):
+    # Route to local servers (LM Studio or Ollama) if model_id is prefixed
+    if body.provider == "local" and (body.model_id.startswith("lmstudio/") or body.model_id.startswith("ollama/")):
+        from app.services.config import load_config
+        cfg = load_config()
+        is_lm = body.model_id.startswith("lmstudio/")
+        is_ol = body.model_id.startswith("ollama/")
+        model_name = body.model_id.split("/", 1)[1]
+
+        # Build messages from prompt if needed
+        messages = body.messages
+        if not messages and body.prompt:
+            messages = [{"role": "user", "content": body.prompt}]
+        if not messages:
+            raise HTTPException(400, "messages or prompt is required")
+
+        try:
+            start_time = time.time()
+            if is_lm:
+                base = (cfg.get("lmstudio", {}).get("baseUrl") or "http://localhost:1234").rstrip('/')
+                r = requests.post(
+                    f"{base}/v1/chat/completions",
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "max_tokens": body.max_tokens or 1024,
+                        "temperature": body.temperature or 0.2,
+                        "top_p": body.top_p or 1.0,
+                    },
+                    timeout=60,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                # Local cost assumed zero
+                record_groq_usage(model_name, 0, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+            elif is_ol:
+                base = (cfg.get("ollama", {}).get("baseUrl") or "http://localhost:11434").rstrip('/')
+                # Convert chat messages into single prompt (Ollama supports /api/chat too, but keep simple)
+                try:
+                    chat_r = requests.post(
+                        f"{base}/api/chat",
+                        json={
+                            "model": model_name,
+                            "messages": messages,
+                            "stream": False,
+                            "options": {
+                                "temperature": body.temperature or 0.2,
+                                "top_p": body.top_p or 1.0,
+                                "num_predict": body.max_tokens or 1024,
+                            },
+                        },
+                        timeout=120,
+                    )
+                    chat_r.raise_for_status()
+                    data = chat_r.json()
+                    text = (data.get("message") or {}).get("content", "")
+                except Exception:
+                    # Fallback to /api/generate if /api/chat unavailable
+                    prompt_text = "\n".join([m.get("content", "") for m in messages or []])
+                    gen_r = requests.post(
+                        f"{base}/api/generate",
+                        json={
+                            "model": model_name,
+                            "prompt": prompt_text,
+                            "stream": False,
+                            "options": {
+                                "temperature": body.temperature or 0.2,
+                                "top_p": body.top_p or 1.0,
+                                "num_predict": body.max_tokens or 1024,
+                            },
+                        },
+                        timeout=120,
+                    )
+                    gen_r.raise_for_status()
+                    data = gen_r.json()
+                    text = data.get("response", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                record_groq_usage(model_name, 0, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            record_groq_usage(model_name, 0, 0.0, duration_ms, False)
+            raise HTTPException(502, f"Local server completion failed: {e}")
+
     if body.provider == "groq":
         # Try to get API key from environment first, then from config
         key = os.getenv("GROQ_API_KEY")
@@ -229,6 +317,63 @@ def chat(body: ChatIn):
     """
     Chat completion endpoint for LLM processing.
     """
+    # Route to local servers if prefixed
+    if body.model_id.startswith("lmstudio/") or body.model_id.startswith("ollama/"):
+        from app.services.config import load_config
+        cfg = load_config()
+        is_lm = body.model_id.startswith("lmstudio/")
+        is_ol = body.model_id.startswith("ollama/")
+        model_name = body.model_id.split("/", 1)[1]
+        messages = [{"role": m.role, "content": m.content} for m in body.messages]
+        try:
+            start_time = time.time()
+            if is_lm:
+                base = (cfg.get("lmstudio", {}).get("baseUrl") or "http://localhost:1234").rstrip('/')
+                r = requests.post(
+                    f"{base}/v1/chat/completions",
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "temperature": body.params.get("temperature", 0.2),
+                        "max_tokens": body.params.get("max_tokens", 1024),
+                        "top_p": body.params.get("top_p", 1.0),
+                    },
+                    timeout=60,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                record_groq_usage(model_name, 0, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+            else:
+                base = (cfg.get("ollama", {}).get("baseUrl") or "http://localhost:11434").rstrip('/')
+                chat_r = requests.post(
+                    f"{base}/api/chat",
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "stream": False,
+                        "options": {
+                            "temperature": body.params.get("temperature", 0.2),
+                            "top_p": body.params.get("top_p", 1.0),
+                            "num_predict": body.params.get("max_tokens", 1024),
+                        },
+                    },
+                    timeout=120,
+                )
+                chat_r.raise_for_status()
+                data = chat_r.json()
+                text = (data.get("message") or {}).get("content", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                record_groq_usage(model_name, 0, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            record_groq_usage(model_name, 0, 0.0, duration_ms, False)
+            raise HTTPException(502, f"Local server chat failed: {e}")
     # For now, we'll use Groq for all chat completions
     # In the future, this could route to local models based on model_id
     

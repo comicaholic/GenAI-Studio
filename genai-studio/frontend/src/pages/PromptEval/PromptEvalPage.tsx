@@ -410,7 +410,7 @@ export default function PromptEvalPage() {
   }, [metricsState]);
 
   // Download handlers
-  const onDownloadCSV = useCallback(() => {
+  const onDownloadCSV = useCallback(async () => {
     if (!scores) return;
     
     // Enhanced CSV with model, parameters, and metrics info
@@ -443,10 +443,14 @@ export default function PromptEvalPage() {
       llm_output: llmOutput?.substring(0, 500) + (llmOutput?.length > 500 ? '...' : ''),
     };
     
-    downloadCSV([enhancedData], { filename: "prompt-eval-results.csv" });
+    try {
+      await downloadCSV([enhancedData], { filename: "prompt-eval-results.csv" });
+    } catch (error) {
+      console.error("Failed to download CSV:", error);
+    }
   }, [scores, selected, params, selectedMetrics, promptFileName, refFileName, draft.prompt, reference, llmOutput]);
 
-  const onDownloadPDF = useCallback(() => {
+  const onDownloadPDF = useCallback(async () => {
     if (!scores) return;
     
     // Enhanced PDF with model, parameters, and metrics info
@@ -479,7 +483,11 @@ export default function PromptEvalPage() {
       llm_output: llmOutput || '',
     };
     
-    downloadPDF([enhancedData], { filename: "prompt-eval-results.pdf" });
+    try {
+      await downloadPDF([enhancedData], { filename: "prompt-eval-results.pdf" });
+    } catch (error) {
+      console.error("Failed to download PDF:", error);
+    }
   }, [scores, selected, params, selectedMetrics, promptFileName, refFileName, draft.prompt, reference, llmOutput]);
 
   // Automation functionality

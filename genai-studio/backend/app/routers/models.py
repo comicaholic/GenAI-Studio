@@ -16,6 +16,53 @@ router = APIRouter()
 def list_models(include_groq: bool = True):
     local = get_local_models()
     warn, groq = get_groq_models() if include_groq else (None, [])
+
+    # Augment with LM Studio and Ollama models if available
+    try:
+        from app.services.config import load_config
+        cfg = load_config()
+        import requests
+
+        # LM Studio (OpenAI-compatible server)
+        lm_cfg = cfg.get("lmstudio", {})
+        if lm_cfg.get("baseUrl"):
+            try:
+                r = requests.get(f"{lm_cfg['baseUrl'].rstrip('/')}/v1/models", timeout=5)
+                if r.status_code == 200:
+                    data = r.json() or {}
+                    for m in (data.get("data") or []):
+                        mid = m.get("id")
+                        if mid:
+                            local.append({
+                                "id": f"lmstudio/{mid}",
+                                "provider": "local",
+                                "label": mid,
+                                "tags": ["lmstudio"],
+                            })
+            except Exception:
+                pass
+
+        # Ollama
+        ol_cfg = cfg.get("ollama", {})
+        if ol_cfg.get("baseUrl"):
+            try:
+                r = requests.get(f"{ol_cfg['baseUrl'].rstrip('/')}/api/tags", timeout=5)
+                if r.status_code == 200:
+                    data = r.json() or {}
+                    for m in (data.get("models") or []):
+                        name = m.get("name") or m.get("model")
+                        if name:
+                            local.append({
+                                "id": f"ollama/{name}",
+                                "provider": "local",
+                                "label": name,
+                                "tags": ["ollama"],
+                            })
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     return {"local": local, "groq": groq, "warning": warn}
 
 @router.get("/classified")
@@ -27,6 +74,50 @@ def get_classified_models(include_groq: bool = True):
     
     # Get local models
     local_models = get_local_models()
+
+    # Augment with LM Studio and Ollama models (same as /list)
+    try:
+        from app.services.config import load_config
+        cfg = load_config()
+        import requests
+
+        lm_cfg = cfg.get("lmstudio", {})
+        if lm_cfg.get("baseUrl"):
+            try:
+                r = requests.get(f"{lm_cfg['baseUrl'].rstrip('/')}/v1/models", timeout=5)
+                if r.status_code == 200:
+                    data = r.json() or {}
+                    for m in (data.get("data") or []):
+                        mid = m.get("id")
+                        if mid:
+                            local_models.append({
+                                "id": f"lmstudio/{mid}",
+                                "provider": "local",
+                                "label": mid,
+                                "tags": ["lmstudio"],
+                            })
+            except Exception:
+                pass
+
+        ol_cfg = cfg.get("ollama", {})
+        if ol_cfg.get("baseUrl"):
+            try:
+                r = requests.get(f"{ol_cfg['baseUrl'].rstrip('/')}/api/tags", timeout=5)
+                if r.status_code == 200:
+                    data = r.json() or {}
+                    for m in (data.get("models") or []):
+                        name = m.get("name") or m.get("model")
+                        if name:
+                            local_models.append({
+                                "id": f"ollama/{name}",
+                                "provider": "local",
+                                "label": name,
+                                "tags": ["ollama"],
+                            })
+            except Exception:
+                pass
+    except Exception:
+        pass
     local_classified = classify_models(local_models)
     
     # Get Groq models
@@ -533,6 +624,117 @@ def get_popular_models(limit: int = 20, offset: int = 0):
 def scan_local_models():
     from app.services.models import scan_models_dir
     return {"local": scan_models_dir()}
+
+@router.get("/memory/{model_id}")
+def get_model_memory_usage(model_id: str):
+    """
+    Get memory usage for a specific model.
+    Returns GPU memory usage if the model is currently loaded, otherwise returns estimated usage.
+    """
+    try:
+        from app.services.model_memory_tracker import model_memory_tracker
+        
+        # Check if we have tracking data for this model
+        tracked_record = model_memory_tracker.get_current_memory_usage(model_id)
+        
+        # Try to get actual GPU memory usage if model is loaded
+        gpu_memory_used = None
+        gpu_memory_total = None
+        
+        try:
+            import GPUtil
+            gpus = GPUtil.getGPUs()
+            if gpus and len(gpus) > 0:
+                gpu = gpus[0]  # Use first GPU
+                gpu_memory_used = round(gpu.memoryUsed / 1024, 2)  # Convert MB to GB
+                gpu_memory_total = round(gpu.memoryTotal / 1024, 2)  # Convert MB to GB
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"GPUtil error in model memory endpoint: {e}")
+        
+        # If we can't get actual GPU usage, estimate based on model size
+        estimated_memory = None
+        try:
+            # Try to get model info to estimate memory usage
+            downloader = ModelDownloader()
+            model_info = downloader.get_model_info(model_id)
+            
+            if model_info.get("size"):
+                size_str = model_info["size"]
+                if "GB" in size_str:
+                    size_gb = float(size_str.replace(" GB", ""))
+                    # Estimate GPU memory needed (typically 1.5x model size)
+                    estimated_memory = round(size_gb * 1.5, 2)
+        except Exception as e:
+            print(f"Failed to get model info for memory estimation: {e}")
+        
+        # Determine if model is loaded based on tracking data or GPU usage
+        is_loaded = False
+        if tracked_record and tracked_record.is_loaded:
+            is_loaded = True
+        elif gpu_memory_used is not None and gpu_memory_used > 0:
+            is_loaded = True
+        
+        return {
+            "model_id": model_id,
+            "gpu_memory_used_gb": gpu_memory_used,
+            "gpu_memory_total_gb": gpu_memory_total,
+            "estimated_memory_gb": estimated_memory,
+            "is_loaded": is_loaded,
+            "tracked_memory_gb": tracked_record.memory_used_gb if tracked_record else None
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get model memory usage: {e}")
+
+@router.post("/memory/{model_id}/loaded")
+def record_model_loaded(model_id: str, memory_used_gb: float, memory_total_gb: float):
+    """
+    Record that a model has been loaded with specific memory usage.
+    """
+    try:
+        from app.services.model_memory_tracker import model_memory_tracker
+        model_memory_tracker.record_model_loaded(model_id, memory_used_gb, memory_total_gb)
+        return {"message": f"Recorded model {model_id} as loaded with {memory_used_gb:.2f} GB memory usage"}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to record model loaded: {e}")
+
+@router.post("/memory/{model_id}/unloaded")
+def record_model_unloaded(model_id: str):
+    """
+    Record that a model has been unloaded.
+    """
+    try:
+        from app.services.model_memory_tracker import model_memory_tracker
+        model_memory_tracker.record_model_unloaded(model_id)
+        return {"message": f"Recorded model {model_id} as unloaded"}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to record model unloaded: {e}")
+
+@router.get("/memory/tracking/history/{model_id}")
+def get_model_memory_history(model_id: str, limit: int = 50):
+    """
+    Get memory usage history for a specific model.
+    """
+    try:
+        from app.services.model_memory_tracker import model_memory_tracker
+        history = model_memory_tracker.get_memory_history(model_id, limit)
+        return {"model_id": model_id, "history": history}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get model memory history: {e}")
+
+@router.get("/memory/tracking/current")
+def get_current_loaded_models():
+    """
+    Get all currently loaded models with their memory usage.
+    """
+    try:
+        from app.services.model_memory_tracker import model_memory_tracker
+        current_models = model_memory_tracker.get_all_current_models()
+        return {"loaded_models": current_models}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get current loaded models: {e}")
 
 # /api/models/add-local (POST) — register a local model (e.g., after user downloads)
 class AddLocalIn(BaseModel):

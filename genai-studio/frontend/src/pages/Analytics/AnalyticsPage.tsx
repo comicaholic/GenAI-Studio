@@ -318,7 +318,15 @@ export default function AnalyticsPage() {
   const [latencyMetrics, setLatencyMetrics] = useState<LatencyMetrics | null>(null);
   const [throughputMetrics, setThroughputMetrics] = useState<ThroughputMetrics | null>(null);
   const [evaluationMetrics, setEvaluationMetrics] = useState<EvaluationMetrics | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // loading states (granular) for better UX and performance
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [loadingSystem, setLoadingSystem] = useState(false);
+  const [loadingPerf, setLoadingPerf] = useState(false);
+  const [loadingGroq, setLoadingGroq] = useState(false);
+  const [loadingErrors, setLoadingErrors] = useState(false);
+  const [loadingLatency, setLoadingLatency] = useState(false);
+  const [loadingThroughput, setLoadingThroughput] = useState(false);
+  const [loadingEvals, setLoadingEvals] = useState(false);
   // persistent toggles for evaluations graph
   const [evalToggles, setEvalToggles] = useState<{ rouge:boolean; bleu:boolean; f1:boolean; em:boolean; bert:boolean; perplexity:boolean; accuracy:boolean; precision:boolean; recall:boolean }>(() => {
     try {
@@ -343,16 +351,18 @@ export default function AnalyticsPage() {
 
   const loadSystem = useCallback(async () => {
     try {
+      setLoadingSystem(true);
       const r = await api.get("/analytics/system");
       console.log('System API Response:', r.data);
       setSystemMetrics(r.data);
     } catch (e) {
       console.error('Error loading system data:', e);
-    }
+    } finally { setLoadingSystem(false); }
   }, []);
 
   const loadPerf = useCallback(async () => {
     try {
+      setLoadingPerf(true);
       // Convert dataInterval to minutes for backend
       const intervalMinutes = dataInterval === "1min" ? 1 : 
                              dataInterval === "5min" ? 5 : 
@@ -381,11 +391,12 @@ export default function AnalyticsPage() {
       console.error('Error loading performance data:', e);
       // Set empty array if API fails
       setPerformanceTrends([]);
-    }
+    } finally { setLoadingPerf(false); }
   }, [timeFilter, dataInterval]);
 
   const loadGroq = useCallback(async () => {
     try {
+      setLoadingGroq(true);
       const r = await api.get(`/analytics/groq?timeframe=${timeFilter}`);
       console.log('Groq API Response:', r.data);
       console.log('Total requests:', r.data?.total_requests);
@@ -394,11 +405,12 @@ export default function AnalyticsPage() {
       setGroqAnalytics(r.data);
     } catch (e) {
       console.error('Error loading Groq data:', e);
-    }
+    } finally { setLoadingGroq(false); }
   }, [timeFilter]);
 
   const loadErrors = useCallback(async () => {
     try {
+      setLoadingErrors(true);
       const r = await api.get(`/analytics/errors?timeframe=${timeFilter}`);
       console.log('Errors API Response:', r.data);
       console.log('Total errors:', r.data?.total_errors);
@@ -406,11 +418,12 @@ export default function AnalyticsPage() {
       setErrorMetrics(r.data);
     } catch (e) {
       console.error('Error loading error metrics:', e);
-    }
+    } finally { setLoadingErrors(false); }
   }, [timeFilter]);
 
   const loadLatency = useCallback(async () => {
     try {
+      setLoadingLatency(true);
       const r = await api.get(`/analytics/latency?timeframe=${timeFilter}`);
       console.log('Latency API Response:', r.data);
       console.log('Average latency:', r.data?.average_response_time_ms);
@@ -418,11 +431,12 @@ export default function AnalyticsPage() {
       setLatencyMetrics(r.data);
     } catch (e) {
       console.error('Error loading latency metrics:', e);
-    }
+    } finally { setLoadingLatency(false); }
   }, [timeFilter]);
 
   const loadThroughput = useCallback(async () => {
     try {
+      setLoadingThroughput(true);
       const r = await api.get(`/analytics/throughput?timeframe=${timeFilter}`);
       console.log('Throughput API Response:', r.data);
       console.log('Requests per second:', r.data?.requests_per_second);
@@ -430,11 +444,12 @@ export default function AnalyticsPage() {
       setThroughputMetrics(r.data);
     } catch (e) {
       console.error('Error loading throughput metrics:', e);
-    }
+    } finally { setLoadingThroughput(false); }
   }, [timeFilter]);
 
   const loadEvals = useCallback(async () => {
     try {
+      setLoadingEvals(true);
       const r = await api.get(`/analytics/evaluations?timeframe=${timeFilter}`);
       console.log('Evaluations API Response:', r.data);
       console.log('Total evaluations:', r.data?.total_evaluations);
@@ -444,27 +459,31 @@ export default function AnalyticsPage() {
     } catch (e) {
       console.error('Error loading evaluation data:', e);
       setEvaluationMetrics(null);
-    }
+    } finally { setLoadingEvals(false); }
   }, [timeFilter]);
 
-  const loadAll = useCallback(async () => {
-    setIsLoading(true);
-    await Promise.all([
-      loadUptime(),
-      loadSystem(),
-      loadPerf(),
-      loadGroq(),
-      loadErrors(),
-      loadLatency(),
-      loadThroughput(),
-      loadEvals(),
-    ]);
-    setIsLoading(false);
-  }, [loadUptime, loadSystem, loadPerf, loadGroq, loadErrors, loadLatency, loadThroughput, loadEvals]);
+  // optimized loader: only fetch what is visible
+  const loadVisible = useCallback(async () => {
+    setIsInitialLoading(true);
+    const tasks: Promise<any>[] = [loadUptime()];
+    if (activeTab === "application") {
+      if (activeSubTab === "system") {
+        tasks.push(loadSystem(), loadPerf());
+      } else if (activeSubTab === "trends") {
+        tasks.push(loadErrors(), loadLatency(), loadThroughput());
+      } else if (activeSubTab === "evaluations") {
+        tasks.push(loadEvals());
+      }
+    } else if (activeTab === "groq") {
+      tasks.push(loadGroq());
+    }
+    await Promise.all(tasks);
+    setIsInitialLoading(false);
+  }, [activeTab, activeSubTab, loadUptime, loadSystem, loadPerf, loadErrors, loadLatency, loadThroughput, loadEvals, loadGroq]);
 
   useEffect(() => {
-    loadAll();
-    const uptimeInterval = setInterval(loadUptime, 1_000); // realtime-ish uptime
+    loadVisible();
+    const uptimeInterval = setInterval(loadUptime, 2_000);
     const dataInterval = setInterval(() => {
       // targeted refresh depending on tab - reduced frequency to prevent jitter
       if (activeTab === "application" && activeSubTab === "system") {
@@ -480,12 +499,12 @@ export default function AnalyticsPage() {
       } else if (activeTab === "groq") {
         loadGroq();
       }
-    }, 2_000); // Reduced back to 2s for more responsive updates
+    }, 5_000);
     return () => {
       clearInterval(uptimeInterval);
       clearInterval(dataInterval);
     };
-  }, [activeTab, activeSubTab, timeFilter, loadAll, loadUptime, loadSystem, loadPerf, loadGroq, loadErrors, loadLatency, loadThroughput, loadEvals]);
+  }, [activeTab, activeSubTab, timeFilter, loadVisible, loadUptime, loadSystem, loadPerf, loadGroq, loadErrors, loadLatency, loadThroughput, loadEvals]);
 
   // Separate effect to reload performance data when timeframe changes
   useEffect(() => {
@@ -497,7 +516,10 @@ export default function AnalyticsPage() {
   /* ---------- Derived & mapped data for charts ---------- */
   const systemChartData = useMemo(
     (): ChartDataPoint[] => {
-      if (!performanceTrends || performanceTrends.length === 0) return [];
+      if (!performanceTrends || performanceTrends.length === 0) {
+        // placeholder to render axes with no data
+        return [{ time: "-", cpu: 0, memory: 0, disk: 0, gpu: 0, appCpu: 0, appMemory: 0, appGpu: 0 }];
+      }
       
       const chartData: ChartDataPoint[] = [];
       
@@ -739,7 +761,7 @@ export default function AnalyticsPage() {
                 </select>
 
                 <button
-                  onClick={() => loadAll()}
+                  onClick={() => loadVisible()}
                   style={{
                     padding: "10px 16px",
                     borderRadius: 10,
@@ -965,7 +987,7 @@ export default function AnalyticsPage() {
           )}
 
           {/* Content */}
-          {isLoading ? (
+          {isInitialLoading ? (
             <div style={{ color: colors.muted, textAlign: "center", padding: 36 }}>Loading analytics…</div>
           ) : (
             <>
@@ -1050,8 +1072,8 @@ export default function AnalyticsPage() {
                     
                   </div>
 
-                  <ChartCard title="Resource Usage" isLoading={isLoading}>
-                    {!isLoading && (
+                  <ChartCard title="Resource Usage" isLoading={loadingSystem}>
+                    {!loadingSystem && (
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart
                           data={[
@@ -1137,8 +1159,8 @@ export default function AnalyticsPage() {
                     </div>
                   </div>
 
-                  <ChartCard title={`Historical Performance (Overlapping Metrics) - Last ${timeFilter} (${dataInterval} intervals)`} isLoading={isLoading}>
-                    {!isLoading && (
+                  <ChartCard title={`Historical Performance (Overlapping Metrics) - Last ${timeFilter} (${dataInterval} intervals)`} isLoading={loadingPerf}>
+                    {!loadingPerf && (
                       <ResponsiveContainer width="100%" height="100%">
                         <AreaChart
                           data={systemChartData}
@@ -1204,8 +1226,8 @@ export default function AnalyticsPage() {
                     <StatCard title="Throughput" value={throughputMetrics ? `${(throughputMetrics.requests_per_second ?? 0).toFixed(1)} /s` : "N/A"} subtitle={`${typeof throughputMetrics?.evaluations_per_minute === "number" ? throughputMetrics.evaluations_per_minute.toFixed(1) : "N/A"} eval/min`} color={colors.secondary} />
                   </div>
 
-                  <ChartCard title="Error Trends (hourly)" isLoading={isLoading}>
-                    {!isLoading && (
+                  <ChartCard title="Error Trends (hourly)" isLoading={loadingErrors || loadingLatency}>
+                    {!(loadingErrors || loadingLatency) && (
                       errorTrendData.length > 0 ? (
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={errorTrendData}>
@@ -1267,8 +1289,8 @@ export default function AnalyticsPage() {
                         ))}
                       </div>
 
-                      <ChartCard title="Evaluation Metrics Graph" isLoading={isLoading}>
-                        {!isLoading && (
+                      <ChartCard title="Evaluation Metrics Graph" isLoading={loadingEvals}>
+                        {!loadingEvals && (
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={(() => {
                               const maxLen = Math.max(
@@ -1323,7 +1345,18 @@ export default function AnalyticsPage() {
                       </ChartCard>
                     </>
                   ) : (
-                    <div style={{ color: colors.muted, padding: 36, textAlign: "center" }}>No evaluation metrics available for the selected time range</div>
+                    <ChartCard title="Evaluation Metrics Graph" isLoading={loadingEvals}>
+                      {!loadingEvals && (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={[{ idx: 0 }]}> 
+                            <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                            <XAxis dataKey="idx" stroke={colors.muted} fontSize={12} />
+                            <YAxis stroke={colors.muted} fontSize={12} />
+                            <Legend />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </ChartCard>
                   )}
                 </div>
               )}
@@ -1340,8 +1373,8 @@ export default function AnalyticsPage() {
                         <StatCard title="Success Rate" value={groqAnalytics.success_rate ? `${(groqAnalytics.success_rate * 100).toFixed(1)}%` : "N/A"} subtitle="Requests success" color={colors.purple} />
                       </div>
 
-                      <ChartCard title="Usage by Model" isLoading={isLoading}>
-                        {!isLoading && (
+                      <ChartCard title="Usage by Model" isLoading={loadingGroq}>
+                        {!loadingGroq && (
                           modelUsageData.length > 0 ? (
                             <ResponsiveContainer width="100%" height="100%">
                               <BarChart data={modelUsageData}>
@@ -1368,8 +1401,8 @@ export default function AnalyticsPage() {
                         )}
                       </ChartCard>
 
-                      <ChartCard title="Hourly Usage" isLoading={isLoading}>
-                        {!isLoading && (
+                      <ChartCard title="Hourly Usage" isLoading={loadingGroq}>
+                        {!loadingGroq && (
                           groqChartData.length > 0 ? (
                             <ResponsiveContainer width="100%" height="100%">
                               <LineChart data={groqChartData}>
@@ -1398,7 +1431,18 @@ export default function AnalyticsPage() {
                       </ChartCard>
                     </>
                   ) : (
-                    <div style={{ color: colors.muted, padding: 36, textAlign: "center" }}>No Groq API usage data available for the selected time range</div>
+                    <ChartCard title="Groq Usage" isLoading={loadingGroq}>
+                      {!loadingGroq && (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={[{ hour: "-", requests: 0 }]}> 
+                            <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                            <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
+                            <YAxis stroke={colors.muted} fontSize={12} />
+                            <Legend />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </ChartCard>
                   )}
                 </div>
               )}

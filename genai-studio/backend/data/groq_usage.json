@@ -799,5 +799,113 @@
     "cost_usd": 0.0,
     "request_duration_ms": 295,
     "success": false
+  },
+  {
+    "id": "groq_1761113603179",
+    "model": "moonshotai/kimi-k2-instruct",
+    "timestamp": "2025-10-22T17:13:23.179178",
+    "tokens_used": 1697,
+    "cost_usd": 0.0008485,
+    "request_duration_ms": 1243,
+    "success": true
+  },
+  {
+    "id": "groq_1761113614654",
+    "model": "unknown",
+    "timestamp": "2025-10-22T17:13:34.654456",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 307,
+    "success": false
+  },
+  {
+    "id": "groq_1761113616194",
+    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "timestamp": "2025-10-22T17:13:36.194948",
+    "tokens_used": 1928,
+    "cost_usd": 0.0009639999999999999,
+    "request_duration_ms": 1509,
+    "success": true
+  },
+  {
+    "id": "groq_1761113628016",
+    "model": "llama-3.3-70b-versatile",
+    "timestamp": "2025-10-22T17:13:48.016700",
+    "tokens_used": 1719,
+    "cost_usd": 0.0008594999999999999,
+    "request_duration_ms": 991,
+    "success": true
+  },
+  {
+    "id": "groq_1761113639573",
+    "model": "openai/gpt-oss-20b",
+    "timestamp": "2025-10-22T17:13:59.573542",
+    "tokens_used": 2095,
+    "cost_usd": 0.0010475,
+    "request_duration_ms": 979,
+    "success": true
+  },
+  {
+    "id": "groq_1761113640550",
+    "model": "allam-2-7b",
+    "timestamp": "2025-10-22T17:14:00.550975",
+    "tokens_used": 2423,
+    "cost_usd": 0.0012115,
+    "request_duration_ms": 928,
+    "success": true
+  },
+  {
+    "id": "groq_1761113651616",
+    "model": "meta-llama/llama-prompt-guard-2-86m",
+    "timestamp": "2025-10-22T17:14:11.616015",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 288,
+    "success": false
+  },
+  {
+    "id": "groq_1761113653431",
+    "model": "meta-llama/llama-prompt-guard-2-86m",
+    "timestamp": "2025-10-22T17:14:13.431546",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 299,
+    "success": false
+  },
+  {
+    "id": "groq_1761113654432",
+    "model": "moonshotai/kimi-k2-instruct-0905",
+    "timestamp": "2025-10-22T17:14:14.432589",
+    "tokens_used": 1697,
+    "cost_usd": 0.0008485,
+    "request_duration_ms": 966,
+    "success": true
+  },
+  {
+    "id": "groq_1761113666203",
+    "model": "llama-3.1-8b-instant",
+    "timestamp": "2025-10-22T17:14:26.203212",
+    "tokens_used": 1850,
+    "cost_usd": 0.00037,
+    "request_duration_ms": 869,
+    "success": true
+  },
+  {
+    "id": "groq_1761113677169",
+    "model": "meta-llama/llama-prompt-guard-2-22m",
+    "timestamp": "2025-10-22T17:14:37.169513",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 301,
+    "success": false
+  },
+  {
+    "id": "groq_1761113678488",
+    "model": "meta-llama/llama-prompt-guard-2-22m",
+    "timestamp": "2025-10-22T17:14:38.488717",
+    "tokens_used": 0,
+    "cost_usd": 0.0,
+    "request_duration_ms": 304,
+    "success": false
   }
 ]

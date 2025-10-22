@@ -19,11 +19,43 @@ export async function computeMetrics(body: MetricsRequest): Promise<MetricsRespo
 }
 
 export async function downloadCSV(rows: Record<string, any>[], meta: Record<string, any> = {}) {
-  const blob = await postForBlob("/eval/report/csv", { rows, meta });
-  return blob;
+  try {
+    const blob = await postForBlob("/eval/report/csv", { rows, meta });
+    
+    // Create download link and trigger download
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = meta.filename || "evaluation-results.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    return blob;
+  } catch (error) {
+    console.error("CSV download failed:", error);
+    throw error;
+  }
 }
 
 export async function downloadPDF(rows: Record<string, any>[], meta: Record<string, any> = {}) {
-  const blob = await postForBlob("/eval/report/pdf", { rows, meta });
-  return blob;
+  try {
+    const blob = await postForBlob("/eval/report/pdf", { rows, meta });
+    
+    // Create download link and trigger download
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = meta.filename || "evaluation-results.pdf";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    return blob;
+  } catch (error) {
+    console.error("PDF download failed:", error);
+    throw error;
+  }
 }

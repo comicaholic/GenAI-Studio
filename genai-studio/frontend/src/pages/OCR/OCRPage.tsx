@@ -500,14 +500,11 @@ export default function OCRPage() {
       llm_output: llmOutput?.substring(0, 500) + (llmOutput?.length > 500 ? '...' : ''),
     };
     
-    const rows = [enhancedData];
-    const blob = await downloadCSV(rows, meta);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "ocr-evaluation.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await downloadCSV([enhancedData], { filename: "ocr-evaluation.csv" });
+    } catch (error) {
+      console.error("Failed to download CSV:", error);
+    }
   };
 
   const onDownloadPDF = async () => {
@@ -543,14 +540,11 @@ export default function OCRPage() {
       llm_output: llmOutput || '',
     };
     
-    const rows = [{ metric: "results", ...enhancedData }];
-    const blob = await downloadPDF(rows, meta);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "ocr-evaluation.pdf";
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await downloadPDF([enhancedData], { filename: "ocr-evaluation.pdf" });
+    } catch (error) {
+      console.error("Failed to download PDF:", error);
+    }
   };
 
   // Automation functionality
@@ -1666,7 +1660,7 @@ export default function OCRPage() {
             <h3 style={{ margin: 0, color: "#e2e8f0" }}>Automation Results</h3>
             <div style={{ display: "flex", gap: 8 }}>
               <button 
-                onClick={() => {
+                onClick={async () => {
                   // Export automation results as CSV
                   const automationData = Object.values(automationResults).map((result: any) => ({
                     run_name: result.runName,
@@ -1679,7 +1673,11 @@ export default function OCRPage() {
                     reference_file: result.files?.referenceFileName || 'none',
                     timestamp: new Date().toISOString()
                   }));
-                  downloadCSV(automationData, { filename: "ocr-automation-results.csv" });
+                  try {
+                    await downloadCSV(automationData, { filename: "ocr-automation-results.csv" });
+                  } catch (error) {
+                    console.error("Failed to download automation CSV:", error);
+                  }
                 }}
                 style={{
                   padding: "8px 16px",
@@ -1696,7 +1694,7 @@ export default function OCRPage() {
                 Export CSV
               </button>
               <button 
-                onClick={() => {
+                onClick={async () => {
                   // Export automation results as PDF
                   const automationData = Object.values(automationResults).map((result: any) => ({
                     run_name: result.runName,
@@ -1709,7 +1707,11 @@ export default function OCRPage() {
                     reference_file: result.files?.referenceFileName || 'none',
                     timestamp: new Date().toISOString()
                   }));
-                  downloadPDF(automationData, { filename: "ocr-automation-results.pdf" });
+                  try {
+                    await downloadPDF(automationData, { filename: "ocr-automation-results.pdf" });
+                  } catch (error) {
+                    console.error("Failed to download automation PDF:", error);
+                  }
                 }}
                 style={{
                   padding: "8px 16px",

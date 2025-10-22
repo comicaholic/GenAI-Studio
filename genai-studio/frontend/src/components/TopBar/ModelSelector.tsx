@@ -62,7 +62,12 @@ export default function ModelSelector() {
   const [warning, setWarning] = React.useState<string | null>(null);
   const [disabledIds, setDisabledIds] = React.useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = React.useState<SortOption>("recency");
-  const [memoryUsage, setMemoryUsage] = React.useState<{ used: number; total: number } | null>(null);
+  const [modelMemoryUsage, setModelMemoryUsage] = React.useState<{ 
+    used: number; 
+    total: number; 
+    estimated?: number;
+    isLoaded: boolean;
+  } | null>(null);
 
   const [query, setQuery] = React.useState("");
   const rootRef = useClickOutside<HTMLDivElement>(() => setOpen(false));
@@ -121,18 +126,42 @@ export default function ModelSelector() {
     };
   };
 
-  const fetchMemoryUsage = React.useCallback(async () => {
+  const fetchModelMemoryUsage = React.useCallback(async (modelId: string) => {
+    if (!modelId || modelId.startsWith('groq/')) {
+      setModelMemoryUsage(null);
+      return;
+    }
+    
     try {
-      const { data } = await axios.get("/api/analytics/system");
-      if (data.memory) {
-        setMemoryUsage({
-          used: data.memory.used_gb || 0,
-          total: data.memory.total_gb || 0
+      const { data } = await axios.get(`/api/models/memory/${encodeURIComponent(modelId)}`);
+      if (data.gpu_memory_used_gb !== null && data.gpu_memory_total_gb !== null) {
+        setModelMemoryUsage({
+          used: data.gpu_memory_used_gb,
+          total: data.gpu_memory_total_gb,
+          estimated: data.estimated_memory_gb,
+          isLoaded: data.is_loaded
         });
+      } else if (data.tracked_memory_gb && data.tracked_memory_gb > 0) {
+        // Use tracked memory data if available
+        setModelMemoryUsage({
+          used: data.tracked_memory_gb,
+          total: data.tracked_memory_gb,
+          estimated: data.estimated_memory_gb,
+          isLoaded: data.is_loaded
+        });
+      } else if (data.estimated_memory_gb) {
+        setModelMemoryUsage({
+          used: 0,
+          total: data.estimated_memory_gb,
+          estimated: data.estimated_memory_gb,
+          isLoaded: false
+        });
+      } else {
+        setModelMemoryUsage(null);
       }
     } catch (error) {
-      console.warn("Failed to fetch memory usage:", error);
-      setMemoryUsage(null);
+      console.warn("Failed to fetch model memory usage:", error);
+      setModelMemoryUsage(null);
     }
   }, []);
 
@@ -150,8 +179,14 @@ export default function ModelSelector() {
 
   React.useEffect(() => { 
     fetchModels(); 
-    fetchMemoryUsage();
-  }, [fetchModels, fetchMemoryUsage]);
+  }, [fetchModels]);
+
+  // Fetch model memory usage when selected model changes
+  React.useEffect(() => {
+    if (selected?.id) {
+      fetchModelMemoryUsage(selected.id);
+    }
+  }, [selected?.id, fetchModelMemoryUsage]);
 
   React.useEffect(() => {
     const handler = () => fetchModels();
@@ -275,11 +310,17 @@ export default function ModelSelector() {
                   style={styles.search}
                 />
               </div>
-              {selected && selected.provider === "local" && memoryUsage && (
+              {selected && selected.provider === "local" && modelMemoryUsage && (
                 <div style={styles.memoryContainer}>
-                  <span style={styles.memoryLabel}>Memory Consumption:</span>
+                  <span style={styles.memoryLabel}>
+                    {modelMemoryUsage.isLoaded ? "Model Memory Usage:" : "Estimated Memory:"}
+                  </span>
                   <span style={styles.memoryValue}>
-                    {memoryUsage.used.toFixed(2)} GB / {memoryUsage.total} GB
+                    {modelMemoryUsage.isLoaded ? (
+                      `${modelMemoryUsage.used.toFixed(2)} GB${modelMemoryUsage.total > modelMemoryUsage.used ? ` / ${modelMemoryUsage.total} GB` : ''}`
+                    ) : (
+                      `~${modelMemoryUsage.estimated?.toFixed(2) || 'Unknown'} GB`
+                    )}
                   </span>
                 </div>
               )}

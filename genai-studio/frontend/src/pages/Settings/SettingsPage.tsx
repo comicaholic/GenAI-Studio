@@ -36,6 +36,14 @@ type Settings = {
     token: string;
     connected: boolean;
   };
+  lmstudio?: {
+    baseUrl: string;
+    connected: boolean;
+  };
+  ollama?: {
+    baseUrl: string;
+    connected: boolean;
+  };
   localModels: {
     selectedGpu: string;
     availableGpus: string[];
@@ -85,6 +93,8 @@ const defaultSettings: Settings = {
   presets: { ocr: [], prompt: [], chat: [] },
   groq: { apiKey: "", connected: false },
   huggingface: { token: "", connected: false },
+  lmstudio: { baseUrl: "http://localhost:1234", connected: false },
+  ollama: { baseUrl: "http://localhost:11434", connected: false },
   localModels: { selectedGpu: "auto", availableGpus: ["auto", "cpu", "cuda:0", "cuda:1", "mps"] },
 };
 
@@ -283,6 +293,32 @@ export default function SettingsPage() {
     } catch (e: any) {
       console.error("HF test error:", e);
       showError("HF Failed", e?.message || "Connection failed.");
+    }
+  };
+
+  const testLmStudio = async () => {
+    try {
+      const baseUrl = settings?.lmstudio?.baseUrl || "http://localhost:1234";
+      const res = await api.post("/settings/lmstudio/test", { baseUrl });
+      const ok = !!res.data?.connected;
+      setSettings((s) => s ? { ...s, lmstudio: { baseUrl, connected: ok } } : s);
+      ok ? showSuccess("LM Studio", "Connected") : showError("LM Studio", res.data?.error || "Connection failed");
+      if (ok) window.dispatchEvent(new Event("models:changed"));
+    } catch (e: any) {
+      showError("LM Studio", e?.message || "Connection failed");
+    }
+  };
+
+  const testOllama = async () => {
+    try {
+      const baseUrl = settings?.ollama?.baseUrl || "http://localhost:11434";
+      const res = await api.post("/settings/ollama/test", { baseUrl });
+      const ok = !!res.data?.connected;
+      setSettings((s) => s ? { ...s, ollama: { baseUrl, connected: ok } } : s);
+      ok ? showSuccess("Ollama", "Connected") : showError("Ollama", res.data?.error || "Connection failed");
+      if (ok) window.dispatchEvent(new Event("models:changed"));
+    } catch (e: any) {
+      showError("Ollama", e?.message || "Connection failed");
     }
   };
 
@@ -1175,6 +1211,51 @@ export default function SettingsPage() {
                 </div>
 
                 <div style={{ display: "grid", gap: 20 }}>
+                  {/* External local servers */}
+                  <div style={{
+                    display: "grid",
+                    gap: 16,
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 16
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>Local Model Servers</div>
+                    </div>
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500 }}>LM Studio Base URL</label>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input
+                            value={settings.lmstudio?.baseUrl || ""}
+                            onChange={(e) => updateSetting("lmstudio.baseUrl", e.target.value)}
+                            placeholder="http://localhost:1234"
+                            style={input}
+                          />
+                          <button style={btnBlue} onClick={testLmStudio}>Test</button>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                          Status: <b style={{ color: settings.lmstudio?.connected ? "#10b981" : "#ef4444" }}>{settings.lmstudio?.connected ? "Connected" : "Not connected"}</b>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500 }}>Ollama Base URL</label>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input
+                            value={settings.ollama?.baseUrl || ""}
+                            onChange={(e) => updateSetting("ollama.baseUrl", e.target.value)}
+                            placeholder="http://localhost:11434"
+                            style={input}
+                          />
+                          <button style={btnBlue} onClick={testOllama}>Test</button>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                          Status: <b style={{ color: settings.ollama?.connected ? "#10b981" : "#ef4444" }}>{settings.ollama?.connected ? "Connected" : "Not connected"}</b>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>GPU Selection</label>
                     <select
