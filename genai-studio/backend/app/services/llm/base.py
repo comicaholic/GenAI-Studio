@@ -1,9 +1,0 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Iterable, Optional
-
-class CompletionParams(Dict): ...
-class LLMProvider(ABC):
-    @abstractmethod
-    def list_models(self) -> Iterable[Dict]: ...
-    @abstractmethod
-    def complete(self, prompt: str, params: CompletionParams, files: Optional[list]=None) -> str: ...
