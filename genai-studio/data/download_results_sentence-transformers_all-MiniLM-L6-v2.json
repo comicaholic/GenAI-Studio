@@ -1,1 +1,0 @@
-{"success": false, "error": "Failed to get model info: unsupported operand type(s) for /: 'NoneType' and 'int'", "model_info": null}
