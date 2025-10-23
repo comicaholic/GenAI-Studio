@@ -78,142 +78,181 @@ export default function PromptEvalPage() {
 
   // Allow loading an evaluation from navigation state (HomePage "Load")
   useEffect(() => {
-    const state: any = location.state;
-    const evalToLoad = state?.loadEvaluation;
-    const automationToLoad = state?.loadAutomation;
-    const autoLoadFiles = state?.autoLoadFiles;
-    const autoLoadPreset = state?.autoLoadPreset;
-    const autoRun = state?.autoRun;
-    
-    if (evalToLoad?.type === 'prompt') {
-      try {
-        const used = evalToLoad.usedText || {};
-        setDraft((d) => ({ ...d, prompt: used.promptText ?? d.prompt, context: used.context ?? d.context }));
-        setReference(used.referenceText ?? "");
-        
-        if (evalToLoad.results && typeof evalToLoad.results === 'object') {
-          setScores(evalToLoad.results as any);
-        }
-        
-        // Load preset data if available
-        if (autoLoadPreset && evalToLoad.loadedPreset) {
-          const preset = evalToLoad.loadedPreset;
-          setDraft((d) => ({ ...d, prompt: preset.body || d.prompt }));
+    const loadEvaluationData = async () => {
+      const state: any = location.state;
+      const evalToLoad = state?.loadEvaluation;
+      const automationToLoad = state?.loadAutomation;
+      const autoLoadFiles = state?.autoLoadFiles;
+      const autoLoadPreset = state?.autoLoadPreset;
+      const autoRun = state?.autoRun;
+      
+      if (evalToLoad?.type === 'prompt') {
+        try {
+          const used = evalToLoad.usedText || {};
+          setDraft((d) => ({ ...d, prompt: used.promptText ?? d.prompt, context: used.context ?? d.context }));
+          setReference(used.referenceText ?? "");
           
-          // Apply parameters if they exist
-          if (preset.parameters) {
+          if (evalToLoad.results && typeof evalToLoad.results === 'object') {
+            setScores(evalToLoad.results as any);
+          }
+          
+          // Load parameters from evaluation
+          if (evalToLoad.parameters) {
             setParams(prev => ({
               ...prev,
-              temperature: preset.parameters?.temperature ?? prev.temperature,
-              max_tokens: preset.parameters?.max_tokens ?? prev.max_tokens,
-              top_p: preset.parameters?.top_p ?? prev.top_p,
-              top_k: preset.parameters?.top_k ?? prev.top_k,
+              temperature: evalToLoad.parameters?.temperature ?? prev.temperature,
+              max_tokens: evalToLoad.parameters?.max_tokens ?? prev.max_tokens,
+              top_p: evalToLoad.parameters?.top_p ?? prev.top_p,
+              top_k: evalToLoad.parameters?.top_k ?? prev.top_k,
             }));
           }
           
-          // Apply metrics if they exist
-          if (preset.metrics) {
-            setMetricsState(prev => ({
-              ...prev,
-              ...preset.metrics
-            }));
-          }
+        // Load metrics from evaluation
+        if ((evalToLoad as any).metricsState) {
+          // Use the saved metricsState if available
+          setMetricsState((evalToLoad as any).metricsState);
+        } else if (evalToLoad.metrics && Array.isArray(evalToLoad.metrics)) {
+          // Fallback to reconstructing from metrics array
+          const metricsConfig: MetricState = {
+            rouge: evalToLoad.metrics.includes('rouge'),
+            bleu: evalToLoad.metrics.includes('bleu'),
+            f1: evalToLoad.metrics.includes('f1'),
+            em: evalToLoad.metrics.includes('em'),
+            em_avg: evalToLoad.metrics.includes('em_avg'),
+            bertscore: evalToLoad.metrics.includes('bertscore'),
+            perplexity: evalToLoad.metrics.includes('perplexity'),
+            accuracy: evalToLoad.metrics.includes('accuracy'),
+            accuracy_avg: evalToLoad.metrics.includes('accuracy_avg'),
+            precision: evalToLoad.metrics.includes('precision'),
+            precision_avg: evalToLoad.metrics.includes('precision_avg'),
+            recall: evalToLoad.metrics.includes('recall'),
+            recall_avg: evalToLoad.metrics.includes('recall_avg'),
+          };
+          setMetricsState(metricsConfig);
         }
-        
-        // Load files if autoLoadFiles is enabled and files are available
-        if (autoLoadFiles && evalToLoad.loadedFiles) {
-          const files = evalToLoad.loadedFiles;
           
-          // Process prompt files
-          const promptFiles = files.filter(f => f.type === 'prompt');
-          if (promptFiles.length > 0) {
-            const promptFile = promptFiles[0];
-            if (promptFile.file) {
-              onPromptUpload(promptFile.file);
+          // Load preset data if available
+          if (autoLoadPreset && evalToLoad.loadedPreset) {
+            const preset = evalToLoad.loadedPreset;
+            setDraft((d) => ({ ...d, prompt: preset.body || d.prompt }));
+            
+            // Apply parameters if they exist
+            if (preset.parameters) {
+              setParams(prev => ({
+                ...prev,
+                temperature: preset.parameters?.temperature ?? prev.temperature,
+                max_tokens: preset.parameters?.max_tokens ?? prev.max_tokens,
+                top_p: preset.parameters?.top_p ?? prev.top_p,
+                top_k: preset.parameters?.top_k ?? prev.top_k,
+              }));
+            }
+            
+            // Apply metrics if they exist
+            if (preset.metrics) {
+              setMetricsState(prev => ({
+                ...prev,
+                ...preset.metrics
+              }));
             }
           }
           
-          // Process reference files
-          const referenceFiles = files.filter(f => f.type === 'reference');
-          if (referenceFiles.length > 0) {
-            const refFile = referenceFiles[0];
-            if (refFile.data) {
-              setRefFileName(refFile.fileName);
-              setReference(refFile.data.text);
+          // Load files if autoLoadFiles is enabled and files are available
+          if (autoLoadFiles && evalToLoad.loadedFiles) {
+            const files = evalToLoad.loadedFiles;
+            
+            // Process prompt files
+            const promptFiles = files.filter(f => f.type === 'prompt');
+            if (promptFiles.length > 0) {
+              const promptFile = promptFiles[0];
+              if (promptFile.file) {
+                await onPromptUpload(promptFile.file);
+              }
             }
-          }
-        } else {
-          // Fallback to original file loading logic
-          const promptName: string | undefined = evalToLoad.files?.promptFileName;
-          const refName: string | undefined = evalToLoad.files?.referenceFileName;
-          if (promptName) {
-            (async () => {
+            
+            // Process reference files
+            const referenceFiles = files.filter(f => f.type === 'reference');
+            if (referenceFiles.length > 0) {
+              const refFile = referenceFiles[0];
+              if (refFile.data) {
+                setRefFileName(refFile.fileName);
+                setReference(refFile.data.text);
+              }
+            }
+          } else {
+            // Fallback to original file loading logic
+            const promptName: string | undefined = evalToLoad.files?.promptFileName;
+            const refName: string | undefined = evalToLoad.files?.referenceFileName;
+            if (promptName) {
               try {
                 const res = await api.get(`/files/load`, { params: { kind: 'source', name: promptName }, responseType: 'blob' });
                 const file = new File([res.data], promptName);
                 await onPromptUpload(file);
-              } catch {}
-            })();
-          }
-          if (refName) {
-            (async () => {
+              } catch (error) {
+                console.warn(`Failed to load prompt file ${promptName}:`, error);
+              }
+            }
+            if (refName) {
               try {
                 const data = await loadReferenceByName(refName);
                 setRefFileName(data.filename);
                 setReference(data.text);
-              } catch {}
-            })();
+              } catch (error) {
+                console.warn(`Failed to load reference file ${refName}:`, error);
+              }
+            }
           }
-        }
-        
-        // Auto-run if requested
-        if (autoRun) {
-          // Wait a bit for files to load, then auto-run
-          setTimeout(() => {
-            handleRun();
-          }, 1000);
-        }
-        
-      } catch (error) {
-        console.error("Failed to load evaluation:", error);
-        showError("Load Failed", "Failed to load evaluation data");
-      }
-    } else if (automationToLoad?.type === 'prompt') {
-      try {
-        // Load automation data
-        const firstRun = automationToLoad.runs?.[0];
-        if (firstRun) {
-          setDraft((d) => ({ 
-            ...d, 
-            prompt: firstRun.prompt ?? d.prompt, 
-            context: d.context 
-          }));
-          setReference("");
           
-          // Load files from the first run
-          if (firstRun.promptFileName) {
-            (async () => {
+          // Auto-run if requested
+          if (autoRun) {
+            // Wait a bit for files to load, then auto-run
+            setTimeout(() => {
+              handleRun();
+            }, 1000);
+          }
+          
+        } catch (error) {
+          console.error("Failed to load evaluation:", error);
+          showError("Load Failed", "Failed to load evaluation data");
+        }
+      } else if (automationToLoad?.type === 'prompt') {
+        try {
+          // Load automation data
+          const firstRun = automationToLoad.runs?.[0];
+          if (firstRun) {
+            setDraft((d) => ({ 
+              ...d, 
+              prompt: firstRun.prompt ?? d.prompt, 
+              context: d.context 
+            }));
+            setReference("");
+            
+            // Load files from the first run
+            if (firstRun.promptFileName) {
               try {
                 const res = await api.get(`/files/load`, { params: { kind: 'source', name: firstRun.promptFileName }, responseType: 'blob' });
                 const file = new File([res.data], firstRun.promptFileName);
                 await onPromptUpload(file);
-              } catch {}
-            })();
-          }
-          if (firstRun.referenceFileName) {
-            (async () => {
+              } catch (error) {
+                console.warn(`Failed to load prompt file ${firstRun.promptFileName}:`, error);
+              }
+            }
+            if (firstRun.referenceFileName) {
               try {
                 const data = await loadReferenceByName(firstRun.referenceFileName);
                 setRefFileName(data.filename);
                 setReference(data.text);
-              } catch {}
-            })();
+              } catch (error) {
+                console.warn(`Failed to load reference file ${firstRun.referenceFileName}:`, error);
+              }
+            }
           }
-        }
-      } catch {}
-    }
-  // run once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+        } catch {}
+      }
+    };
+    
+    loadEvaluationData();
+    // run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const { showError, showSuccess } = useNotifications();
@@ -421,6 +460,7 @@ export default function PromptEvalPage() {
           model: { id: selected.id, provider: selected.provider },
           parameters: params,
           metrics: selectedMetrics,
+          metricsState: metricsState, // Save the full metrics state
           usedText: {
             promptText: draft.prompt,
             context: draft.context,

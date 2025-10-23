@@ -1,87 +1,134 @@
 // src/pages/Home/HomePage.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import { SavedEvaluation, SavedChat, SavedAutomation, ModelInfo } from "@/types/history";
 import { historyService } from "@/services/history";
 import { useNavigate } from "react-router-dom";
 import { useModel } from "@/context/ModelContext";
-import HistoryModal from "@/components/HistoryModal/HistoryModal"; // keep if you already have it
+import HistoryModal from "@/components/HistoryModal/HistoryModal";
 import AutomationProgressModal from "@/components/AutomationProgress/AutomationProgressModal";
 import AutomationGroupModal from "@/components/AutomationModal/AutomationGroupModal";
 import RunDetailModal from "@/components/AutomationModal/RunDetailModal";
 import { api } from "@/services/api";
 
-type Item = (SavedEvaluation & { itemType: "evaluation" }) | (SavedChat & { itemType: "chat" }) | ({ setId: string, name: string, automations: SavedAutomation[], evaluations: SavedEvaluation[], totalRuns: number, successCount: number, errorCount: number, createdAt: string, lastRunAt: string | null, itemType: "automationSet" });
+// Improved type definitions
+interface AutomationSet {
+  setId: string;
+  name: string;
+  automations: SavedAutomation[];
+  evaluations: SavedEvaluation[];
+  totalRuns: number;
+  successCount: number;
+  errorCount: number;
+  createdAt: string;
+  lastRunAt: string | null;
+  itemType: "automationSet";
+}
+
+type Item = 
+  | (SavedEvaluation & { itemType: "evaluation" }) 
+  | (SavedChat & { itemType: "chat" }) 
+  | AutomationSet;
+
+interface LoadingState {
+  data: boolean;
+  files: boolean;
+  modelValidation: boolean;
+}
+
+interface ErrorState {
+  data?: string;
+  files?: string;
+  modelValidation?: string;
+}
 
 export default function HomePage() {
   const [evaluations, setEvaluations] = useState<SavedEvaluation[]>([]);
   const [chats, setChats] = useState<SavedChat[]>([]);
-  const [automationSets, setAutomationSets] = useState<any[]>([]);
+  const [automationSets, setAutomationSets] = useState<AutomationSet[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "ocr" | "prompt" | "chats" | "automations">("all");
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
   const [groqConnected, setGroqConnected] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState<LoadingState>({
+    data: true,
+    files: false,
+    modelValidation: false
+  });
+  const [errors, setErrors] = useState<ErrorState>({});
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
-  const [selectedAutomationSet, setSelectedAutomationSet] = useState<any | null>(null);
+  const [selectedAutomationSet, setSelectedAutomationSet] = useState<AutomationSet | null>(null);
   const [selectedRun, setSelectedRun] = useState<{automation: SavedAutomation, runIndex: number} | null>(null);
 
   const navigate = useNavigate();
   const { setSelected } = useModel();
 
+  // Improved data loading with better error handling
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(prev => ({ ...prev, data: true }));
+      setErrors(prev => ({ ...prev, data: undefined }));
+      
+      const [evaluationsData, chatsData, automationSetsData, settingsData] = await Promise.all([
+        historyService.getEvaluations().catch(err => {
+          console.error("Failed to load evaluations:", err);
+          return [];
+        }),
+        historyService.getChats().catch(err => {
+          console.error("Failed to load chats:", err);
+          return [];
+        }),
+        historyService.getAutomationSets().catch(err => {
+          console.error("Failed to load automation sets:", err);
+          return [];
+        }),
+        api.get("/settings/settings").catch(err => {
+          console.warn("Failed to load settings:", err);
+          return { data: { groq: { connected: false } } };
+        })
+      ]);
+      
+      setEvaluations(evaluationsData ?? []);
+      setChats(chatsData ?? []);
+      setAutomationSets(automationSetsData ?? []);
+      setGroqConnected(Boolean(settingsData.data?.groq?.connected));
+      
+    } catch (err) {
+      console.error("Failed to load homepage data:", err);
+      setErrors(prev => ({ ...prev, data: "Failed to load data. Please try refreshing the page." }));
+      setEvaluations([]);
+      setChats([]);
+      setAutomationSets([]);
+      setGroqConnected(false);
+    } finally {
+      setLoading(prev => ({ ...prev, data: false }));
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      try {
-        setIsLoading(true);
-        const [evaluationsData, chatsData, automationSetsData, settingsData] = await Promise.all([
-          historyService.getEvaluations(),
-          historyService.getChats(),
-          historyService.getAutomationSets(),
-          api.get("/settings/settings").catch(() => ({ data: { groq: { connected: false } } }))
-        ]);
-        if (cancelled) return;
-        setEvaluations(evaluationsData ?? []);
-        setChats(chatsData ?? []);
-        setAutomationSets(automationSetsData ?? []);
-        setGroqConnected(Boolean(settingsData.data?.groq?.connected));
-        
-        // Debug logging
-        console.log('HomePage loaded data:', {
-          evaluations: evaluationsData?.length || 0,
-          chats: chatsData?.length || 0,
-          automationSets: automationSetsData?.length || 0,
-          automationSetsData: automationSetsData
-        });
-      } catch (err) {
-        if (cancelled) return;
-        console.error("Home: failed to load history", err);
-        setEvaluations([]);
-        setChats([]);
-        setAutomationSets([]);
-        setGroqConnected(false);
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
+      await loadData();
+      if (cancelled) return;
     };
     // Defer slightly to ensure router shell is ready
     const t = setTimeout(load, 0);
     return () => { cancelled = true; clearTimeout(t); };
   }, []);
 
-  // pass rate: safe
-  const passRate = (() => {
+  // Memoized pass rate calculation
+  const passRate = useMemo(() => {
     if (!evaluations || !evaluations.length) return 0;
     const passing = evaluations.filter((e) => {
-      const rouge = (e as any)?.results?.rouge ?? 0;
+      const rouge = e.results?.rouge ?? 0;
       return rouge > 0.6;
     }).length;
     return Math.round((passing / Math.max(evaluations.length, 1)) * 100);
-  })();
+  }, [evaluations]);
 
-  // Create automation set items
-  const automationSetItems: Array<{setId: string, name: string, automations: SavedAutomation[], evaluations: SavedEvaluation[], totalRuns: number, successCount: number, errorCount: number, createdAt: string, lastRunAt: string | null, itemType: "automationSet"}> = 
+  // Memoized automation set items creation
+  const automationSetItems: AutomationSet[] = useMemo(() => 
     (automationSets || []).map((set) => ({
       setId: set.setId,
       name: set.name,
@@ -93,31 +140,25 @@ export default function HomePage() {
       createdAt: set.createdAt,
       lastRunAt: set.lastRunAt,
       itemType: "automationSet" as const
-    }));
+    })), [automationSets]
+  );
 
-  // merge
-  const allItems: Item[] = [
+  // Memoized all items creation
+  const allItems: Item[] = useMemo(() => [
     ...(evaluations || []).map((e) => ({ ...e, itemType: "evaluation" as const })),
     ...(chats || []).map((c) => ({ ...c, itemType: "chat" as const })),
     ...automationSetItems.map((a) => ({ ...a, itemType: "automationSet" as const })),
-  ];
+  ], [evaluations, chats, automationSetItems]);
   
-  // Debug logging
-  console.log('All items:', {
-    total: allItems.length,
-    evaluations: allItems.filter(i => i.itemType === "evaluation").length,
-    chats: allItems.filter(i => i.itemType === "chat").length,
-    automationSets: allItems.filter(i => i.itemType === "automationSet").length,
-    automationSetItems: allItems.filter(i => i.itemType === "automationSet")
-  });
+  // Memoized provider filters
+  const providerFilters = useMemo(() => 
+    activeFilters
+      .filter((f) => f.startsWith("provider:"))
+      .map((f) => f.split(":")[1]), [activeFilters]
+  );
 
-  // provider filter parsing
-  const providerFilters = activeFilters
-    .filter((f) => f.startsWith("provider:"))
-    .map((f) => f.split(":")[1]);
-
-  // filtering
-  const filtered = allItems.filter((item) => {
+  // Memoized filtering logic
+  const filtered = useMemo(() => allItems.filter((item) => {
     const isAutomationSet = item.itemType === "automationSet";
     const tabOK =
       activeTab === "all" ||
@@ -129,86 +170,87 @@ export default function HomePage() {
     const s = searchQuery.trim().toLowerCase();
     const searchOK =
       !s ||
-      ((isAutomationSet ? (item as any).name : item.title) ?? "").toLowerCase().includes(s) ||
-      (item as any)?.model?.id?.toLowerCase?.().includes(s);
+      ((isAutomationSet ? (item as AutomationSet).name : item.title) ?? "").toLowerCase().includes(s) ||
+      (isAutomationSet ? (item as AutomationSet).automations[0]?.model?.id : item.model?.id)?.toLowerCase?.().includes(s);
 
-    const provider = (item as any)?.model?.provider?.toLowerCase?.() || "";
-    const providerOK = providerFilters.length === 0 || providerFilters.includes(provider);
+    const provider = isAutomationSet 
+      ? (item as AutomationSet).automations[0]?.model?.provider 
+      : item.model?.provider;
+    const providerLower = provider?.toLowerCase?.() || "";
+    const providerOK = providerFilters.length === 0 || providerFilters.includes(providerLower);
 
-    const result = tabOK && searchOK && providerOK;
-    
-    // Debug logging for automation sets
-    if (isAutomationSet) {
-      console.log('Automation set filtering:', {
-        item: item,
-        activeTab,
-        tabOK,
-        searchOK,
-        providerOK,
-        result
-      });
-    }
+    return tabOK && searchOK && providerOK;
+  }), [allItems, activeTab, searchQuery, providerFilters]);
 
-    return result;
-  });
-
-  // Enhanced file loading helper
-  const loadEvaluationFiles = async (evaluation: SavedEvaluation) => {
-    const filePromises: Promise<any>[] = [];
-    
-    // Load source file if available
-    if (evaluation.files?.sourceFileName) {
-      filePromises.push(
-        api.get(`/files/load`, { 
-          params: { kind: "source", name: evaluation.files.sourceFileName }, 
-          responseType: "blob" 
-        }).then(res => ({
-          type: 'source',
-          file: new File([res.data], evaluation.files.sourceFileName!),
-          fileName: evaluation.files.sourceFileName!
-        })).catch(err => {
-          console.warn(`Failed to load source file ${evaluation.files.sourceFileName}:`, err);
-          return null;
-        })
-      );
+  // Enhanced file loading helper with better error handling
+  const loadEvaluationFiles = useCallback(async (evaluation: SavedEvaluation) => {
+    try {
+      setLoading(prev => ({ ...prev, files: true }));
+      setErrors(prev => ({ ...prev, files: undefined }));
+      
+      const filePromises: Promise<any>[] = [];
+      
+      // Load source file if available
+      if (evaluation.files?.sourceFileName) {
+        filePromises.push(
+          api.get(`/files/load`, { 
+            params: { kind: "source", name: evaluation.files.sourceFileName }, 
+            responseType: "blob" 
+          }).then(res => ({
+            type: 'source',
+            file: new File([res.data], evaluation.files.sourceFileName!),
+            fileName: evaluation.files.sourceFileName!
+          })).catch(err => {
+            console.warn(`Failed to load source file ${evaluation.files.sourceFileName}:`, err);
+            return null;
+          })
+        );
+      }
+      
+      // Load reference file if available
+      if (evaluation.files?.referenceFileName) {
+        filePromises.push(
+          api.get(`/files/load`, { 
+            params: { kind: "reference", name: evaluation.files.referenceFileName } 
+          }).then(res => ({
+            type: 'reference',
+            data: res.data,
+            fileName: evaluation.files.referenceFileName!
+          })).catch(err => {
+            console.warn(`Failed to load reference file ${evaluation.files.referenceFileName}:`, err);
+            return null;
+          })
+        );
+      }
+      
+      // Load prompt file if available
+      if (evaluation.files?.promptFileName) {
+        filePromises.push(
+          api.get(`/files/load`, { 
+            params: { kind: "source", name: evaluation.files.promptFileName }, 
+            responseType: "blob" 
+          }).then(res => ({
+            type: 'prompt',
+            file: new File([res.data], evaluation.files.promptFileName!),
+            fileName: evaluation.files.promptFileName!
+          })).catch(err => {
+            console.warn(`Failed to load prompt file ${evaluation.files.promptFileName}:`, err);
+            return null;
+          })
+        );
+      }
+      
+      const results = await Promise.all(filePromises);
+      return results.filter(Boolean);
+      
+    } catch (error) {
+      console.error("Failed to load evaluation files:", error);
+      setErrors(prev => ({ ...prev, files: "Failed to load some files" }));
+      return [];
+    } finally {
+      setLoading(prev => ({ ...prev, files: false }));
     }
-    
-    // Load reference file if available
-    if (evaluation.files?.referenceFileName) {
-      filePromises.push(
-        api.get(`/files/load`, { 
-          params: { kind: "reference", name: evaluation.files.referenceFileName } 
-        }).then(res => ({
-          type: 'reference',
-          data: res.data,
-          fileName: evaluation.files.referenceFileName!
-        })).catch(err => {
-          console.warn(`Failed to load reference file ${evaluation.files.referenceFileName}:`, err);
-          return null;
-        })
-      );
-    }
-    
-    // Load prompt file if available
-    if (evaluation.files?.promptFileName) {
-      filePromises.push(
-        api.get(`/files/load`, { 
-          params: { kind: "source", name: evaluation.files.promptFileName }, 
-          responseType: "blob" 
-        }).then(res => ({
-          type: 'prompt',
-          file: new File([res.data], evaluation.files.promptFileName!),
-          fileName: evaluation.files.promptFileName!
-        })).catch(err => {
-          console.warn(`Failed to load prompt file ${evaluation.files.promptFileName}:`, err);
-          return null;
-        })
-      );
-    }
-    
-    const results = await Promise.all(filePromises);
-    return results.filter(Boolean);
-  };
+  }, []);
 
   // Enhanced preset loading helper
   const loadEvaluationPreset = (evaluation: SavedEvaluation) => {
@@ -218,7 +260,7 @@ export default function HomePage() {
       title: `${evaluation.title} (Restored)`,
       body: evaluation.usedText?.promptText || "",
       parameters: evaluation.parameters || {},
-      metrics: evaluation.metrics?.reduce((acc, metric) => {
+      metrics: (evaluation as any).metricsState || evaluation.metrics?.reduce((acc, metric) => {
         acc[metric] = true;
         return acc;
       }, {} as Record<string, boolean>) || {},
@@ -229,9 +271,12 @@ export default function HomePage() {
     return preset;
   };
 
-  // Enhanced model validation helper
-  const validateModelAvailability = async (model: ModelInfo) => {
+  // Enhanced model validation helper with better error handling
+  const validateModelAvailability = useCallback(async (model: ModelInfo) => {
     try {
+      setLoading(prev => ({ ...prev, modelValidation: true }));
+      setErrors(prev => ({ ...prev, modelValidation: undefined }));
+      
       // Check if model is available by trying to get model info
       const response = await api.get("/models/scan");
       const availableModels = response.data.local || [];
@@ -247,12 +292,15 @@ export default function HomePage() {
       };
     } catch (error) {
       console.warn("Failed to validate model availability:", error);
+      setErrors(prev => ({ ...prev, modelValidation: "Failed to validate model availability" }));
       return {
         available: true, // Assume available if we can't check
         fallback: model
       };
+    } finally {
+      setLoading(prev => ({ ...prev, modelValidation: false }));
     }
-  };
+  }, []);
 
   // actions
   const handleLoad = async (item: Item) => {
@@ -499,6 +547,14 @@ export default function HomePage() {
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#0b1220" }}>
+      <style>
+        {`
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}
+      </style>
       <LeftRail />
 
       {/* Page frame: header (sticky) + scrollable content; left rail width accounted with marginLeft */}
@@ -538,6 +594,54 @@ export default function HomePage() {
             </div>
             
             <div style={{ display: "flex", gap: 12 }}>
+              {/* Refresh Button */}
+              <button
+                onClick={loadData}
+                disabled={loading.data}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 16px",
+                  background: loading.data 
+                    ? "#6b7280" 
+                    : "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                  border: "none",
+                  borderRadius: 8,
+                  color: "#ffffff",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: loading.data ? "not-allowed" : "pointer",
+                  transition: "all 0.2s ease",
+                  boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading.data) {
+                    e.currentTarget.style.transform = "translateY(-1px)";
+                    e.currentTarget.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.15)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!loading.data) {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.1)";
+                  }
+                }}
+              >
+                <svg 
+                  width="16" 
+                  height="16" 
+                  viewBox="0 0 24 24" 
+                  fill="currentColor"
+                  style={{
+                    animation: loading.data ? "spin 1s linear infinite" : "none"
+                  }}
+                >
+                  <path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/>
+                </svg>
+                {loading.data ? "Refreshing..." : "Refresh"}
+              </button>
+              
               <div style={{ 
                 display: "flex", 
                 alignItems: "center", 
@@ -811,7 +915,7 @@ export default function HomePage() {
 
           {/* Modern Cards Grid */}
           <div style={{ display: "grid", gap: 20, gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
-            {isLoading && (
+            {loading.data && (
               <div style={{ 
                 gridColumn: "1 / -1", 
                 color: "#94a3b8", 
@@ -830,7 +934,41 @@ export default function HomePage() {
                 </div>
               </div>
             )}
-            {!isLoading && filtered.length === 0 && (
+            {errors.data && (
+              <div style={{ 
+                gridColumn: "1 / -1", 
+                color: "#ef4444", 
+                padding: 48, 
+                textAlign: "center",
+                background: "#0f172a",
+                border: "1px solid #ef4444",
+                borderRadius: 16,
+                boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 8 }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12,2C17.5,2 22,6.5 22,12S17.5,22 12,22 2,17.5 2,12 6.5,2 12,2M12,20C16.4,20 20,16.4 20,12S16.4,4 12,4 4,7.6 4,12 7.6,20 12,20M11,7H13V9H11V7M11,11H13V17H11V11Z"/>
+                  </svg>
+                  <span style={{ fontSize: 16, fontWeight: 500 }}>{errors.data}</span>
+                </div>
+                <button
+                  onClick={loadData}
+                  style={{
+                    padding: "8px 16px",
+                    background: "#ef4444",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    fontSize: 14,
+                    fontWeight: 500
+                  }}
+                >
+                  Try Again
+                </button>
+              </div>
+            )}
+            {!loading.data && !errors.data && filtered.length === 0 && (
               <div style={{ 
                 gridColumn: "1 / -1", 
                 color: "#94a3b8", 
@@ -851,21 +989,25 @@ export default function HomePage() {
               </div>
             )}
 
-            {!isLoading &&
+            {!loading.data && !errors.data &&
               filtered.map((item) => {
                 const isEval = item.itemType === "evaluation";
                 const isChat = item.itemType === "chat";
                 const isAutomationSet = item.itemType === "automationSet";
-                const modelId = (item as any)?.model?.id ?? "unknown";
-                const provider = (item as any)?.model?.provider ?? "local";
-                const metrics = (item as any)?.results ?? {};
+                const modelId = isAutomationSet 
+                  ? (item as AutomationSet).automations[0]?.model?.id ?? "unknown"
+                  : item.model?.id ?? "unknown";
+                const provider = isAutomationSet 
+                  ? (item as AutomationSet).automations[0]?.model?.provider ?? "local"
+                  : item.model?.provider ?? "local";
+                const metrics = isEval ? (item as SavedEvaluation).results ?? {} : {};
                 const rouge = typeof metrics.rouge === "number" ? metrics.rouge : undefined;
                 const bleu = typeof metrics.bleu === "number" ? metrics.bleu : undefined;
                 const f1 = typeof metrics.f1 === "number" ? metrics.f1 : undefined;
 
                 return (
                   <article
-                    key={isAutomationSet ? (item as any).setId : item.id}
+                    key={isAutomationSet ? (item as AutomationSet).setId : item.id}
                     onClick={() => {
                       if (item.itemType === "automationSet") {
                         setSelectedAutomationSet(item);
@@ -949,9 +1091,9 @@ export default function HomePage() {
                               color: "#e2e8f0",
                               marginBottom: 4,
                             }}
-                            title={isAutomationSet ? (item as any).name : item.title}
+                            title={isAutomationSet ? (item as AutomationSet).name : item.title}
                           >
-                            {isAutomationSet ? (item as any).name : item.title}
+                            {isAutomationSet ? (item as AutomationSet).name : item.title}
                           </div>
                           <div style={{ 
                             color: "#94a3b8", 
@@ -965,12 +1107,12 @@ export default function HomePage() {
                             </svg>
                             Last run:{" "}
                             {item.itemType === "evaluation"
-                              ? (item as any).finishedAt
-                                ? new Date((item as any).finishedAt).toLocaleDateString('en-GB')
-                                : ((item as any).startedAt ? new Date((item as any).startedAt).toLocaleDateString('en-GB') : "—")
+                              ? (item as SavedEvaluation).finishedAt
+                                ? new Date((item as SavedEvaluation).finishedAt as string).toLocaleDateString('en-GB')
+                                : ((item as SavedEvaluation).startedAt ? new Date((item as SavedEvaluation).startedAt as string).toLocaleDateString('en-GB') : "—")
                               : item.itemType === "automationSet"
-                              ? (item as any).lastRunAt
-                                ? new Date((item as any).lastRunAt).toLocaleDateString('en-GB')
+                              ? (item as AutomationSet).lastRunAt
+                                ? new Date((item as AutomationSet).lastRunAt as string).toLocaleDateString('en-GB')
                                 : "—"
                               : (item as SavedChat).lastActivityAt
                               ? new Date((item as SavedChat).lastActivityAt).toLocaleDateString('en-GB')
@@ -1035,7 +1177,7 @@ export default function HomePage() {
                             color: "#e2e8f0",
                             fontWeight: 500
                           }}>
-                            {(item as any).automations.length} automations
+                            {(item as AutomationSet).automations.length} automations
                           </span>
                           <span style={{
                             ...tagStyle,
@@ -1044,7 +1186,7 @@ export default function HomePage() {
                             color: "#e2e8f0",
                             fontWeight: 500
                           }}>
-                            {(item as any).totalRuns} total runs
+                            {(item as AutomationSet).totalRuns} total runs
                           </span>
                         </>
                       )}
@@ -1102,7 +1244,7 @@ export default function HomePage() {
                           }}>
                             <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>Automations</span>
                             <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 600 }}>
-                              {(item as any).automations.length}
+                              {(item as AutomationSet).automations.length}
                             </span>
                           </div>
                           <div style={{ 
@@ -1116,7 +1258,7 @@ export default function HomePage() {
                           }}>
                             <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>Total Runs</span>
                             <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 600 }}>
-                              {(item as any).totalRuns}
+                              {(item as AutomationSet).totalRuns}
                             </span>
                           </div>
                         </div>
@@ -1136,7 +1278,7 @@ export default function HomePage() {
                           }}>
                             <span style={{ fontSize: 12, color: "#10b981", fontWeight: 500 }}>Success</span>
                             <span style={{ fontSize: 13, color: "#10b981", fontWeight: 600 }}>
-                              {(item as any).successCount}
+                              {(item as AutomationSet).successCount}
                             </span>
                           </div>
                           <div style={{ 
@@ -1150,11 +1292,11 @@ export default function HomePage() {
                           }}>
                             <span style={{ fontSize: 12, color: "#ef4444", fontWeight: 500 }}>Errors</span>
                             <span style={{ fontSize: 13, color: "#ef4444", fontWeight: 600 }}>
-                              {(item as any).errorCount}
+                              {(item as AutomationSet).errorCount}
                             </span>
                           </div>
                         </div>
-                        {(item as any).automations.length > 0 && (
+                        {(item as AutomationSet).automations.length > 0 && (
                           <div style={{ 
                             marginTop: 12,
                             padding: "8px 12px",
@@ -1166,7 +1308,7 @@ export default function HomePage() {
                               Latest Automation Type
                             </div>
                             <div style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 500 }}>
-                              {(item as any).automations[0]?.type?.toUpperCase() || 'UNKNOWN'}
+                              {(item as AutomationSet).automations[0]?.type?.toUpperCase() || 'UNKNOWN'}
                             </div>
                           </div>
                         )}

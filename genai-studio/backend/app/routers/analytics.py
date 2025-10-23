@@ -64,6 +64,7 @@ def load_groq_usage() -> List[Dict]:
 
 def save_groq_usage(usage_data: List[Dict]):
     """Save Groq usage data to file with compression"""
+    backup_file = None
     GROQ_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
         # Create backup of existing file
@@ -80,14 +81,13 @@ def save_groq_usage(usage_data: List[Dict]):
             f.write(compressed_data)
             
         # Remove backup if save was successful
-        if backup_file.exists():
+        if backup_file and backup_file.exists():
             backup_file.unlink()
             
     except Exception as e:
         print(f"Error saving Groq usage: {e}")
         # Restore backup if save failed
-        backup_file = GROQ_USAGE_FILE.with_suffix('.json.backup')
-        if backup_file.exists():
+        if backup_file and backup_file.exists():
             backup_file.rename(GROQ_USAGE_FILE)
 
 def load_system_metrics() -> List[Dict]:
@@ -115,6 +115,7 @@ def load_system_metrics() -> List[Dict]:
 
 def save_system_metrics(metrics_data: List[Dict]):
     """Save system metrics data to file with compression"""
+    backup_file = None
     try:
         SYSTEM_METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
         
@@ -132,14 +133,13 @@ def save_system_metrics(metrics_data: List[Dict]):
             f.write(compressed_data)
             
         # Remove backup if save was successful
-        if backup_file.exists():
+        if backup_file and backup_file.exists():
             backup_file.unlink()
             
     except Exception as e:
         print(f"Error saving system metrics: {e}")
         # Restore backup if save failed
-        backup_file = SYSTEM_METRICS_FILE.with_suffix('.json.backup')
-        if backup_file.exists():
+        if backup_file and backup_file.exists():
             backup_file.rename(SYSTEM_METRICS_FILE)
 
 def record_system_metrics():
