@@ -77,46 +77,13 @@ def chat_complete(model_id: str, messages, **params) -> str:
         
         duration_ms = int((time.time() - start_time) * 1000)
         
-        # Record usage analytics
-        try:
-            from app.routers.analytics import record_groq_usage
-            
-            # Calculate tokens and cost
-            prompt_text = "\n".join([m.get("content", "") for m in messages])
-            prompt_tokens = len(prompt_text.split())  # Rough estimate
-            completion_tokens = len(j["choices"][0]["message"]["content"].split())  # Rough estimate
-            total_tokens = prompt_tokens + completion_tokens
-            
-            # Estimate cost (these are rough estimates, actual costs may vary)
-            cost_per_token = 0.000001  # Rough estimate
-            cost_usd = total_tokens * cost_per_token
-            
-            record_groq_usage(
-                model=mid,
-                tokens_used=total_tokens,
-                cost_usd=cost_usd,
-                duration_ms=duration_ms,
-                success=True
-            )
-        except Exception as e:
-            print(f"Error recording Groq usage: {e}")
+        # Analytics recording is handled centrally in llm.py router
         
         return j["choices"][0]["message"]["content"]
         
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
         
-        # Record failed request
-        try:
-            from app.routers.analytics import record_groq_usage
-            record_groq_usage(
-                model=mid,
-                tokens_used=0,
-                cost_usd=0.0,
-                duration_ms=duration_ms,
-                success=False
-            )
-        except Exception as analytics_error:
-            print(f"Error recording failed Groq usage: {analytics_error}")
+        # Analytics recording is handled centrally in llm.py router
         
         raise e

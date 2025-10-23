@@ -30,6 +30,26 @@ def save_enabled_ids(enabled_ids):
     with open(_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
+def cleanup_visibility_settings(available_model_ids):
+    """
+    Clean up visibility settings by removing IDs for models that no longer exist.
+    This prevents the "no models available" issue when integrations are not running.
+    """
+    enabled_ids = load_enabled_ids()
+    if enabled_ids is None:
+        return  # No filtering applied
+    
+    available_set = set(available_model_ids)
+    valid_enabled_ids = [id for id in enabled_ids if id in available_set]
+    
+    # If we have valid enabled IDs, update the settings
+    if valid_enabled_ids:
+        save_enabled_ids(valid_enabled_ids)
+    else:
+        # No valid enabled IDs found, reset to "all enabled"
+        save_enabled_ids(None)
+        print("Cleaned up visibility settings: reset to all enabled due to no matching models")
+
 
 
 

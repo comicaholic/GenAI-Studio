@@ -1,7 +1,7 @@
 // src/pages/Home/HomePage.tsx
 import React, { useState, useEffect } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
-import { SavedEvaluation, SavedChat, SavedAutomation } from "@/types/history";
+import { SavedEvaluation, SavedChat, SavedAutomation, ModelInfo } from "@/types/history";
 import { historyService } from "@/services/history";
 import { useNavigate } from "react-router-dom";
 import { useModel } from "@/context/ModelContext";
@@ -152,6 +152,108 @@ export default function HomePage() {
     return result;
   });
 
+  // Enhanced file loading helper
+  const loadEvaluationFiles = async (evaluation: SavedEvaluation) => {
+    const filePromises: Promise<any>[] = [];
+    
+    // Load source file if available
+    if (evaluation.files?.sourceFileName) {
+      filePromises.push(
+        api.get(`/files/load`, { 
+          params: { kind: "source", name: evaluation.files.sourceFileName }, 
+          responseType: "blob" 
+        }).then(res => ({
+          type: 'source',
+          file: new File([res.data], evaluation.files.sourceFileName!),
+          fileName: evaluation.files.sourceFileName!
+        })).catch(err => {
+          console.warn(`Failed to load source file ${evaluation.files.sourceFileName}:`, err);
+          return null;
+        })
+      );
+    }
+    
+    // Load reference file if available
+    if (evaluation.files?.referenceFileName) {
+      filePromises.push(
+        api.get(`/files/load`, { 
+          params: { kind: "reference", name: evaluation.files.referenceFileName } 
+        }).then(res => ({
+          type: 'reference',
+          data: res.data,
+          fileName: evaluation.files.referenceFileName!
+        })).catch(err => {
+          console.warn(`Failed to load reference file ${evaluation.files.referenceFileName}:`, err);
+          return null;
+        })
+      );
+    }
+    
+    // Load prompt file if available
+    if (evaluation.files?.promptFileName) {
+      filePromises.push(
+        api.get(`/files/load`, { 
+          params: { kind: "source", name: evaluation.files.promptFileName }, 
+          responseType: "blob" 
+        }).then(res => ({
+          type: 'prompt',
+          file: new File([res.data], evaluation.files.promptFileName!),
+          fileName: evaluation.files.promptFileName!
+        })).catch(err => {
+          console.warn(`Failed to load prompt file ${evaluation.files.promptFileName}:`, err);
+          return null;
+        })
+      );
+    }
+    
+    const results = await Promise.all(filePromises);
+    return results.filter(Boolean);
+  };
+
+  // Enhanced preset loading helper
+  const loadEvaluationPreset = (evaluation: SavedEvaluation) => {
+    // Create a synthetic preset from the evaluation data
+    const preset = {
+      id: `eval-${evaluation.id}`,
+      title: `${evaluation.title} (Restored)`,
+      body: evaluation.usedText?.promptText || "",
+      parameters: evaluation.parameters || {},
+      metrics: evaluation.metrics?.reduce((acc, metric) => {
+        acc[metric] = true;
+        return acc;
+      }, {} as Record<string, boolean>) || {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    
+    return preset;
+  };
+
+  // Enhanced model validation helper
+  const validateModelAvailability = async (model: ModelInfo) => {
+    try {
+      // Check if model is available by trying to get model info
+      const response = await api.get("/models/scan");
+      const availableModels = response.data.local || [];
+      
+      // Check if the model exists in available models
+      const modelExists = availableModels.some((m: any) => 
+        m.id === model.id || m.name === model.id
+      );
+      
+      return {
+        available: modelExists,
+        fallback: modelExists ? model : availableModels[0] || model
+      };
+    } catch (error) {
+      console.warn("Failed to validate model availability:", error);
+      return {
+        available: true, // Assume available if we can't check
+        fallback: model
+      };
+    }
+  };
+
   // actions
   const handleLoad = async (item: Item) => {
     if (item.itemType === "automationSet") {
@@ -160,21 +262,94 @@ export default function HomePage() {
       return;
     }
 
-    const provider = (item as any)?.model?.provider?.toLowerCase?.() || "local";
-    const id = (item as any)?.model?.id || "unknown";
-
-    setSelected({ id, label: id, provider: provider === "groq" ? "groq" : "local" });
-
     if (item.itemType === "evaluation") {
-      navigate(item.type === "ocr" ? "/ocr" : "/prompt", { state: { loadEvaluation: item } });
+      const evaluation = item as SavedEvaluation;
+      
+      // Validate and potentially adjust model
+      const modelValidation = await validateModelAvailability(evaluation.model);
+      const finalModel = modelValidation.fallback;
+      
+      // Set the model context
+      const provider = finalModel.provider?.toLowerCase?.() || "local";
+      const id = finalModel.id || "unknown";
+      setSelected({ id, label: id, provider: provider === "groq" ? "groq" : "local" });
+
+      // Load files, presets, and other data
+      const files = await loadEvaluationFiles(evaluation);
+      const preset = loadEvaluationPreset(evaluation);
+      
+      // Create enhanced evaluation data with all loaded information
+      const enhancedEvaluation = {
+        ...evaluation,
+        model: finalModel,
+        loadedFiles: files,
+        loadedPreset: preset,
+        modelValidation: modelValidation
+      };
+
+      navigate(evaluation.type === "ocr" ? "/ocr" : "/prompt", { 
+        state: { 
+          loadEvaluation: enhancedEvaluation,
+          autoLoadFiles: true,
+          autoLoadPreset: true
+        } 
+      });
     } else {
+      const chat = item as SavedChat;
+      const provider = chat.model?.provider?.toLowerCase?.() || "local";
+      const id = chat.model?.id || "unknown";
+      setSelected({ id, label: id, provider: provider === "groq" ? "groq" : "local" });
       navigate("/chat", { state: { loadChat: item } });
     }
   };
 
   const handleRun = async (item: Item) => {
-    await handleLoad(item);
-    // target page can auto-run if implemented
+    if (item.itemType === "automationSet") {
+      // For automation sets, run the first automation
+      handleAutomationSetRun(item);
+      return;
+    }
+
+    if (item.itemType === "evaluation") {
+      const evaluation = item as SavedEvaluation;
+      
+      // Validate and potentially adjust model
+      const modelValidation = await validateModelAvailability(evaluation.model);
+      const finalModel = modelValidation.fallback;
+      
+      // Set the model context
+      const provider = finalModel.provider?.toLowerCase?.() || "local";
+      const id = finalModel.id || "unknown";
+      setSelected({ id, label: id, provider: provider === "groq" ? "groq" : "local" });
+
+      // Load files, presets, and other data
+      const files = await loadEvaluationFiles(evaluation);
+      const preset = loadEvaluationPreset(evaluation);
+      
+      // Create enhanced evaluation data with all loaded information
+      const enhancedEvaluation = {
+        ...evaluation,
+        model: finalModel,
+        loadedFiles: files,
+        loadedPreset: preset,
+        modelValidation: modelValidation
+      };
+
+      navigate(evaluation.type === "ocr" ? "/ocr" : "/prompt", { 
+        state: { 
+          loadEvaluation: enhancedEvaluation,
+          autoLoadFiles: true,
+          autoLoadPreset: true,
+          autoRun: true // This will trigger automatic execution
+        } 
+      });
+    } else {
+      const chat = item as SavedChat;
+      const provider = chat.model?.provider?.toLowerCase?.() || "local";
+      const id = chat.model?.id || "unknown";
+      setSelected({ id, label: id, provider: provider === "groq" ? "groq" : "local" });
+      navigate("/chat", { state: { loadChat: item, autoRun: true } });
+    }
   };
 
   // Automation set modal handlers

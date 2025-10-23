@@ -28,6 +28,8 @@ import AutomationModal, { AutomationConfig } from '@/components/AutomationModal/
 import { automationStore } from '@/stores/automationStore';
 import AutomationProgressIndicator from '@/components/AutomationProgress/AutomationProgressIndicator';
 import AutomationProgressModal from '@/components/AutomationProgress/AutomationProgressModal';
+import LoadingSpinner from '@/components/ui/LoadingSpinner';
+import LoadingButton from '@/components/ui/LoadingButton';
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.7, max_tokens: 1000, top_p: 1.0, top_k: 40 };
 
@@ -44,7 +46,9 @@ export default function PromptEvalPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState<'prompt' | 'parameters' | 'metrics'>('prompt');
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  // Enhanced loading states
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingType, setLoadingType] = useState<'prompt' | 'llm' | 'metrics' | 'automation' | null>(null);
 
   // Parameters and metrics
   const [params, setParams] = useState<ModelParams>(DEFAULT_PARAMS);
@@ -77,37 +81,103 @@ export default function PromptEvalPage() {
     const state: any = location.state;
     const evalToLoad = state?.loadEvaluation;
     const automationToLoad = state?.loadAutomation;
+    const autoLoadFiles = state?.autoLoadFiles;
+    const autoLoadPreset = state?.autoLoadPreset;
+    const autoRun = state?.autoRun;
     
     if (evalToLoad?.type === 'prompt') {
       try {
         const used = evalToLoad.usedText || {};
         setDraft((d) => ({ ...d, prompt: used.promptText ?? d.prompt, context: used.context ?? d.context }));
         setReference(used.referenceText ?? "");
+        
         if (evalToLoad.results && typeof evalToLoad.results === 'object') {
           setScores(evalToLoad.results as any);
         }
-        // Attempt to reload prompt/reference files if available
-        const promptName: string | undefined = evalToLoad.files?.promptFileName;
-        const refName: string | undefined = evalToLoad.files?.referenceFileName;
-        if (promptName) {
-          (async () => {
-            try {
-              const res = await api.get(`/files/load`, { params: { kind: 'source', name: promptName }, responseType: 'blob' });
-              const file = new File([res.data], promptName);
-              await onPromptUpload(file);
-            } catch {}
-          })();
+        
+        // Load preset data if available
+        if (autoLoadPreset && evalToLoad.loadedPreset) {
+          const preset = evalToLoad.loadedPreset;
+          setDraft((d) => ({ ...d, prompt: preset.body || d.prompt }));
+          
+          // Apply parameters if they exist
+          if (preset.parameters) {
+            setParams(prev => ({
+              ...prev,
+              temperature: preset.parameters?.temperature ?? prev.temperature,
+              max_tokens: preset.parameters?.max_tokens ?? prev.max_tokens,
+              top_p: preset.parameters?.top_p ?? prev.top_p,
+              top_k: preset.parameters?.top_k ?? prev.top_k,
+            }));
+          }
+          
+          // Apply metrics if they exist
+          if (preset.metrics) {
+            setMetricsState(prev => ({
+              ...prev,
+              ...preset.metrics
+            }));
+          }
         }
-        if (refName) {
-          (async () => {
-            try {
-              const data = await loadReferenceByName(refName);
-              setRefFileName(data.filename);
-              setReference(data.text);
-            } catch {}
-          })();
+        
+        // Load files if autoLoadFiles is enabled and files are available
+        if (autoLoadFiles && evalToLoad.loadedFiles) {
+          const files = evalToLoad.loadedFiles;
+          
+          // Process prompt files
+          const promptFiles = files.filter(f => f.type === 'prompt');
+          if (promptFiles.length > 0) {
+            const promptFile = promptFiles[0];
+            if (promptFile.file) {
+              onPromptUpload(promptFile.file);
+            }
+          }
+          
+          // Process reference files
+          const referenceFiles = files.filter(f => f.type === 'reference');
+          if (referenceFiles.length > 0) {
+            const refFile = referenceFiles[0];
+            if (refFile.data) {
+              setRefFileName(refFile.fileName);
+              setReference(refFile.data.text);
+            }
+          }
+        } else {
+          // Fallback to original file loading logic
+          const promptName: string | undefined = evalToLoad.files?.promptFileName;
+          const refName: string | undefined = evalToLoad.files?.referenceFileName;
+          if (promptName) {
+            (async () => {
+              try {
+                const res = await api.get(`/files/load`, { params: { kind: 'source', name: promptName }, responseType: 'blob' });
+                const file = new File([res.data], promptName);
+                await onPromptUpload(file);
+              } catch {}
+            })();
+          }
+          if (refName) {
+            (async () => {
+              try {
+                const data = await loadReferenceByName(refName);
+                setRefFileName(data.filename);
+                setReference(data.text);
+              } catch {}
+            })();
+          }
         }
-      } catch {}
+        
+        // Auto-run if requested
+        if (autoRun) {
+          // Wait a bit for files to load, then auto-run
+          setTimeout(() => {
+            handleRun();
+          }, 1000);
+        }
+        
+      } catch (error) {
+        console.error("Failed to load evaluation:", error);
+        showError("Load Failed", "Failed to load evaluation data");
+      }
     } else if (automationToLoad?.type === 'prompt') {
       try {
         // Load automation data
@@ -190,7 +260,7 @@ export default function PromptEvalPage() {
 
   // File upload handlers
   const onPromptUpload = async (file: File) => {
-    setBusy("Processing prompt file...");
+    setLoadingType('prompt');
     try {
       const text = await file.text();
       setPromptFileName(file.name);
@@ -199,12 +269,12 @@ export default function PromptEvalPage() {
     } catch (e: any) {
       showError("Upload Failed", "Failed to process prompt file: " + (e?.message ?? e));
     } finally {
-      setBusy(null);
+      setLoadingType(null);
     }
   };
 
   const onReferenceUpload = async (file: File) => {
-    setBusy("Processing reference file...");
+    setLoadingType('prompt');
     try {
       const text = await file.text();
       setRefFileName(file.name);
@@ -212,7 +282,7 @@ export default function PromptEvalPage() {
     } catch (e: any) {
       showError("Upload Failed", "Failed to process reference file: " + (e?.message ?? e));
     } finally {
-      setBusy(null);
+      setLoadingType(null);
     }
   };
 
@@ -230,7 +300,7 @@ export default function PromptEvalPage() {
 
     setIsRunning(true);
     setError(null);
-    setBusy('Running prompt...');
+    setLoadingType('llm');
 
     const runId = crypto.randomUUID?.() ?? (Date.now().toString() + Math.random().toString());
     const startTime = Date.now();
@@ -300,7 +370,7 @@ export default function PromptEvalPage() {
       setError(error?.message ?? String(error));
     } finally {
       setIsRunning(false);
-      setBusy(null);
+      setLoadingType(null);
     }
   }, [selected, draft, params]);
 
@@ -319,7 +389,7 @@ export default function PromptEvalPage() {
       return;
     }
 
-    setBusy("Computing metrics...");
+    setLoadingType('metrics');
 
     const operationId = addOperation({
       type: 'prompt',
@@ -385,7 +455,7 @@ export default function PromptEvalPage() {
       });
       showError("Metric Computation Failed", "Metric computation failed: " + (e?.response?.data?.detail ?? e?.message ?? String(e)));
     } finally {
-      setBusy(null);
+      setLoadingType(null);
     }
   }, [selected, draft?.prompt, reference, llmOutput, currentRun, metricsState, params, promptFileName, refFileName]);
 
@@ -493,7 +563,7 @@ export default function PromptEvalPage() {
   // Automation functionality
   const handleAutomationStart = useCallback(async (config: AutomationConfig) => {
     const automationId = automationStore.startAutomation('prompt', config);
-    setBusy("Running automation...");
+    setLoadingType('automation');
     setIsAutomationProgressModalOpen(true);
 
     try {
@@ -516,7 +586,6 @@ export default function PromptEvalPage() {
 
           // Load prompt file for this run if specified
           if (run.promptFileName && run.promptFileName !== promptFileName) {
-            setBusy(`Loading prompt file for ${run.name}...`);
             try {
               const data = await loadReferenceByName(run.promptFileName);
               runPromptText = data.text ?? "";
@@ -533,7 +602,6 @@ export default function PromptEvalPage() {
 
           // Load reference file for this run if specified
           if (run.referenceFileName && run.referenceFileName !== refFileName) {
-            setBusy(`Loading reference file for ${run.name}...`);
             try {
               const data = await loadReferenceByName(run.referenceFileName);
               runReference = data.text ?? "";
@@ -577,7 +645,6 @@ export default function PromptEvalPage() {
             continue;
           }
 
-          setBusy(`Running ${run.name}...`);
 
           // Build LLM output for this run
           const resources = resourceStore.getByIds(draft.resourceIds || []);
@@ -730,7 +797,7 @@ export default function PromptEvalPage() {
       automationStore.completeAutomation(automationId, error?.message ?? String(error));
       showError("Automation Failed", "Automation failed: " + (error?.message ?? String(error)));
     } finally {
-      setBusy(null);
+      setLoadingType(null);
     }
   }, [selected, draft, reference, promptFileName, refFileName, showError, showSuccess]);
 
@@ -815,7 +882,7 @@ export default function PromptEvalPage() {
             onChange={async (e) => {
               const name = e.target.value;
               if (!name) return;
-              setBusy("Loading prompt...");
+              setLoadingType('prompt');
               try {
                 const res = await api.get(`/files/load`, {
                   params: { kind: "source", name },
@@ -826,7 +893,7 @@ export default function PromptEvalPage() {
               } catch (e: any) {
                 showError("Load Prompt Failed", "Load prompt failed: " + (e?.response?.data?.detail ?? e?.message ?? e));
               } finally {
-                setBusy(null);
+                setLoadingType(null);
               }
             }}
             style={{
@@ -872,7 +939,7 @@ export default function PromptEvalPage() {
             onChange={async (e) => {
               const name = e.target.value;
               if (!name) return;
-              setBusy("Loading reference…");
+              setLoadingType('prompt');
               try {
                 const data = await loadReferenceByName(name);
                 setRefFileName(data.filename);
@@ -880,7 +947,7 @@ export default function PromptEvalPage() {
               } catch (e: any) {
                 showError("Load Reference Failed", "Load reference failed: " + (e?.response?.data?.detail ?? e?.message ?? e));
               } finally {
-                setBusy(null);
+                setLoadingType(null);
               }
             }}
             style={{
@@ -1426,16 +1493,6 @@ export default function PromptEvalPage() {
 
   return (
     <LayoutShell title="Prompt Evaluation" left={left} right={right} rightWidth={400}>
-      {busy && (
-        <div style={{
-          background: "#1e293b",
-          border: "1px solid #334155",
-          padding: 8,
-          borderRadius: 8,
-          color: "#e2e8f0",
-          marginBottom: 16,
-        }}>{busy}</div>
-      )}
 
       {error && (
         <div style={{
@@ -1475,35 +1532,30 @@ export default function PromptEvalPage() {
           borderRadius: 12,
           boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
         }}>
-          <button onClick={onEvaluate} style={{ 
-            padding: "12px 20px", 
-            background: "linear-gradient(135deg, #10b981, #059669)", 
-            border: "none", 
-            color: "#ffffff", 
-            borderRadius: 8,
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "all 0.2s ease",
-            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.transform = "translateY(-1px)";
-            e.currentTarget.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.15)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = "translateY(0)";
-            e.currentTarget.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.1)";
-          }}
+          <LoadingButton 
+            onClick={onEvaluate} 
+            isLoading={loadingType === 'metrics'}
+            disabled={loadingType === 'metrics'}
+            style={{ 
+              padding: "12px 20px", 
+              background: loadingType === 'metrics'
+                ? "#6b7280" 
+                : "linear-gradient(135deg, #10b981, #059669)", 
+              border: "none", 
+              color: "#ffffff", 
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: loadingType === 'metrics' ? "not-allowed" : "pointer",
+              transition: "all 0.2s ease",
+              boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
-            </svg>
-            Run Evaluation
-          </button>
+            {loadingType === 'metrics' ? "Processing..." : "Run Evaluation"}
+          </LoadingButton>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button onClick={() => setIsAutomationModalOpen(true)} style={{ 
               padding: "12px 20px", 

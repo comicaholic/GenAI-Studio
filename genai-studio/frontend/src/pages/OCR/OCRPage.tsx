@@ -27,6 +27,8 @@ import AutomationModal, { AutomationConfig } from "@/components/AutomationModal/
 import { automationStore } from "@/stores/automationStore";
 import AutomationProgressIndicator from "@/components/AutomationProgress/AutomationProgressIndicator";
 import AutomationProgressModal from "@/components/AutomationProgress/AutomationProgressModal";
+import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import LoadingButton from "@/components/ui/LoadingButton";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.2, max_tokens: 1024, top_p: 1.0, top_k: 40 };
 
@@ -110,7 +112,9 @@ export default function OCRPage() {
   // main form
   const [llmOutput, setLlmOutput] = useState("");
   const [scores, setScores] = useState<Record<string, any> | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  // Enhanced loading states
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingType, setLoadingType] = useState<'ocr' | 'llm' | 'metrics' | 'automation' | null>(null);
   const { selected } = useModel();
   const [ocrText, setOcrText] = useState("");
   const [refText, setRefText] = useState("");
@@ -137,6 +141,9 @@ export default function OCRPage() {
     const state: any = location.state;
     const evalToLoad = state?.loadEvaluation;
     const automationToLoad = state?.loadAutomation;
+    const autoLoadFiles = state?.autoLoadFiles;
+    const autoLoadPreset = state?.autoLoadPreset;
+    const autoRun = state?.autoRun;
     
     if (evalToLoad?.type === "ocr") {
       try {
@@ -144,33 +151,98 @@ export default function OCRPage() {
         setOcrText(used.ocrText ?? "");
         setReference(used.referenceText ?? "");
         setTextareaContent(used.promptText ?? textareaContent);
+        
         // If the evaluation already had results, show them immediately
         if (evalToLoad.results && typeof evalToLoad.results === "object") {
           setScores(evalToLoad.results as any);
         }
-        // Try to load original files as well (if available)
-        const srcName: string | undefined = evalToLoad.files?.sourceFileName;
-        const refName: string | undefined = evalToLoad.files?.referenceFileName;
-        if (srcName) {
-          (async () => {
-            try {
-              const res = await api.get(`/files/load`, { params: { kind: "source", name: srcName }, responseType: "blob" });
-              const file = new File([res.data], srcName);
-              await onSourceUpload(file);
-            } catch {}
-          })();
+        
+        // Load preset data if available
+        if (autoLoadPreset && evalToLoad.loadedPreset) {
+          const preset = evalToLoad.loadedPreset;
+          setTextareaContent(preset.body || "");
+          localStorage.setItem("ocr-prompt", preset.body || "");
+          
+          // Apply parameters if they exist
+          if (preset.parameters) {
+            setParams(prev => ({
+              ...prev,
+              temperature: preset.parameters?.temperature ?? prev.temperature,
+              max_tokens: preset.parameters?.max_tokens ?? prev.max_tokens,
+              top_p: preset.parameters?.top_p ?? prev.top_p,
+              top_k: preset.parameters?.top_k ?? prev.top_k,
+            }));
+          }
+          
+          // Apply metrics if they exist
+          if (preset.metrics) {
+            setMetricsState(prev => ({
+              ...prev,
+              ...preset.metrics
+            }));
+          }
         }
-        if (refName) {
-          (async () => {
-            try {
-              const data = await loadReferenceByName(refName);
-              setRefFileName(data.filename);
-              setReference(data.text);
-              setRefText(data.text ?? "");
-            } catch {}
-          })();
+        
+        // Load files if autoLoadFiles is enabled and files are available
+        if (autoLoadFiles && evalToLoad.loadedFiles) {
+          const files = evalToLoad.loadedFiles;
+          
+          // Process source files
+          const sourceFiles = files.filter((f: any) => f.type === 'source');
+          if (sourceFiles.length > 0) {
+            const sourceFile = sourceFiles[0];
+            if (sourceFile.file) {
+              onSourceUpload(sourceFile.file);
+            }
+          }
+          
+          // Process reference files
+          const referenceFiles = files.filter((f: any) => f.type === 'reference');
+          if (referenceFiles.length > 0) {
+            const refFile = referenceFiles[0];
+            if (refFile.data) {
+              setRefFileName(refFile.fileName);
+              setReference(refFile.data.text);
+              setRefText(refFile.data.text ?? "");
+            }
+          }
+        } else {
+          // Fallback to original file loading logic
+          const srcName: string | undefined = evalToLoad.files?.sourceFileName;
+          const refName: string | undefined = evalToLoad.files?.referenceFileName;
+          if (srcName) {
+            (async () => {
+              try {
+                const res = await api.get(`/files/load`, { params: { kind: "source", name: srcName }, responseType: "blob" });
+                const file = new File([res.data], srcName);
+                await onSourceUpload(file);
+              } catch {}
+            })();
+          }
+          if (refName) {
+            (async () => {
+              try {
+                const data = await loadReferenceByName(refName);
+                setRefFileName(data.filename);
+                setReference(data.text);
+                setRefText(data.text ?? "");
+              } catch {}
+            })();
+          }
         }
-      } catch {}
+        
+        // Auto-run if requested
+        if (autoRun) {
+          // Wait a bit for files to load, then auto-run
+          setTimeout(() => {
+            onEvaluate();
+          }, 1000);
+        }
+        
+      } catch (error) {
+        console.error("Failed to load evaluation:", error);
+        showError("Load Failed", "Failed to load evaluation data");
+      }
     } else if (automationToLoad?.type === "ocr") {
       try {
         // Load automation data
@@ -247,7 +319,7 @@ export default function OCRPage() {
 
   // ----- actions -----
   const onSourceUpload = async (file: File) => {
-    setBusy("Extracting OCR...");
+    setLoadingType('ocr');
     setSrcFileName(file.name);
     try {
       const res = await extractOCR(file);
@@ -256,13 +328,13 @@ export default function OCRPage() {
     } catch (e: any) {
       showError("OCR Failed", "OCR failed: " + (e?.response?.data?.detail ?? e.message ?? e));
     } finally {
-      setBusy(null);
+      setLoadingType(null);
     }
   };
 
   const onReferenceUpload = async (file: File) => {
     setRefFileName(file.name);
-    setBusy("Extracting reference…");
+    setLoadingType('ocr');
     try {
       const form = new FormData();
       form.append("file", file);
@@ -274,7 +346,7 @@ export default function OCRPage() {
     } catch (e: any) {
       showError("Reference Extraction Failed", "Reference extraction failed: " + (e?.response?.data?.detail ?? e.message ?? e));
     } finally {
-      setBusy(null);
+      setLoadingType(null);
     }
   };
 
@@ -295,7 +367,7 @@ export default function OCRPage() {
       return;
     }
 
-    setBusy("Calling LLM…");
+    setLoadingType('llm');
     try {
       const output = await chatComplete(
         selected.id,
@@ -321,8 +393,11 @@ export default function OCRPage() {
           errorTitle = "API Key Missing";
           errorMessage = "Please set your GROQ_API_KEY in the backend/.env file.";
         } else if (errorMessage.includes("502")) {
-          errorTitle = "Model Error";
-          errorMessage = "The selected model returned an error. Try a different model.";
+          errorTitle = "Local Server Error";
+          errorMessage = "Local LLM server is not running. Please start LM Studio, Ollama, or vLLM server.";
+        } else if (errorMessage.includes("Local server")) {
+          errorTitle = "Local Server Error";
+          errorMessage = "Cannot connect to local LLM server. Check if LM Studio, Ollama, or vLLM is running.";
         }
       } else if (e?.message) {
         errorMessage = e.message;
@@ -330,7 +405,7 @@ export default function OCRPage() {
 
       showError(errorTitle, errorMessage);
     } finally {
-      setBusy(null);
+      setLoadingType(null);
     }
   };
 
@@ -370,7 +445,7 @@ export default function OCRPage() {
     // If LLM output is empty, automatically run Build LLM first
     let currentLlmOutput = llmOutput;
     if (!currentLlmOutput || currentLlmOutput.trim() === "") {
-      setBusy("Building LLM output...");
+      setLoadingType('llm');
       try {
         const injected = renderPrompt(textareaContent, ocr?.text ?? "", reference || "");
         if (injected.trim().length < 10) {
@@ -397,16 +472,20 @@ export default function OCRPage() {
           if (errorMessage.includes("GROQ_API_KEY not set")) {
             errorTitle = "API Key Missing";
             errorMessage = "Please set your GROQ_API_KEY in the backend/.env file.";
+          } else if (errorMessage.includes("502") || errorMessage.includes("Local server")) {
+            errorTitle = "Local Server Error";
+            errorMessage = "Local LLM server is not running. Please start LM Studio, Ollama, or vLLM server.";
           }
         }
         showError(errorTitle, errorMessage);
+        setLoadingType(null);
         return;
       } finally {
-        setBusy(null);
+        setLoadingType(null);
       }
     }
 
-    setBusy("Computing metrics...");
+    setLoadingType('metrics');
     const operationId = addOperation({
       type: "ocr",
       status: "running",
@@ -463,7 +542,7 @@ export default function OCRPage() {
       });
       showError("Metric Computation Failed", "Metric computation failed: " + (e?.response?.data?.detail ?? e.message ?? e));
     } finally {
-      setBusy(null);
+      setLoadingType(null);
     }
   };
 
@@ -550,7 +629,7 @@ export default function OCRPage() {
   // Automation functionality
   const handleAutomationStart = async (config: AutomationConfig) => {
     const automationId = automationStore.startAutomation('ocr', config);
-    setBusy("Running automation...");
+    setLoadingType('automation');
     setIsAutomationProgressModalOpen(true);
 
     try {
@@ -573,7 +652,6 @@ export default function OCRPage() {
 
           // Load source file for this run if specified
           if (run.sourceFileName && run.sourceFileName !== srcFileName) {
-            setBusy(`Loading source file for ${run.name}...`);
             try {
               const res = await api.get(`/files/load`, { params: { kind: "source", name: run.sourceFileName }, responseType: "blob" });
               const file = new File([res.data], run.sourceFileName);
@@ -592,7 +670,6 @@ export default function OCRPage() {
 
           // Load reference file for this run if specified
           if (run.referenceFileName && run.referenceFileName !== refFileName) {
-            setBusy(`Loading reference file for ${run.name}...`);
             try {
               const data = await loadReferenceByName(run.referenceFileName);
               runReference = data.text ?? "";
@@ -636,7 +713,6 @@ export default function OCRPage() {
             continue;
           }
 
-          setBusy(`Running ${run.name}...`);
 
           // Build LLM output for this run
           const injected = renderPrompt(run.prompt, runOcrText, runReference);
@@ -648,6 +724,7 @@ export default function OCRPage() {
             ],
             run.parameters
           );
+
 
           // Compute metrics - only compute selected metrics
           const runSelectedMetrics: string[] = [];
@@ -772,6 +849,8 @@ export default function OCRPage() {
         console.warn("Failed to save automation aggregate:", e);
       }
       
+      setLoadingType(null);
+      
       // Show appropriate success/error message
       if (errorCount === 0) {
         showSuccess("Automation Complete", `All ${config.runs.length} runs completed successfully!`);
@@ -784,8 +863,7 @@ export default function OCRPage() {
     } catch (error: any) {
       automationStore.completeAutomation(automationId, error?.message ?? String(error));
       showError("Automation Failed", "Automation failed: " + (error?.message ?? String(error)));
-    } finally {
-      setBusy(null);
+      setLoadingType(null);
     }
   };
 
@@ -841,7 +919,7 @@ export default function OCRPage() {
             onChange={async (e) => {
               const name = e.target.value;
               if (!name) return;
-              setBusy("Loading source…");
+              setLoadingType('ocr');
               try {
                 const res = await api.get(`/files/load`, { params: { kind: "source", name }, responseType: "blob" });
                 const file = new File([res.data], name);
@@ -849,7 +927,7 @@ export default function OCRPage() {
               } catch (e: any) {
                 showError("Load Source Failed", "Load source failed: " + (e?.response?.data?.detail ?? e.message ?? e));
               } finally {
-                setBusy(null);
+                setLoadingType(null);
               }
             }}
             style={{
@@ -895,7 +973,7 @@ export default function OCRPage() {
             onChange={async (e) => {
               const name = e.target.value;
               if (!name) return;
-              setBusy("Loading reference…");
+              setLoadingType('ocr');
               try {
                 const data = await loadReferenceByName(name);
                 setRefFileName(data.filename);
@@ -904,7 +982,7 @@ export default function OCRPage() {
               } catch (e: any) {
                 showError("Load Reference Failed", "Load reference failed: " + (e?.response?.data?.detail ?? e.message ?? e));
               } finally {
-                setBusy(null);
+                setLoadingType(null);
               }
             }}
             style={{
@@ -1289,12 +1367,13 @@ export default function OCRPage() {
           
         />
         <div>
-          <button
+          <LoadingButton
             onClick={buildLlmOutput}
-            disabled={busy === "Calling LLM…"}
+            isLoading={loadingType === 'llm'}
+            disabled={loadingType === 'llm'}
             style={{ 
               padding: "12px 20px", 
-              background: busy === "Calling LLM…" 
+              background: loadingType === 'llm'
                 ? "#6b7280" 
                 : "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
               border: "none", 
@@ -1302,31 +1381,16 @@ export default function OCRPage() {
               borderRadius: 8,
               fontSize: 14,
               fontWeight: 600,
-              cursor: busy === "Calling LLM…" ? "not-allowed" : "pointer",
+              cursor: loadingType === 'llm' ? "not-allowed" : "pointer",
               transition: "all 0.2s ease",
               boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
               display: "flex",
               alignItems: "center",
               gap: 8,
             }}
-            onMouseEnter={(e) => {
-              if (busy !== "Calling LLM…") {
-                e.currentTarget.style.transform = "translateY(-1px)";
-                e.currentTarget.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.15)";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (busy !== "Calling LLM…") {
-                e.currentTarget.style.transform = "translateY(0)";
-                e.currentTarget.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.1)";
-              }
-            }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
-            </svg>
-            {busy === "Calling LLM…" ? "Processing..." : "Build LLM Output"}
-          </button>
+            {loadingType === 'llm' ? "Processing..." : "Build LLM Output"}
+          </LoadingButton>
         </div>
       </section>
 
@@ -1443,16 +1507,6 @@ export default function OCRPage() {
           </style>
         </div>
       )}
-      {busy && (
-        <div style={{
-          background: "#1e293b",
-          border: "1px solid #334155",
-          padding: 8,
-          borderRadius: 8,
-          color: "#e2e8f0",
-          marginBottom: 16,
-        }}>{busy}</div>
-      )}
 
       {viewMode === "form" && renderFormView()}
       {viewMode === "side-by-side" && renderSideBySideView()}
@@ -1546,12 +1600,13 @@ export default function OCRPage() {
         borderRadius: 12,
         boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
       }}>
-        <button
+        <LoadingButton
           onClick={onEvaluate}
-          disabled={busy === "Computing metrics..."}
+          isLoading={loadingType === 'metrics' || loadingType === 'llm'}
+          disabled={loadingType === 'metrics' || loadingType === 'llm'}
           style={{ 
             padding: "12px 20px", 
-            background: busy === "Computing metrics..." 
+            background: (loadingType === 'metrics' || loadingType === 'llm')
               ? "#6b7280" 
               : "linear-gradient(135deg, #10b981, #059669)", 
             border: "none", 
@@ -1559,7 +1614,7 @@ export default function OCRPage() {
             borderRadius: 8,
             fontSize: 14,
             fontWeight: 600,
-            cursor: busy === "Computing metrics..." ? "not-allowed" : "pointer",
+            cursor: (loadingType === 'metrics' || loadingType === 'llm') ? "not-allowed" : "pointer",
             transition: "all 0.2s ease",
             boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
             display: "flex",
@@ -1567,11 +1622,8 @@ export default function OCRPage() {
             gap: 8,
           }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: 8 }}>
-            <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
-          </svg>
-          {busy === "Computing metrics..." ? "Computing..." : "Run Evaluation"}
-        </button>
+          {(loadingType === 'metrics' || loadingType === 'llm') ? "Processing..." : "Run Evaluation"}
+        </LoadingButton>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button
             onClick={() => setIsAutomationModalOpen(true)}

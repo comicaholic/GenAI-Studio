@@ -1,46 +1,17 @@
 import React, { useState, useEffect, useRef } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import { api } from "@/services/api";
-
-interface ModelInfo {
-  id: string;
-  label: string;
-  provider: "local" | "groq";
-  size?: string | null;
-  quant?: string | null;
-  tags?: string[];
-  arch?: string;
-  params?: number;
-  likes?: number;
-  downloads?: number;
-  lastModified?: string;
-  formats?: string;
-  // New classification fields
-  name?: string;
-  publisher?: string;
-  category?: string;
-  source?: string;
-  architecture?: string;
-  // Additional fields for HF models
-  pipeline_tag?: string;
-  author?: string;
-  description?: string;
-  // Additional metadata fields
-  intended_uses?: string;
-  background?: string;
-  training_data?: any;
-  library_name?: string;
-  // Requirements checking
-  requirements?: {
-    can_run: boolean;
-    warnings: string[];
-    errors: string[];
-    recommended_gpu_memory?: string;
-    estimated_memory?: string;
-  };
-  // Full model card data
-  full_model_card?: any;
-}
+import { useNotifications } from "@/components/Notification/Notification";
+import { 
+  modelKey, 
+  normalizeModelData, 
+  prettifyModelId, 
+  getCategoryColor, 
+  getProviderColor, 
+  getProviderDisplayName,
+  validateModelData,
+  type ModelInfo 
+} from "@/lib/modelUtils";
 
 interface DiscoverModalProps {
   isOpen: boolean;
@@ -48,6 +19,7 @@ interface DiscoverModalProps {
 }
 
 function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
+  const { showSuccess, showError, showInfo } = useNotifications();
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("downloads");
   const [searchResults, setSearchResults] = useState<ModelInfo[]>([]);
@@ -63,7 +35,6 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
   const [currentOffset, setCurrentOffset] = useState(0);
   const [hfTokenStatus, setHfTokenStatus] = useState({ hasToken: false, connected: false });
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [activeTab, setActiveTab] = useState<"info" | "card">("info");
 
   const checkHfTokenStatus = async () => {
     try {
@@ -101,7 +72,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
 
   const downloadModel = async (modelId: string) => {
     if (!hfTokenStatus.hasToken) {
-      alert("Hugging Face token required for downloading models. Please configure your token in Settings.");
+      showError("Download Failed", "Hugging Face token required for downloading models. Please configure your token in Settings.");
       return;
     }
 
@@ -109,14 +80,50 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
     setIsDownloading(true);
 
     try {
-      // Start download using queue system
-      console.log("Sending download request to backend...");
-      const response = await api.post("/models/download", { model_id: modelId });
-      console.log("Download request response:", response.data);
+      // Check if vLLM is available and connected
+      let useVllm = false;
+      let vllmError = null;
+      try {
+        const vllmResponse = await api.get("/settings/vllm/setup/info");
+        useVllm = vllmResponse.data?.system_info?.vllm_installed && vllmResponse.data?.system_info?.cuda_available;
+        if (vllmResponse.data?.system_info?.vllm_installed && !vllmResponse.data?.system_info?.cuda_available) {
+          vllmError = "vLLM is installed but CUDA is not available. Using fallback method.";
+        }
+      } catch (error) {
+        console.log("vLLM not available, using fallback method");
+        vllmError = "vLLM is not available. Using fallback download method.";
+      }
+      
+      // Show info about method being used
+      if (vllmError) {
+        showInfo("Download Method", vllmError);
+      }
+      if (useVllm) {
+        // Use vLLM for download
+        console.log(`Downloading ${modelId} via vLLM...`);
+        const response = await api.post("/models/download/vllm", { model_id: modelId });
+        
+        if (response.data.success) {
+          showSuccess("Download Started", `Model ${modelId} is being downloaded via vLLM. This may take a while for large models.`);
+          
+          // Refresh models list after a delay
+          setTimeout(() => {
+            window.dispatchEvent(new Event("models:changed"));
+          }, 5000);
+        } else {
+          showError("Download Failed", response.data.message || "Failed to start download");
+        }
+        return;
+      } else {
+        // Fallback to original download method
+        console.log(`Downloading ${modelId} via original method...`);
+        const response = await api.post("/models/download", { model_id: modelId });
+        console.log("Download request response:", response.data);
       
       if (response.data.download_id) {
         const downloadId = response.data.download_id;
         console.log(`Download queued with ID: ${downloadId}`);
+        showSuccess("Download Started", `Model ${modelId} added to download queue.`);
         setDownloadProgress(prev => ({ ...prev, [modelId]: { status: "queued", progress: 0, downloadId } }));
         
         // Poll for download status
@@ -132,7 +139,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
             if (status.status === "completed") {
               console.log("Download completed successfully");
               setIsDownloading(false);
-              alert(`Model "${modelId}" downloaded successfully! It will appear in your local models list.`);
+              showSuccess("Download Complete", `Model "${modelId}" downloaded successfully! It will appear in your local models list.`);
               
               // Trigger model refresh
               window.dispatchEvent(new Event("models:changed"));
@@ -146,7 +153,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
             } else if (status.status === "failed") {
               console.log("Download failed:", status.error);
               setIsDownloading(false);
-              alert(`Download failed: ${status.error || "Unknown error"}`);
+              showError("Download Failed", status.error || "Unknown error");
               
               // Clear progress
               setDownloadProgress(prev => {
@@ -157,7 +164,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
             } else if (status.status === "cancelled") {
               console.log("Download cancelled");
               setIsDownloading(false);
-              alert("Download cancelled");
+              showInfo("Download Cancelled", "Download was cancelled");
               
               // Clear progress
               setDownloadProgress(prev => {
@@ -173,7 +180,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
           } catch (error) {
             console.error("Error polling download status:", error);
             setIsDownloading(false);
-            alert("Failed to check download status");
+            showError("Download Error", "Failed to check download status");
             
             // Clear progress
             setDownloadProgress(prev => {
@@ -189,12 +196,13 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
       } else {
         console.error("No download ID received from backend");
         setIsDownloading(false);
-        alert("Failed to start download - no download ID received");
+        showError("Download Failed", "Failed to start download - no download ID received");
+      }
       }
     } catch (error: any) {
       console.error("Download request failed:", error);
       setIsDownloading(false);
-      alert(`Download failed: ${error.response?.data?.detail || error.message || "Unknown error"}`);
+      showError("Download Failed", error.response?.data?.detail || error.message || "Unknown error");
       
       // Clear progress
       setDownloadProgress(prev => {
@@ -222,7 +230,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
         params: { 
           q: searchQuery, 
           sort: sortBy, 
-          limit: 50, 
+          limit: 100,  // Increased from 50 to 100
           offset: offset 
         }
       });
@@ -246,7 +254,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
       }
       
       // Check if there are more results - if we got less than requested, we've reached the end
-      setHasMoreResults(models.length === 50);
+      setHasMoreResults(models.length === 100);
       
     } catch (error: any) {
       console.error("Failed to load models:", error);
@@ -284,7 +292,8 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
 
   useEffect(() => {
     if (searchQuery.trim()) {
-      const timeoutId = setTimeout(() => loadModels(true), 500);
+      // Increased debounce time to 800ms for better performance
+      const timeoutId = setTimeout(() => loadModels(true), 800);
       return () => clearTimeout(timeoutId);
     } else {
       // Load models with current sort when no search query
@@ -318,18 +327,31 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
   if (!isOpen) return null;
 
   return (
-    <div style={{
-      position: "fixed",
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: "rgba(0, 0, 0, 0.8)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 1000,
-    }}>
+    <>
+      <style>
+        {`
+          @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+          }
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}
+      </style>
+      <div style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: "rgba(0, 0, 0, 0.8)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}>
       <div style={{
         width: "90%",
         maxWidth: 1200,
@@ -368,34 +390,66 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
               <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Find and download AI models from the community</p>
             </div>
           </div>
-          <button onClick={onClose}
-            style={{
-              background: "transparent",
-              border: "1px solid #334155",
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {/* vLLM Installation Notice */}
+            <div style={{
+              background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+              border: "1px solid #3b82f6",
               borderRadius: 8,
-              color: "#94a3b8",
-              fontSize: 20,
-              cursor: "pointer",
-              width: 36,
-              height: 36,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "all 0.2s ease"
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "#1e293b";
-              e.currentTarget.style.borderColor = "#475569";
-              e.currentTarget.style.color = "#e2e8f0";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.borderColor = "#334155";
-              e.currentTarget.style.color = "#94a3b8";
-            }}
-          >
-            ×
-          </button>
+              padding: "8px 12px",
+              fontSize: 12,
+              color: "#ffffff",
+              maxWidth: 250
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>⚡ vLLM Required</div>
+              <div style={{ fontSize: 11, lineHeight: "1.3" }}>
+                Models are downloaded via vLLM. Install vLLM first for optimal performance.
+              </div>
+            </div>
+            {/* Alternative Download Recommendation */}
+            <div style={{
+              background: "linear-gradient(135deg, #f59e0b, #d97706)",
+              border: "1px solid #f59e0b",
+              borderRadius: 8,
+              padding: "8px 12px",
+              fontSize: 12,
+              color: "#ffffff",
+              maxWidth: 200
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>💡 Alternative</div>
+              <div style={{ fontSize: 11, lineHeight: "1.3" }}>
+                Try <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer" style={{ color: "#ffffff", textDecoration: "underline" }}>Ollama</a> or <a href="https://lmstudio.ai" target="_blank" rel="noopener noreferrer" style={{ color: "#ffffff", textDecoration: "underline" }}>LM Studio</a> for easier downloads
+              </div>
+            </div>
+            <button onClick={onClose}
+              style={{
+                background: "transparent",
+                border: "1px solid #334155",
+                borderRadius: 8,
+                color: "#94a3b8",
+                fontSize: 20,
+                cursor: "pointer",
+                width: 36,
+                height: 36,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.2s ease"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#1e293b";
+                e.currentTarget.style.borderColor = "#475569";
+                e.currentTarget.style.color = "#e2e8f0";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.borderColor = "#334155";
+                e.currentTarget.style.color = "#94a3b8";
+              }}
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -435,20 +489,43 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
               </div>
             )}
             <div style={{ marginBottom: 16 }}>
-          <input className="input h-10 text-sm" type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search models..."
-                style={{
-                  width: "100%",
-                  padding: 12,
-                  border: "1px solid #334155",
-                  borderRadius: 8,
-                  background: "#1e293b",
-                  color: "#e2e8f0",
-                  marginBottom: 12,
-                }}
-              />
+          <div style={{ position: "relative" }}>
+            <input className="input h-10 text-sm" type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search models..."
+                  style={{
+                    width: "100%",
+                    padding: 12,
+                    paddingRight: searchQuery ? 40 : 12,
+                    border: "1px solid #334155",
+                    borderRadius: 8,
+                    background: "#1e293b",
+                    color: "#e2e8f0",
+                    marginBottom: 12,
+                  }}
+                />
+                {searchQuery && (
+                  <div style={{
+                    position: "absolute",
+                    right: 12,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "#94a3b8",
+                    fontSize: 12
+                  }}>
+                    {isSearching || isLoadingPopular ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ animation: "spin 1s linear infinite" }}>
+                        <path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/>
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/>
+                      </svg>
+                    )}
+                  </div>
+                )}
+              </div>
               <select className="select h-10 text-sm" value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 style={{
@@ -510,33 +587,82 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
               </div>
               
               {(isSearching || isLoadingPopular) && (
-                <div style={{ 
-                  color: "#94a3b8", 
-                  textAlign: "center", 
-                  padding: 20,
-                  background: "#1e293b",
-                  borderRadius: 8,
-                  border: "1px solid #334155"
-                }}>
-                  <div style={{ 
-                    fontSize: 14, 
-                    display: "flex", 
-                    alignItems: "center", 
-                    justifyContent: "center", 
-                    gap: 8 
-                  }}>
-                    <svg 
-                      width="16" 
-                      height="16" 
-                      viewBox="0 0 24 24" 
-                      fill="currentColor" 
-                      style={{ 
-                        animation: "spin 1s linear infinite" 
+                <div>
+                  {/* Skeleton loading for better UX */}
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <div
+                      key={index}
+                      style={{
+                        padding: 16,
+                        marginBottom: 12,
+                        border: "1px solid #334155",
+                        borderRadius: 12,
+                        background: "#0f172a",
+                        animation: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite"
                       }}
                     >
-                      <path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/>
-                    </svg>
-                    Loading models...
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                        <div style={{
+                          width: 32,
+                          height: 32,
+                          background: "#334155",
+                          borderRadius: 8,
+                          flexShrink: 0
+                        }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ 
+                            height: 16, 
+                            background: "#334155", 
+                            borderRadius: 4, 
+                            marginBottom: 8,
+                            width: "60%"
+                          }} />
+                          <div style={{ 
+                            height: 12, 
+                            background: "#334155", 
+                            borderRadius: 4, 
+                            marginBottom: 8,
+                            width: "80%"
+                          }} />
+                          <div style={{ 
+                            height: 10, 
+                            background: "#334155", 
+                            borderRadius: 4, 
+                            width: "40%"
+                          }} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{ 
+                    color: "#94a3b8", 
+                    textAlign: "center", 
+                    padding: 20,
+                    background: "#1e293b",
+                    borderRadius: 8,
+                    border: "1px solid #334155",
+                    marginTop: 16
+                  }}>
+                    <div style={{ 
+                      fontSize: 14, 
+                      display: "flex", 
+                      alignItems: "center", 
+                      justifyContent: "center", 
+                      gap: 8 
+                    }}>
+                      <svg 
+                        width="16" 
+                        height="16" 
+                        viewBox="0 0 24 24" 
+                        fill="currentColor" 
+                        style={{ 
+                          animation: "spin 1s linear infinite" 
+                        }}
+                      >
+                        <path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/>
+                      </svg>
+                      Loading models...
+                    </div>
                   </div>
                 </div>
               )}
@@ -850,47 +976,8 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                   )}
                 </div>
 
-                {/* Tabs */}
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-                    <button
-                      onClick={() => setActiveTab("info")}
-                      style={{
-                        padding: "8px 16px",
-                        background: activeTab === "info" ? "#3b82f6" : "transparent",
-                        border: "1px solid #334155",
-                        borderRadius: 6,
-                        color: activeTab === "info" ? "#ffffff" : "#94a3b8",
-                        cursor: "pointer",
-                        fontSize: 14,
-                        fontWeight: 500,
-                        transition: "all 0.2s ease"
-                      }}
-                    >
-                      Model Information
-                    </button>
-                    <button
-                      onClick={() => setActiveTab("card")}
-                      style={{
-                        padding: "8px 16px",
-                        background: activeTab === "card" ? "#3b82f6" : "transparent",
-                        border: "1px solid #334155",
-                        borderRadius: 6,
-                        color: activeTab === "card" ? "#ffffff" : "#94a3b8",
-                        cursor: "pointer",
-                        fontSize: 14,
-                        fontWeight: 500,
-                        transition: "all 0.2s ease"
-                      }}
-                    >
-                      Model Card
-                    </button>
-                  </div>
-                </div>
-
-                {/* Tab Content */}
-                {activeTab === "info" && (
-                  <div>
+                {/* Model Information */}
+                <div>
                     {/* Model Information */}
                     <div style={{ marginBottom: 24 }}>
                       <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 16 }}>
@@ -1289,43 +1376,6 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
                   </button>
                 </div>
                   </div>
-                )}
-
-                {activeTab === "card" && (
-                  <div>
-                    {/* Model Card Content */}
-                    <div style={{ marginBottom: 24 }}>
-                      <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 16 }}>
-                        Full Model Card
-                      </h4>
-                      <div style={{
-                        background: "#1e293b",
-                        border: "1px solid #334155",
-                        borderRadius: 8,
-                        padding: 16,
-                        maxHeight: 400,
-                        overflow: "auto"
-                      }}>
-                        {selectedModelDetails?.full_model_card ? (
-                          <pre style={{
-                            color: "#cbd5e1",
-                            fontSize: 12,
-                            lineHeight: "1.4",
-                            margin: 0,
-                            whiteSpace: "pre-wrap",
-                            fontFamily: "monospace"
-                          }}>
-                            {JSON.stringify(selectedModelDetails.full_model_card, null, 2)}
-                          </pre>
-                        ) : (
-                          <div style={{ color: "#94a3b8", fontSize: 14, textAlign: "center" }}>
-                            No model card data available
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             ) : (
               <div style={{ 
@@ -1349,6 +1399,7 @@ function DiscoverModal({ isOpen, onClose }: DiscoverModalProps) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -1362,15 +1413,6 @@ export default function ModelsPage() {
   const [filterText, setFilterText] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Helper to create stable keys for each model
-  const modelKey = (m: ModelInfo): string => {
-    // prefer canonical ids; otherwise fall back to deterministic label/name-based keys
-    if (m.id && m.id.trim()) return m.id.trim();
-    if (m.label && m.label.trim()) return `label:${m.label.trim()}`;
-    if (m.name && m.name.trim()) return `name:${m.name.trim()}`;
-    // last resort: a deterministic composite so rows don't share a key
-    return `anon:${(m.publisher||'')}:${(m.arch||'')}:${(m.size||'')}:${(m.quant||'')}`;
-  };
 
   // Click outside handler for menu
   useEffect(() => {
@@ -1383,22 +1425,9 @@ export default function ModelsPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Helper function to get category color
-  const getCategoryColor = (category: string) => {
-    const colors: { [key: string]: string } = {
-      "General-purpose chat/instruction": "#3b82f6",
-      "Coding assistants": "#10b981",
-      "Embedding / text-vectorization": "#8b5cf6",
-      "Reasoning / math / tool-use": "#f59e0b",
-      "Vision or multimodal": "#ef4444",
-      "Specialized / domain-specific": "#06b6d4",
-      "Unknown / Needs Review": "#6b7280"
-    };
-    return colors[category] || "#6b7280";
-  };
 
   // Filter models based on search text
-  const filteredModels = localModels.filter(model =>
+  const filteredModels = localModels.filter((model: ModelInfo) =>
     (model.name || model.label || "").toLowerCase().includes(filterText.toLowerCase()) ||
     (model.id || "").toLowerCase().includes(filterText.toLowerCase()) ||
     (model.category || "").toLowerCase().includes(filterText.toLowerCase()) ||
@@ -1410,13 +1439,29 @@ export default function ModelsPage() {
   const loadLocalModels = async () => {
     setIsLoading(true);
     try {
-      const response = await api.get("/models/classified");
-      setLocalModels(response.data.models || []);
+      const response = await api.get("/models/classified", {
+        params: { apply_visibility_filter: false }  // Get all models, apply filtering on frontend
+      });
+      const models = response.data.models || [];
+      
+      // Validate and normalize model data
+      const validModels = models
+        .filter(validateModelData)
+        .map((model: any) => normalizeModelData(model, "local"));
+      
+      setLocalModels(validModels);
     } catch (error: any) {
       // Fallback to regular scan if classified endpoint fails
       try {
         const fallbackResponse = await api.get("/models/scan");
-        setLocalModels(fallbackResponse.data.local || []);
+        const models = fallbackResponse.data.local || [];
+        
+        // Validate and normalize model data
+        const validModels = models
+          .filter(validateModelData)
+          .map((model: any) => normalizeModelData(model, "local"));
+        
+        setLocalModels(validModels);
       } catch (fallbackError: any) {
         console.log("Models API not available yet:", fallbackError.message);
         setLocalModels([]);
@@ -1445,7 +1490,7 @@ export default function ModelsPage() {
 
   // Warn about models missing IDs
   useEffect(() => {
-    const anon = localModels.filter(m => !m.id);
+    const anon = localModels.filter((m: ModelInfo) => !m.id);
     if (anon.length) {
       console.warn("Models missing id; using synthetic keys:", anon.map(m => modelKey(m)));
     }
@@ -1463,13 +1508,14 @@ export default function ModelsPage() {
           const enabledById = new Set(arr);
           const disabledKeys = new Set(
             localModels
-              .filter(m => m.id) // only models tracked by backend
+              .filter(m => m.id) // include all models with IDs
               .filter(m => !enabledById.has(m.id!))
               .map(m => modelKey(m))
           );
           setDisabledIds(disabledKeys);
         }
-      } catch {
+      } catch (error) {
+        console.error("Failed to load visibility settings:", error);
         setDisabledIds(new Set());
       }
     })();
@@ -1481,6 +1527,7 @@ export default function ModelsPage() {
       if (disabledKeys.size === 0) {
         await api.post("/models/visibility", { enabled_ids: null });
       } else {
+        // Include all models that have IDs
         const withIds = localModels.filter(m => m.id);
         const allIds = new Set(withIds.map(m => m.id!));
         // which *ids* are disabled? -> keys in disabledKeys that correspond to models with ids
@@ -1493,7 +1540,9 @@ export default function ModelsPage() {
         await api.post("/models/visibility", { enabled_ids: enabledIds });
       }
       window.dispatchEvent(new Event("models:visibility-changed"));
-    } catch {}
+    } catch (error) {
+      console.error("Failed to persist visibility settings:", error);
+    }
   };
 
   const toggleDisabled = (key: string) => {
@@ -1855,7 +1904,27 @@ export default function ModelsPage() {
               borderRadius: 12,
               border: "1px solid #334155"
             }}>
-              <div style={{ fontSize: 16, fontWeight: 500 }}>Loading models...</div>
+              <div style={{ 
+                display: "flex", 
+                alignItems: "center", 
+                justifyContent: "center", 
+                gap: 8,
+                fontSize: 16, 
+                fontWeight: 500 
+              }}>
+                <svg 
+                  width="16" 
+                  height="16" 
+                  viewBox="0 0 24 24" 
+                  fill="currentColor" 
+                  style={{ 
+                    animation: "spin 1s linear infinite" 
+                  }}
+                >
+                  <path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/>
+                </svg>
+                Loading models...
+              </div>
               <div style={{ fontSize: 13, marginTop: 8 }}>Scanning your models directory</div>
             </div>
           ) : filteredModels.length === 0 ? (
@@ -1889,20 +1958,37 @@ export default function ModelsPage() {
                       <input
                         type="checkbox"
                         id="master-checkbox"
-                        checked={disabledIds.size === 0}
+                        checked={(() => {
+                          // Only consider filtered models for the header checkbox state
+                          const filteredKeys = filteredModels.map(m => modelKey(m));
+                          const filteredDisabledCount = filteredKeys.filter(key => disabledIds.has(key)).length;
+                          return filteredDisabledCount === 0 && filteredKeys.length > 0;
+                        })()}
                         onChange={(e) => {
                           e.stopPropagation();
-                          if (disabledIds.size === 0) {
-                            const allKeys = new Set(localModels.map(m => modelKey(m)));
-                            setDisabledIds(allKeys);
-                            persistEnabled(allKeys);
+                          // Only work with filtered models
+                          const filteredKeys = filteredModels.map(m => modelKey(m));
+                          const filteredDisabledCount = filteredKeys.filter(key => disabledIds.has(key)).length;
+                          
+                          if (filteredDisabledCount === 0) {
+                            // All filtered models are selected, deselect all filtered models
+                            const newDisabledIds = new Set(disabledIds);
+                            filteredKeys.forEach(key => newDisabledIds.add(key));
+                            setDisabledIds(newDisabledIds);
+                            persistEnabled(newDisabledIds);
                           } else {
-                            const empty = new Set<string>();
-                            setDisabledIds(empty);
-                            persistEnabled(empty);
+                            // Some or all filtered models are deselected, select all filtered models
+                            const newDisabledIds = new Set(disabledIds);
+                            filteredKeys.forEach(key => newDisabledIds.delete(key));
+                            setDisabledIds(newDisabledIds);
+                            persistEnabled(newDisabledIds);
                           }
                         }}
-                        title={disabledIds.size === 0 ? "Deselect All" : "Select All"}
+                        title={(() => {
+                          const filteredKeys = filteredModels.map(m => modelKey(m));
+                          const filteredDisabledCount = filteredKeys.filter(key => disabledIds.has(key)).length;
+                          return filteredDisabledCount === 0 ? "Deselect All Visible" : "Select All Visible";
+                        })()}
                         style={{ transform: "scale(1.2)" }}
                       />
                     </th>
@@ -1986,16 +2072,53 @@ export default function ModelsPage() {
                           {model.quant || "N/A"}
                         </td>
                         <td style={{ padding: 16, color: "#e2e8f0", borderBottom: "1px solid #334155" }}>
-                          <span style={{
-                            padding: "4px 8px",
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 500,
-                            background: model.source === "groq" ? "#059669" : "#6b7280",
-                            color: "#fff",
-                          }}>
-                            {model.source === "groq" ? "Groq" : "Local"}
-                          </span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                            {/* Source tag */}
+                            <span style={{
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                              fontSize: 11,
+                              fontWeight: 500,
+                              background: getProviderColor(model.source || "local"),
+                              color: "#fff",
+                              display: "inline-block",
+                              width: "fit-content"
+                            }}>
+                              {getProviderDisplayName(model.source || "local")}
+                            </span>
+                            {/* Provider tag (only if different from source) */}
+                            {model.provider && model.provider !== model.source && (
+                              <span style={{
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                fontSize: 11,
+                                fontWeight: 500,
+                                background: "#6b7280",
+                                color: "#fff",
+                                display: "inline-block",
+                                width: "fit-content"
+                              }}>
+                                {model.provider === "groq" ? "Groq" : 
+                                 model.provider === "local" ? "Local" : 
+                                 String(model.provider).charAt(0).toUpperCase() + String(model.provider).slice(1)}
+                              </span>
+                            )}
+                            {/* Cloud model tag */}
+                            {model.tags?.includes("cloud") && (
+                              <span style={{
+                                padding: "1px 4px",
+                                borderRadius: 3,
+                                fontSize: 9,
+                                fontWeight: 500,
+                                background: "#f59e0b",
+                                color: "#fff",
+                                display: "inline-block",
+                                width: "fit-content"
+                              }}>
+                                Cloud
+                              </span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

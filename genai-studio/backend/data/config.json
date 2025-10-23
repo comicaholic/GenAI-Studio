@@ -31,5 +31,9 @@
   "ollama": {
     "baseUrl": "http://localhost:11434",
     "connected": true
+  },
+  "vllm": {
+    "baseUrl": "http://localhost:8000",
+    "connected": true
   }
 }
