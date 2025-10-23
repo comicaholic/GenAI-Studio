@@ -861,23 +861,48 @@ def get_model_memory_usage(model_id: str):
         
         # If we can't get actual GPU usage, estimate based on model size
         estimated_memory = None
+        
+        # Check if this is a Groq model by looking at the model registry
+        is_groq_model = False
         try:
-            # Try to get model info to estimate memory usage
-            downloader = ModelDownloader()
-            model_info = downloader.get_model_info(model_id)
-            
-            if model_info.get("size"):
-                size_str = model_info["size"]
-                if "GB" in size_str:
-                    size_gb = float(size_str.replace(" GB", ""))
-                    # Estimate GPU memory needed (typically 1.5x model size)
-                    estimated_memory = round(size_gb * 1.5, 2)
+            from app.services.models import get_groq_models
+            _, groq_models = get_groq_models()
+            groq_model_ids = [m["id"].replace("groq:", "") for m in groq_models]
+            is_groq_model = model_id in groq_model_ids
         except Exception as e:
-            print(f"Failed to get model info for memory estimation: {e}")
+            print(f"Failed to check Groq models: {e}")
+        
+        if is_groq_model:
+            # This is a Groq model - no local memory usage
+            estimated_memory = 0.0
+        else:
+            # Try to get model info to estimate memory usage for local models
+            try:
+                downloader = ModelDownloader()
+                model_info = downloader.get_model_info(model_id)
+                
+                if model_info.get("size"):
+                    size_str = model_info["size"]
+                    if "GB" in size_str:
+                        size_gb = float(size_str.replace(" GB", ""))
+                        # Estimate GPU memory needed (typically 1.5x model size)
+                        estimated_memory = round(size_gb * 1.5, 2)
+                    else:
+                        estimated_memory = None
+                else:
+                    estimated_memory = None
+            except Exception as e:
+                print(f"Failed to get model info for memory estimation: {e}")
+                # For unknown models, don't estimate memory
+                estimated_memory = None
         
         # Determine if model is loaded based on tracking data or GPU usage
         is_loaded = False
-        if tracked_record and tracked_record.is_loaded:
+        
+        if is_groq_model:
+            # Groq models are always "loaded" remotely, but don't use local GPU memory
+            is_loaded = True
+        elif tracked_record and tracked_record.is_loaded:
             is_loaded = True
         elif gpu_memory_used is not None and gpu_memory_used > 0:
             is_loaded = True
@@ -891,6 +916,18 @@ def get_model_memory_usage(model_id: str):
                 "isLoaded": is_loaded,
                 "estimated": estimated_memory,
                 "tracked_memory_gb": tracked_record.memory_used_gb if tracked_record else None
+            }
+        
+        # For Groq models, return appropriate values
+        if is_groq_model:
+            return {
+                "model_id": model_id,
+                "used": 0.0,
+                "total": 0.0,
+                "isLoaded": True,
+                "estimated": 0.0,
+                "tracked_memory_gb": None,
+                "provider": "groq"
             }
         
         # Fallback to estimated memory if no GPU data
@@ -1571,7 +1608,7 @@ def load_model_in_vllm(model_id: str, base_url: str):
     except requests.exceptions.RequestException as e:
         raise HTTPException(502, f"Failed to connect to vLLM: {e}")
 
-@router.get("/load/{model_id}")
+@router.get("/load/{model_id}/status")
 def get_model_load_status(model_id: str):
     """
     Get the load status of a model in its provider

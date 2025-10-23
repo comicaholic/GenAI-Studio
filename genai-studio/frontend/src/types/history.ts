@@ -29,6 +29,7 @@ export interface SavedEvaluation {
   model: ModelInfo;
   parameters: Record<string, any>;
   metrics: string[];
+  metricsState?: Record<string, boolean>; // Full metrics state for proper restoration
   usedText: UsedText;
   files: FileInfo;
   results?: Record<string, any>;
