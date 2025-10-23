@@ -1,0 +1,39 @@
+{
+  "paths": {
+    "ocrSource": "data\\source",
+    "ocrReference": "data\\reference",
+    "promptSource": "data\\source",
+    "promptReference": "data\\reference",
+    "chatDownloadPath": "data\\downloads"
+  },
+  "ui": {
+    "theme": "dark",
+    "defaultLandingPage": "/",
+    "backgroundStateManagement": true
+  },
+  "presets": {
+    "ocr": [],
+    "prompt": [],
+    "chat": []
+  },
+  "groq": {
+    "apiKey": "",
+    "connected": true
+  },
+  "huggingface": {
+    "token": "",
+    "connected": true
+  },
+  "lmstudio": {
+    "baseUrl": "http://localhost:1234",
+    "connected": true
+  },
+  "ollama": {
+    "baseUrl": "http://localhost:11434",
+    "connected": true
+  },
+  "vllm": {
+    "baseUrl": "http://localhost:8000",
+    "connected": true
+  }
+}
