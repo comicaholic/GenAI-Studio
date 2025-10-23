@@ -1,5 +1,5 @@
 // src/pages/Analytics/AnalyticsPage.tsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import LayoutShell from "@/components/Layout/LayoutShell";
 import { api } from "@/services/api";
@@ -19,6 +19,15 @@ import {
 } from "recharts";
 
 /* -------------------- Types -------------------- */
+
+// Debounce utility to prevent rapid API calls
+const debounce = (func: Function, delay: number) => {
+  let timeoutId: number;
+  return (...args: any[]) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => func.apply(null, args), delay);
+  };
+};
 interface UptimeData {
   uptime_seconds: number;
   start_time: string;
@@ -249,20 +258,101 @@ function StatCard({ title, value, subtitle, color = "#3b82f6" }: { title: string
   );
 }
 
+/* Loading spinner component */
+function LoadingSpinner({ size = 24 }: { size?: number }) {
+  return (
+    <div style={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: size,
+      height: size,
+      animation: 'spin 1s linear infinite'
+    }}>
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10" stroke="#334155" strokeWidth="2" opacity="0.3"/>
+        <path d="M12 2a10 10 0 0 1 10 10" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round"/>
+      </svg>
+    </div>
+  );
+}
+
+/* Skeleton loading component */
+function SkeletonCard({ width = "100%", height = 200 }: { width?: string; height?: string | number }) {
+  return (
+    <div style={{
+      width,
+      height,
+      background: "linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%)",
+      backgroundSize: "200% 100%",
+      animation: "shimmer 1.5s infinite",
+      borderRadius: 12,
+      border: "1px solid #334155"
+    }} />
+  );
+}
+
 /* Chart card wrapper */
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+function ChartCard({ title, children, isLoading = false }: { title: string; children: React.ReactNode; isLoading?: boolean }) {
   return (
     <div style={{ 
       padding: 24, 
       background: "#0f172a", 
       border: "1px solid #334155", 
       borderRadius: 16, 
-      boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)" 
+      boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)",
+      position: "relative",
+      transition: "all 0.3s ease"
     }}>
       <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ margin: 0, color: "#e2e8f0", fontSize: 18, fontWeight: 600 }}>{title}</h3>
+        {isLoading && (
+          <div style={{ 
+            display: "flex", 
+            alignItems: "center", 
+            gap: 8,
+            padding: "4px 8px",
+            background: "rgba(59, 130, 246, 0.1)",
+            borderRadius: 6,
+            border: "1px solid rgba(59, 130, 246, 0.2)"
+          }}>
+            <LoadingSpinner size={16} />
+            <span style={{ fontSize: 12, color: "#3b82f6", fontWeight: 500 }}>Updating...</span>
+          </div>
+        )}
       </div>
-      <div style={{ width: "100%", height: 360 }}>{children}</div>
+      <div style={{ width: "100%", height: 360, position: "relative" }}>
+        {children}
+        {/* Show loading overlay only when actually loading */}
+        {isLoading && (
+          <div style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(15, 23, 42, 0.8)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 10,
+            borderRadius: 8
+          }}>
+            <div style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: 12,
+              padding: "12px 20px",
+              background: "rgba(30, 41, 59, 0.9)",
+              borderRadius: 8,
+              border: "1px solid rgba(59, 130, 246, 0.3)"
+            }}>
+              <LoadingSpinner size={20} />
+              <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Updating data...</span>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -281,7 +371,28 @@ export default function AnalyticsPage() {
   const [latencyMetrics, setLatencyMetrics] = useState<LatencyMetrics | null>(null);
   const [throughputMetrics, setThroughputMetrics] = useState<ThroughputMetrics | null>(null);
   const [evaluationMetrics, setEvaluationMetrics] = useState<EvaluationMetrics | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // loading states (granular) for better UX and performance
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [loadingSystem, setLoadingSystem] = useState(false);
+  const [loadingPerf, setLoadingPerf] = useState(false);
+  const [loadingGroq, setLoadingGroq] = useState(false);
+  const [loadingErrors, setLoadingErrors] = useState(false);
+  const [loadingLatency, setLoadingLatency] = useState(false);
+  const [loadingThroughput, setLoadingThroughput] = useState(false);
+  const [loadingEvals, setLoadingEvals] = useState(false);
+  
+  // Error handling state
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorType, setErrorType] = useState<'system' | 'groq' | 'general' | null>(null);
+  
+  // Smart polling state
+  const [isTabActive, setIsTabActive] = useState(true);
+  const [lastUserActivity, setLastUserActivity] = useState(Date.now());
+  
+  // Data versioning to prevent unnecessary re-renders
+  const [dataVersion, setDataVersion] = useState(0);
+  // Cache for chart data to prevent unnecessary recalculations
+  const chartDataCache = useRef<Map<string, ChartDataPoint[]>>(new Map());
   // persistent toggles for evaluations graph
   const [evalToggles, setEvalToggles] = useState<{ rouge:boolean; bleu:boolean; f1:boolean; em:boolean; bert:boolean; perplexity:boolean; accuracy:boolean; precision:boolean; recall:boolean }>(() => {
     try {
@@ -299,20 +410,52 @@ export default function AnalyticsPage() {
     try {
       const r = await api.get("/analytics/uptime");
       setUptime(r.data);
+      // Clear any previous errors
+      if (errorType === 'general') {
+        setErrorMessage(null);
+        setErrorType(null);
+      }
     } catch (e) {
-      // keep uptime null if failed
+      console.error('Error loading uptime:', e);
+      setErrorMessage('Failed to load uptime information');
+      setErrorType('general');
     }
-  }, []);
+  }, [errorType]);
 
   const loadSystem = useCallback(async () => {
     try {
+      setLoadingSystem(true);
       const r = await api.get("/analytics/system");
-      setSystemMetrics(r.data);
-    } catch (e) {}
+      console.log('System API Response:', r.data);
+      
+      // Smooth update: merge new data with existing data to prevent flickering
+      setSystemMetrics(prevData => {
+        if (!prevData) return r.data;
+        
+        // Merge the data smoothly, keeping existing values if new ones are missing
+        const mergedData = {
+          ...prevData,
+          ...r.data,
+          cpu: r.data.cpu ? { ...prevData.cpu, ...r.data.cpu } : prevData.cpu,
+          memory: r.data.memory ? { ...prevData.memory, ...r.data.memory } : prevData.memory,
+          disk: r.data.disk ? { ...prevData.disk, ...r.data.disk } : prevData.disk,
+          gpu: r.data.gpu ? { ...prevData.gpu, ...r.data.gpu } : prevData.gpu,
+        };
+        
+        // Increment data version to trigger smooth re-render
+        setDataVersion(prev => prev + 1);
+        return mergedData;
+      });
+    } catch (e) {
+      console.error('Error loading system data:', e);
+      setErrorMessage('Failed to load system metrics. Please check your connection.');
+      setErrorType('system');
+    } finally { setLoadingSystem(false); }
   }, []);
 
   const loadPerf = useCallback(async () => {
     try {
+      setLoadingPerf(true);
       // Convert dataInterval to minutes for backend
       const intervalMinutes = dataInterval === "1min" ? 1 : 
                              dataInterval === "5min" ? 5 : 
@@ -320,6 +463,9 @@ export default function AnalyticsPage() {
                              dataInterval === "1h" ? 60 : 5;
       
       const r = await api.get(`/analytics/performance?timeframe=${timeFilter}&interval_minutes=${intervalMinutes}`);
+      
+      console.log('Performance API Response:', r.data);
+      console.log('Performance trends raw:', r.data?.trends);
       
       // Ensure we have valid data structure
       const trends = r.data?.trends ?? [];
@@ -333,108 +479,270 @@ export default function AnalyticsPage() {
         return hasTimestamp && hasValidData;
       });
       
-      setPerformanceTrends(validTrends);
+      console.log('Valid trends count:', validTrends.length);
+      console.log('Sample valid trend:', validTrends[0]);
+      
+      // Smooth update: merge new performance data with existing data
+      setPerformanceTrends(prevTrends => {
+        if (!prevTrends || prevTrends.length === 0) return validTrends;
+        
+        // Create a map of existing trends by timestamp for efficient lookup
+        const existingMap = new Map(prevTrends.map(trend => [trend.timestamp, trend]));
+        
+        // Merge new trends with existing ones, keeping existing data if new data is missing
+        const mergedTrends = validTrends.map((newTrend: any) => {
+          const existingTrend = existingMap.get(newTrend.timestamp);
+          if (existingTrend) {
+            // Merge existing and new data, preferring new data but keeping existing if new is missing
+            return {
+              ...existingTrend,
+              ...newTrend,
+              cpu_percent: newTrend.cpu_percent ?? existingTrend.cpu_percent,
+              memory_percent: newTrend.memory_percent ?? existingTrend.memory_percent,
+              disk_percent: newTrend.disk_percent ?? existingTrend.disk_percent,
+              gpu_percent: newTrend.gpu_percent ?? existingTrend.gpu_percent,
+              app_cpu_percent: newTrend.app_cpu_percent ?? existingTrend.app_cpu_percent,
+              app_memory_percent: newTrend.app_memory_percent ?? existingTrend.app_memory_percent,
+              app_gpu_percent: newTrend.app_gpu_percent ?? existingTrend.app_gpu_percent,
+            };
+          }
+          return newTrend;
+        });
+        
+        // Increment data version to trigger smooth re-render
+        setDataVersion(prev => prev + 1);
+        return mergedTrends;
+      });
     } catch (e) {
       console.error('Error loading performance data:', e);
-      // Set empty array if API fails
-      setPerformanceTrends([]);
-    }
+      // Don't clear existing data on error to prevent flickering
+    } finally { setLoadingPerf(false); }
   }, [timeFilter, dataInterval]);
 
   const loadGroq = useCallback(async () => {
     try {
+      setLoadingGroq(true);
       const r = await api.get(`/analytics/groq?timeframe=${timeFilter}`);
-      setGroqAnalytics(r.data);
-    } catch (e) {}
+      console.log('Groq API Response:', r.data);
+      console.log('Total requests:', r.data?.total_requests);
+      console.log('Total tokens:', r.data?.total_tokens);
+      console.log('Hourly usage count:', r.data?.hourly_usage?.length);
+      
+      // Smooth update: merge new Groq data with existing data
+      setGroqAnalytics(prevData => {
+        if (!prevData) return r.data;
+        
+        return {
+          ...prevData,
+          ...r.data,
+          // Merge hourly usage arrays smoothly
+          hourly_usage: r.data.hourly_usage || prevData.hourly_usage,
+          usage_by_model: r.data.usage_by_model || prevData.usage_by_model,
+        };
+      });
+    } catch (e) {
+      console.error('Error loading Groq data:', e);
+      setErrorMessage('Failed to load Groq API analytics. Please check your API connection.');
+      setErrorType('groq');
+    } finally { setLoadingGroq(false); }
   }, [timeFilter]);
 
   const loadErrors = useCallback(async () => {
     try {
+      setLoadingErrors(true);
       const r = await api.get(`/analytics/errors?timeframe=${timeFilter}`);
+      console.log('Errors API Response:', r.data);
+      console.log('Total errors:', r.data?.total_errors);
+      console.log('Error rate:', r.data?.error_rate);
       setErrorMetrics(r.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error loading error metrics:', e);
+    } finally { setLoadingErrors(false); }
   }, [timeFilter]);
 
   const loadLatency = useCallback(async () => {
     try {
+      setLoadingLatency(true);
       const r = await api.get(`/analytics/latency?timeframe=${timeFilter}`);
+      console.log('Latency API Response:', r.data);
+      console.log('Average latency:', r.data?.average_response_time_ms);
+      console.log('P95 latency:', r.data?.p95_response_time_ms);
       setLatencyMetrics(r.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error loading latency metrics:', e);
+    } finally { setLoadingLatency(false); }
   }, [timeFilter]);
 
   const loadThroughput = useCallback(async () => {
     try {
+      setLoadingThroughput(true);
       const r = await api.get(`/analytics/throughput?timeframe=${timeFilter}`);
+      console.log('Throughput API Response:', r.data);
+      console.log('Requests per second:', r.data?.requests_per_second);
+      console.log('Evaluations per minute:', r.data?.evaluations_per_minute);
       setThroughputMetrics(r.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error loading throughput metrics:', e);
+    } finally { setLoadingThroughput(false); }
   }, [timeFilter]);
 
   const loadEvals = useCallback(async () => {
     try {
+      setLoadingEvals(true);
       const r = await api.get(`/analytics/evaluations?timeframe=${timeFilter}`);
       console.log('Evaluations API Response:', r.data);
+      console.log('Total evaluations:', r.data?.total_evaluations);
+      console.log('Rouge scores count:', r.data?.rouge_scores?.length);
+      console.log('Bleu scores count:', r.data?.bleu_scores?.length);
       setEvaluationMetrics(r.data);
     } catch (e) {
       console.error('Error loading evaluation data:', e);
       setEvaluationMetrics(null);
-    }
+    } finally { setLoadingEvals(false); }
   }, [timeFilter]);
 
-  const loadAll = useCallback(async () => {
-    setIsLoading(true);
-    await Promise.all([
-      loadUptime(),
-      loadSystem(),
-      loadPerf(),
-      loadGroq(),
-      loadErrors(),
-      loadLatency(),
-      loadThroughput(),
-      loadEvals(),
-    ]);
-    setIsLoading(false);
-  }, [loadUptime, loadSystem, loadPerf, loadGroq, loadErrors, loadLatency, loadThroughput, loadEvals]);
+  // optimized loader: only fetch what is visible
+  const loadVisible = useCallback(async () => {
+    setIsInitialLoading(true);
+    const tasks: Promise<any>[] = [loadUptime()];
+    if (activeTab === "application") {
+      if (activeSubTab === "system") {
+        tasks.push(loadSystem(), loadPerf());
+      } else if (activeSubTab === "trends") {
+        tasks.push(loadErrors(), loadLatency(), loadThroughput());
+      } else if (activeSubTab === "evaluations") {
+        tasks.push(loadEvals());
+      }
+    } else if (activeTab === "groq") {
+      tasks.push(loadGroq());
+    }
+    await Promise.all(tasks);
+    setIsInitialLoading(false);
+  }, [activeTab, activeSubTab, loadUptime, loadSystem, loadPerf, loadErrors, loadLatency, loadThroughput, loadEvals, loadGroq]);
+
+  // Create debounced versions of loading functions to prevent rapid calls
+  const debouncedLoadSystem = useMemo(() => debounce(loadSystem, 1000), [loadSystem]);
+  const debouncedLoadPerf = useMemo(() => debounce(loadPerf, 1000), [loadPerf]);
+  const debouncedLoadGroq = useMemo(() => debounce(loadGroq, 1000), [loadGroq]);
+  const debouncedLoadErrors = useMemo(() => debounce(loadErrors, 1000), [loadErrors]);
+  const debouncedLoadLatency = useMemo(() => debounce(loadLatency, 1000), [loadLatency]);
+  const debouncedLoadThroughput = useMemo(() => debounce(loadThroughput, 1000), [loadThroughput]);
+  const debouncedLoadEvals = useMemo(() => debounce(loadEvals, 1000), [loadEvals]);
+
+  // Track user activity for smart polling
+  useEffect(() => {
+    const handleUserActivity = (event: Event) => {
+      // Only track activity for meaningful interactions, not every click
+      const target = event.target as HTMLElement;
+      
+      // Skip activity tracking for:
+      // - Chart interactions (tooltips, legends, etc.)
+      // - Button clicks (except refresh button)
+      // - Form inputs
+      // - Navigation elements
+      if (target.closest('.recharts-tooltip-wrapper') ||
+          target.closest('.recharts-legend-wrapper') ||
+          target.closest('.recharts-cartesian-axis') ||
+          target.closest('button:not([data-refresh])') ||
+          target.closest('input') ||
+          target.closest('select') ||
+          target.closest('textarea') ||
+          target.closest('a') ||
+          target.closest('[role="button"]')) {
+        return;
+      }
+      
+      setLastUserActivity(Date.now());
+    };
+
+    const handleVisibilityChange = () => {
+      setIsTabActive(!document.hidden);
+    };
+
+    // Add event listeners for user activity - only track meaningful interactions
+    document.addEventListener('keydown', handleUserActivity);
+    document.addEventListener('scroll', handleUserActivity);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('keydown', handleUserActivity);
+      document.removeEventListener('scroll', handleUserActivity);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
-    loadAll();
-    const uptimeInterval = setInterval(loadUptime, 1_000); // realtime-ish uptime
-    const dataInterval = setInterval(() => {
-      // targeted refresh depending on tab - reduced frequency to prevent jitter
-      if (activeTab === "application" && activeSubTab === "system") {
-        loadSystem();
-        // Always reload performance data when timeframe changes
-        loadPerf();
-      } else if (activeTab === "application" && activeSubTab === "trends") {
-        loadErrors();
-        loadLatency();
-        loadThroughput();
-      } else if (activeTab === "application" && activeSubTab === "evaluations") {
-        loadEvals();
-      } else if (activeTab === "groq") {
-        loadGroq();
+    loadVisible();
+    
+    // Smart polling intervals based on user activity
+    const getPollingInterval = () => {
+      const timeSinceActivity = Date.now() - lastUserActivity;
+      const isActive = isTabActive && timeSinceActivity < 60000; // Active if tab visible and user active within last minute
+      
+      if (isActive) {
+        return 15000; // 15 seconds when active
+      } else if (isTabActive) {
+        return 30000; // 30 seconds when tab visible but inactive
+      } else {
+        return 60000; // 1 minute when tab hidden
       }
-    }, 2_000); // Reduced back to 2s for more responsive updates
+    };
+
+    const uptimeInterval = setInterval(loadUptime, 5_000);
+    const dataInterval = setInterval(() => {
+      // Only poll if tab is active or user was recently active
+      if (isTabActive || (Date.now() - lastUserActivity < 300000)) { // 5 minutes grace period
+        // targeted refresh depending on tab - reduced frequency to prevent jitter
+        if (activeTab === "application" && activeSubTab === "system") {
+          debouncedLoadSystem();
+          // Always reload performance data when timeframe changes
+          debouncedLoadPerf();
+        } else if (activeTab === "application" && activeSubTab === "trends") {
+          debouncedLoadErrors();
+          debouncedLoadLatency();
+          debouncedLoadThroughput();
+        } else if (activeTab === "application" && activeSubTab === "evaluations") {
+          debouncedLoadEvals();
+        } else if (activeTab === "groq") {
+          debouncedLoadGroq();
+        }
+      }
+    }, getPollingInterval());
+
     return () => {
       clearInterval(uptimeInterval);
       clearInterval(dataInterval);
     };
-  }, [activeTab, activeSubTab, timeFilter, loadAll, loadUptime, loadSystem, loadPerf, loadGroq, loadErrors, loadLatency, loadThroughput, loadEvals]);
+  }, [activeTab, activeSubTab, timeFilter, isTabActive, lastUserActivity]); // Removed debounced functions from dependencies
 
   // Separate effect to reload performance data when timeframe changes
   useEffect(() => {
     if (activeTab === "application" && activeSubTab === "system") {
-      loadPerf();
+      debouncedLoadPerf();
     }
-  }, [timeFilter, dataInterval, loadPerf, activeTab, activeSubTab]);
+  }, [timeFilter]); // Only depend on timeFilter, not the debounced function
 
   /* ---------- Derived & mapped data for charts ---------- */
   const systemChartData = useMemo(
     (): ChartDataPoint[] => {
-      if (!performanceTrends || performanceTrends.length === 0) return [];
+      if (!performanceTrends || performanceTrends.length === 0) {
+        return [];
+      }
       
-      const chartData: ChartDataPoint[] = [];
+      // Create cache key
+      const cacheKey = `${timeFilter}-${performanceTrends.length}-${dataVersion}`;
       
-      performanceTrends.forEach((t) => {
+      // Check cache first
+      if (chartDataCache.current.has(cacheKey)) {
+        return chartDataCache.current.get(cacheKey)!;
+      }
+      
+      // Limit data points to prevent performance issues
+      const maxDataPoints = 100;
+      const step = Math.max(1, Math.floor(performanceTrends.length / maxDataPoints));
+      const sampledTrends = performanceTrends.filter((_, index) => index % step === 0);
+      
+      const chartData: ChartDataPoint[] = sampledTrends.map((t) => {
         const date = new Date(t.timestamp);
         let timeLabel: string;
         
@@ -444,13 +752,18 @@ export default function AnalyticsPage() {
         } else if (timeFilter === "6h") {
           timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } else if (timeFilter === "24h") {
-          // Show every data point
           timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        } else { // 7d
+        } else if (timeFilter === "7d") {
           timeLabel = date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        } else if (timeFilter === "30d") {
+          timeLabel = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        } else if (timeFilter === "90d") {
+          timeLabel = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        } else { // all
+          timeLabel = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
         }
         
-        chartData.push({
+        return {
           time: timeLabel,
           cpu: clampPct(t.cpu_percent ?? 0),
           memory: clampPct(t.memory_percent ?? 0),
@@ -459,12 +772,21 @@ export default function AnalyticsPage() {
           appCpu: clampPct(t.app_cpu_percent ?? 0),
           appMemory: clampPct(t.app_memory_percent ?? 0),
           appGpu: clampPct(t.app_gpu_percent ?? 0),
-        });
+        };
       });
+      
+      // Cache the result
+      chartDataCache.current.set(cacheKey, chartData);
+      
+      // Clean old cache entries (keep only last 10)
+      if (chartDataCache.current.size > 10) {
+        const keys = Array.from(chartDataCache.current.keys());
+        keys.slice(0, -10).forEach(key => chartDataCache.current.delete(key));
+      }
       
       return chartData;
     },
-    [performanceTrends, timeFilter]
+    [performanceTrends, timeFilter, dataVersion]
   );
 
   const groqChartData = groqAnalytics?.hourly_usage?.slice(-24)?.map(item => ({
@@ -558,6 +880,33 @@ export default function AnalyticsPage() {
   /* -------------------- Render -------------------- */
   return (
     <LayoutShell title="Analytics">
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideIn {
+          from { opacity: 0; transform: translateX(-20px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        .chart-transition {
+          transition: all 0.3s ease-in-out;
+        }
+        .data-update {
+          animation: fadeIn 0.5s ease-in-out;
+        }
+        .smooth-loading {
+          transition: opacity 0.2s ease-in-out;
+        }
+      `}</style>
       <div style={{ 
         width: "100%", 
         maxWidth: 1400, 
@@ -568,6 +917,48 @@ export default function AnalyticsPage() {
         flexDirection: "column",
         gap: 24
       }}>
+          {/* Error Banner */}
+          {errorMessage && (
+            <div style={{ 
+              padding: 16, 
+              background: "#dc2626", 
+              border: "1px solid #ef4444", 
+              borderRadius: 12, 
+              marginBottom: 20,
+              color: "#ffffff",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center"
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 18 }}>⚠️</span>
+                <span style={{ fontWeight: 600 }}>{errorMessage}</span>
+              </div>
+              <button
+                type="button"
+                data-refresh="true"
+                onClick={() => {
+                  setErrorMessage(null);
+                  setErrorType(null);
+                  // Retry loading data
+                  loadVisible();
+                }}
+                style={{
+                  background: "rgba(255, 255, 255, 0.2)",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "6px 12px",
+                  color: "#ffffff",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: 600
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
           {/* Modern Header */}
           <div style={{ 
             display: "flex", 
@@ -662,7 +1053,9 @@ export default function AnalyticsPage() {
                 </select>
 
                 <button
-                  onClick={() => loadAll()}
+                  type="button"
+                  data-refresh="true"
+                  onClick={() => loadVisible()}
                   style={{
                     padding: "10px 16px",
                     borderRadius: 10,
@@ -706,6 +1099,7 @@ export default function AnalyticsPage() {
             gap: 4
           }}>
             <button
+              type="button"
               onClick={() => setActiveTab("application")}
               style={{
                 flex: 1,
@@ -744,6 +1138,7 @@ export default function AnalyticsPage() {
               Application
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab("groq")}
               style={{
                 flex: 1,
@@ -795,6 +1190,7 @@ export default function AnalyticsPage() {
               width: "fit-content"
             }}>
               <button
+                type="button"
                 onClick={() => setActiveSubTab("system")}
                 style={{
                   padding: "10px 16px",
@@ -825,6 +1221,7 @@ export default function AnalyticsPage() {
                 System
               </button>
               <button
+                type="button"
                 onClick={() => setActiveSubTab("trends")}
                 style={{
                   padding: "10px 16px",
@@ -855,6 +1252,7 @@ export default function AnalyticsPage() {
                 Trends
               </button>
               <button
+                type="button"
                 onClick={() => setActiveSubTab("evaluations")}
                 style={{
                   padding: "10px 16px",
@@ -888,8 +1286,21 @@ export default function AnalyticsPage() {
           )}
 
           {/* Content */}
-          {isLoading ? (
-            <div style={{ color: colors.muted, textAlign: "center", padding: 36 }}>Loading analytics…</div>
+          {isInitialLoading ? (
+            <div style={{ 
+              color: colors.muted, 
+              textAlign: "center", 
+              padding: 36,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 16
+            }}>
+              <LoadingSpinner size={32} />
+              <div style={{ fontSize: 16, fontWeight: 500 }}>Loading analytics...</div>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>Fetching system metrics and performance data</div>
+            </div>
           ) : (
             <>
               {/* Application / System */}
@@ -973,27 +1384,32 @@ export default function AnalyticsPage() {
                     
                   </div>
 
-                  <ChartCard title="Resource Usage">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={[
-                          { name: "CPU", application: appCPU, total: 100 },
-                          { name: "Memory", application: appMemPct, total: 100 },
-                          { name: "GPU", application: appGPU, total: 100 },
-                        ]}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                        <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
-                        <YAxis stroke={colors.muted} fontSize={12} domain={[0, 100]} />
-                        <Tooltip 
-                          contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
-                          formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
-                        />
-                        <Legend />
-                        <Bar dataKey="application" fill={colors.accent} name="Application %" />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  <ChartCard title="Resource Usage" isLoading={loadingSystem}>
+                    <div className="chart-transition" style={{ minHeight: 360 }}>
+                      <ResponsiveContainer width="100%" height={360}>
+                        <BarChart
+                          key={`resource-${dataVersion}`}
+                          data={[
+                            { name: "CPU", application: appCPU || 0, system: sysCPU || 0 },
+                            { name: "Memory", application: appMemPct || 0, system: sysMemPct || 0 },
+                            { name: "GPU", application: appGPU || 0, system: sysGPU || 0 },
+                          ]}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                          <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
+                          <YAxis stroke={colors.muted} fontSize={12} domain={[0, 100]} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                            formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
+                          />
+                          <Legend />
+                          <Bar dataKey="system" fill={colors.primary} name="System %" />
+                          <Bar dataKey="application" fill={colors.accent} name="Application %" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
                   </ChartCard>
+
 
                   {/* Chart Controls */}
                   <div style={{ 
@@ -1058,53 +1474,74 @@ export default function AnalyticsPage() {
                     </div>
                   </div>
 
-                  <ChartCard title={`Historical Performance (System vs Application) - Last ${timeFilter} (${dataInterval} intervals)`}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart
-                        data={systemChartData}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                        <XAxis 
-                          dataKey="time" 
-                          stroke={colors.muted} 
-                          fontSize={11}
-                          interval="preserveStartEnd"
-                          tick={{ fill: colors.muted }}
-                          angle={-45}
-                          textAnchor="end"
-                          height={60}
-                        />
-                        <YAxis 
-                          stroke={colors.muted} 
-                          fontSize={12} 
-                          domain={[0, 100]}
-                          tick={{ fill: colors.muted }}
-                          label={{ value: 'Usage %', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: colors.muted } }}
-                        />
-                        <Tooltip 
-                          contentStyle={{ 
-                            backgroundColor: colors.panel, 
-                            border: `1px solid ${colors.slate}`, 
-                            borderRadius: 8, 
-                            color: colors.text,
-                            fontSize: 12
-                          }}
-                          formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
-                          labelStyle={{ color: colors.text, fontSize: 12 }}
-                        />
-                        <Legend />
-                        {/* System metrics */}
-                        <Area type="monotone" dataKey="cpu" stackId="1" stroke={colors.accent} fill={colors.accent} fillOpacity={0.15} name="System CPU %" />
-                        <Area type="monotone" dataKey="memory" stackId="1" stroke={colors.primary} fill={colors.primary} fillOpacity={0.10} name="System Memory %" />
-                        <Area type="monotone" dataKey="disk" stackId="1" stroke={colors.secondary} fill={colors.secondary} fillOpacity={0.10} name="System Disk %" />
-                        {showGPU && <Area type="monotone" dataKey="gpu" stackId="1" stroke={colors.purple} fill={colors.purple} fillOpacity={0.10} name="System GPU %" />}
-                        
-                        {/* Application metrics */}
-                        <Area type="monotone" dataKey="appCpu" stackId="2" stroke={colors.accent} fill={colors.accent} fillOpacity={0.25} name="App CPU %" strokeDasharray="5 5" />
-                        <Area type="monotone" dataKey="appMemory" stackId="2" stroke={colors.primary} fill={colors.primary} fillOpacity={0.20} name="App Memory %" strokeDasharray="5 5" />
-                        {showGPU && <Area type="monotone" dataKey="appGpu" stackId="2" stroke={colors.purple} fill={colors.purple} fillOpacity={0.20} name="App GPU %" strokeDasharray="5 5" />}
-                      </AreaChart>
-                    </ResponsiveContainer>
+                  <ChartCard title={`Historical Performance (Overlapping Metrics) - Last ${timeFilter} (${dataInterval} intervals)`} isLoading={loadingPerf}>
+                    <div className="chart-transition" style={{ minHeight: 360 }}>
+                      <ResponsiveContainer width="100%" height={360}>
+                        <AreaChart
+                          key={`performance-${dataVersion}`}
+                          data={systemChartData}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                          <XAxis 
+                            dataKey="time" 
+                            stroke={colors.muted} 
+                            fontSize={11}
+                            interval="preserveStartEnd"
+                            tick={{ fill: colors.muted }}
+                            angle={-45}
+                            textAnchor="end"
+                            height={60}
+                          />
+                          <YAxis 
+                            stroke={colors.muted} 
+                            fontSize={12} 
+                            domain={[0, 100]}
+                            tick={{ fill: colors.muted }}
+                            label={{ value: 'Usage %', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: colors.muted } }}
+                          />
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: colors.panel, 
+                              border: `1px solid ${colors.slate}`, 
+                              borderRadius: 8, 
+                              color: colors.text,
+                              fontSize: 12
+                            }}
+                            formatter={(value: any, name: string) => [`${Number(value).toFixed(1)}%`, name]}
+                            labelStyle={{ color: colors.text, fontSize: 12 }}
+                          />
+                          <Legend />
+                          {/* System metrics - overlapping areas, not stacked */}
+                          <Area type="monotone" dataKey="cpu" stroke={colors.accent} fill={colors.accent} fillOpacity={0.15} name="System CPU %" />
+                          <Area type="monotone" dataKey="memory" stroke={colors.primary} fill={colors.primary} fillOpacity={0.10} name="System Memory %" />
+                          <Area type="monotone" dataKey="disk" stroke={colors.secondary} fill={colors.secondary} fillOpacity={0.10} name="System Disk %" />
+                          {showGPU && <Area type="monotone" dataKey="gpu" stroke={colors.purple} fill={colors.purple} fillOpacity={0.10} name="System GPU %" />}
+                          
+                          {/* Application metrics - overlapping areas with dashed lines */}
+                          <Area type="monotone" dataKey="appCpu" stroke={colors.accent} fill={colors.accent} fillOpacity={0.25} name="App CPU %" strokeDasharray="5 5" />
+                          <Area type="monotone" dataKey="appMemory" stroke={colors.primary} fill={colors.primary} fillOpacity={0.20} name="App Memory %" strokeDasharray="5 5" />
+                          {showGPU && <Area type="monotone" dataKey="appGpu" stroke={colors.purple} fill={colors.purple} fillOpacity={0.20} name="App GPU %" strokeDasharray="5 5" />}
+                        </AreaChart>
+                      </ResponsiveContainer>
+                      {systemChartData.length === 0 && !loadingPerf && (
+                        <div style={{ 
+                          position: 'absolute',
+                          top: '50%',
+                          left: '50%',
+                          transform: 'translate(-50%, -50%)',
+                          color: colors.muted, 
+                          padding: 28, 
+                          textAlign: "center",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center"
+                        }}>
+                          <div style={{ fontSize: 16, marginBottom: 8 }}>📊 No Performance Data</div>
+                          <div style={{ fontSize: 12 }}>Historical data will appear here once metrics are recorded</div>
+                        </div>
+                      )}
+                    </div>
                   </ChartCard>
                   <div style={{ display:"flex", gap:12, alignItems:"center", color:colors.muted }}>
                     <label style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
@@ -1123,29 +1560,31 @@ export default function AnalyticsPage() {
                     <StatCard title="Throughput" value={throughputMetrics ? `${(throughputMetrics.requests_per_second ?? 0).toFixed(1)} /s` : "N/A"} subtitle={`${typeof throughputMetrics?.evaluations_per_minute === "number" ? throughputMetrics.evaluations_per_minute.toFixed(1) : "N/A"} eval/min`} color={colors.secondary} />
                   </div>
 
-                  <ChartCard title="Error Trends (hourly)">
-                    {errorTrendData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={errorTrendData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                          <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
-                          <YAxis stroke={colors.muted} fontSize={12} />
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
-                            formatter={(value: any, name: string) => {
-                              if (name === "Error Rate %") {
-                                return [`${Number(value).toFixed(1)}%`, name];
-                              }
-                              return [value, name];
-                            }}
-                          />
-                          <Legend />
-                          <Line type="monotone" dataKey="errors" stroke={colors.danger} strokeWidth={2} name="Errors" />
-                          <Line type="monotone" dataKey="error_rate_pct" stroke={colors.accent} strokeWidth={2} name="Error Rate %" />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No error trend data</div>
+                  <ChartCard title="Error Trends (hourly)" isLoading={loadingErrors || loadingLatency}>
+                    {!(loadingErrors || loadingLatency) && (
+                      errorTrendData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height={360}>
+                          <LineChart data={errorTrendData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                            <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
+                            <YAxis stroke={colors.muted} fontSize={12} />
+                            <Tooltip 
+                              contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                              formatter={(value: any, name: string) => {
+                                if (name === "Error Rate %") {
+                                  return [`${Number(value).toFixed(1)}%`, name];
+                                }
+                                return [value, name];
+                              }}
+                            />
+                            <Legend />
+                            <Line type="monotone" dataKey="errors" stroke={colors.danger} strokeWidth={2} name="Errors" />
+                            <Line type="monotone" dataKey="error_rate_pct" stroke={colors.accent} strokeWidth={2} name="Error Rate %" />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No error trend data</div>
+                      )
                     )}
                   </ChartCard>
                 </div>
@@ -1184,61 +1623,74 @@ export default function AnalyticsPage() {
                         ))}
                       </div>
 
-                      <ChartCard title="Evaluation Metrics Graph">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={(() => {
-                            const maxLen = Math.max(
-                              evaluationMetrics?.rouge_scores?.length || 0,
-                              evaluationMetrics?.bleu_scores?.length || 0,
-                              evaluationMetrics?.f1_scores?.length || 0,
-                              evaluationMetrics?.exact_match_scores?.length || 0,
-                              evaluationMetrics?.bertscore_scores?.length || 0,
-                              evaluationMetrics?.perplexity_scores?.length || 0,
-                              evaluationMetrics?.accuracy_scores?.length || 0,
-                              evaluationMetrics?.precision_scores?.length || 0,
-                              evaluationMetrics?.recall_scores?.length || 0,
-                            );
-                            return Array.from({ length: maxLen }, (_, i) => ({
-                              idx: i,
-                              rouge: evaluationMetrics?.rouge_scores?.[i]?.score,
-                              bleu: evaluationMetrics?.bleu_scores?.[i]?.score,
-                              f1: evaluationMetrics?.f1_scores?.[i]?.score,
-                              em: evaluationMetrics?.exact_match_scores?.[i]?.score,
-                              bert: evaluationMetrics?.bertscore_scores?.[i]?.score,
-                              perplexity: evaluationMetrics?.perplexity_scores?.[i]?.score,
-                              accuracy: evaluationMetrics?.accuracy_scores?.[i]?.score,
-                              precision: evaluationMetrics?.precision_scores?.[i]?.score,
-                              recall: evaluationMetrics?.recall_scores?.[i]?.score,
-                            }));
-                          })()}>
-                            <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
-                            <XAxis dataKey="idx" stroke={colors.muted} fontSize={12} />
-                            <YAxis stroke={colors.muted} fontSize={12} />
-                            <Tooltip 
-                              contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
-                              formatter={(value: any, name: string) => {
-                                if (name === "Perplexity") {
-                                  return [`${Number(value).toFixed(2)}`, name];
-                                }
-                                return [`${Number(value).toFixed(3)}`, name];
-                              }}
-                            />
-                            <Legend />
-                            {evalToggles.rouge && <Line type="monotone" dataKey="rouge" stroke={colors.primary} name="ROUGE" dot={false} />}
-                            {evalToggles.bleu && <Line type="monotone" dataKey="bleu" stroke={colors.secondary} name="BLEU" dot={false} />}
-                            {evalToggles.f1 && <Line type="monotone" dataKey="f1" stroke={colors.accent} name="F1" dot={false} />}
-                            {evalToggles.em && <Line type="monotone" dataKey="em" stroke={colors.cyan} name="EM" dot={false} />}
-                            {evalToggles.bert && <Line type="monotone" dataKey="bert" stroke={colors.green} name="BERTScore" dot={false} />}
-                            {evalToggles.perplexity && <Line type="monotone" dataKey="perplexity" stroke={colors.danger} name="Perplexity" dot={false} />}
-                            {evalToggles.accuracy && <Line type="monotone" dataKey="accuracy" stroke={colors.yellow} name="Accuracy" dot={false} />}
-                            {evalToggles.precision && <Line type="monotone" dataKey="precision" stroke={colors.purple} name="Precision" dot={false} />}
-                            {evalToggles.recall && <Line type="monotone" dataKey="recall" stroke={colors.pink} name="Recall" dot={false} />}
-                          </LineChart>
-                        </ResponsiveContainer>
+                      <ChartCard title="Evaluation Metrics Graph" isLoading={loadingEvals}>
+                        {!loadingEvals && (
+                          <ResponsiveContainer width="100%" height={360}>
+                            <LineChart data={(() => {
+                              const maxLen = Math.max(
+                                evaluationMetrics?.rouge_scores?.length || 0,
+                                evaluationMetrics?.bleu_scores?.length || 0,
+                                evaluationMetrics?.f1_scores?.length || 0,
+                                evaluationMetrics?.exact_match_scores?.length || 0,
+                                evaluationMetrics?.bertscore_scores?.length || 0,
+                                evaluationMetrics?.perplexity_scores?.length || 0,
+                                evaluationMetrics?.accuracy_scores?.length || 0,
+                                evaluationMetrics?.precision_scores?.length || 0,
+                                evaluationMetrics?.recall_scores?.length || 0,
+                              );
+                              return Array.from({ length: maxLen }, (_, i) => ({
+                                idx: i,
+                                rouge: evaluationMetrics?.rouge_scores?.[i]?.score,
+                                bleu: evaluationMetrics?.bleu_scores?.[i]?.score,
+                                f1: evaluationMetrics?.f1_scores?.[i]?.score,
+                                em: evaluationMetrics?.exact_match_scores?.[i]?.score,
+                                bert: evaluationMetrics?.bertscore_scores?.[i]?.score,
+                                perplexity: evaluationMetrics?.perplexity_scores?.[i]?.score,
+                                accuracy: evaluationMetrics?.accuracy_scores?.[i]?.score,
+                                precision: evaluationMetrics?.precision_scores?.[i]?.score,
+                                recall: evaluationMetrics?.recall_scores?.[i]?.score,
+                              }));
+                            })()}>
+                              <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                              <XAxis dataKey="idx" stroke={colors.muted} fontSize={12} />
+                              <YAxis stroke={colors.muted} fontSize={12} />
+                              <Tooltip 
+                                contentStyle={{ backgroundColor: colors.panel, border: `1px solid ${colors.slate}`, borderRadius: 8, color: colors.text }}
+                                formatter={(value: any, name: string) => {
+                                  if (name === "Perplexity") {
+                                    return [`${Number(value).toFixed(2)}`, name];
+                                  }
+                                  return [`${Number(value).toFixed(3)}`, name];
+                                }}
+                              />
+                              <Legend />
+                              {evalToggles.rouge && <Line type="monotone" dataKey="rouge" stroke={colors.primary} name="ROUGE" dot={false} />}
+                              {evalToggles.bleu && <Line type="monotone" dataKey="bleu" stroke={colors.secondary} name="BLEU" dot={false} />}
+                              {evalToggles.f1 && <Line type="monotone" dataKey="f1" stroke={colors.accent} name="F1" dot={false} />}
+                              {evalToggles.em && <Line type="monotone" dataKey="em" stroke={colors.cyan} name="EM" dot={false} />}
+                              {evalToggles.bert && <Line type="monotone" dataKey="bert" stroke={colors.green} name="BERTScore" dot={false} />}
+                              {evalToggles.perplexity && <Line type="monotone" dataKey="perplexity" stroke={colors.danger} name="Perplexity" dot={false} />}
+                              {evalToggles.accuracy && <Line type="monotone" dataKey="accuracy" stroke={colors.yellow} name="Accuracy" dot={false} />}
+                              {evalToggles.precision && <Line type="monotone" dataKey="precision" stroke={colors.purple} name="Precision" dot={false} />}
+                              {evalToggles.recall && <Line type="monotone" dataKey="recall" stroke={colors.pink} name="Recall" dot={false} />}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        )}
                       </ChartCard>
                     </>
                   ) : (
-                    <div style={{ color: colors.muted, padding: 36, textAlign: "center" }}>No evaluation metrics available for the selected time range</div>
+                    <ChartCard title="Evaluation Metrics Graph" isLoading={loadingEvals}>
+                      {!loadingEvals && (
+                        <ResponsiveContainer width="100%" height={360}>
+                          <LineChart data={[{ idx: 0 }]}> 
+                            <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                            <XAxis dataKey="idx" stroke={colors.muted} fontSize={12} />
+                            <YAxis stroke={colors.muted} fontSize={12} />
+                            <Legend />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </ChartCard>
                   )}
                 </div>
               )}
@@ -1255,10 +1707,10 @@ export default function AnalyticsPage() {
                         <StatCard title="Success Rate" value={groqAnalytics.success_rate ? `${(groqAnalytics.success_rate * 100).toFixed(1)}%` : "N/A"} subtitle="Requests success" color={colors.purple} />
                       </div>
 
-                      <ChartCard title="Usage by Model">
-                        {modelUsageData.length > 0 ? (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={modelUsageData}>
+                      <ChartCard title="Usage by Model" isLoading={loadingGroq}>
+                        <div className="chart-transition" style={{ minHeight: 360 }}>
+                          <ResponsiveContainer width="100%" height={360}>
+                            <BarChart data={modelUsageData.length > 0 ? modelUsageData : [{ name: "No Data", requests: 0, tokens: 0, cost_usd: 0 }]}>
                               <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
                               <XAxis dataKey="name" stroke={colors.muted} fontSize={12} />
                               <YAxis stroke={colors.muted} fontSize={12} />
@@ -1276,15 +1728,26 @@ export default function AnalyticsPage() {
                               <Bar dataKey="tokens" fill={colors.secondary} name="Tokens" />
                             </BarChart>
                           </ResponsiveContainer>
-                        ) : (
-                          <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No model usage data</div>
-                        )}
+                          {modelUsageData.length === 0 && !loadingGroq && (
+                            <div style={{ 
+                              position: 'absolute',
+                              top: '50%',
+                              left: '50%',
+                              transform: 'translate(-50%, -50%)',
+                              color: colors.muted, 
+                              padding: 28, 
+                              textAlign: "center" 
+                            }}>
+                              No model usage data
+                            </div>
+                          )}
+                        </div>
                       </ChartCard>
 
-                      <ChartCard title="Hourly Usage">
-                        {groqChartData.length > 0 ? (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={groqChartData}>
+                      <ChartCard title="Hourly Usage" isLoading={loadingGroq}>
+                        <div className="chart-transition" style={{ minHeight: 360 }}>
+                          <ResponsiveContainer width="100%" height={360}>
+                            <LineChart data={groqChartData.length > 0 ? groqChartData : [{ hour: "No Data", requests: 0, tokens: 0, cost_usd: 0 }]}>
                               <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
                               <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
                               <YAxis stroke={colors.muted} fontSize={12} />
@@ -1303,13 +1766,35 @@ export default function AnalyticsPage() {
                               <Line type="monotone" dataKey="cost_usd" stroke={colors.accent} strokeWidth={2} name="Cost (USD)" />
                             </LineChart>
                           </ResponsiveContainer>
-                        ) : (
-                          <div style={{ color: colors.muted, padding: 28, textAlign: "center" }}>No hourly usage data</div>
-                        )}
+                          {groqChartData.length === 0 && !loadingGroq && (
+                            <div style={{ 
+                              position: 'absolute',
+                              top: '50%',
+                              left: '50%',
+                              transform: 'translate(-50%, -50%)',
+                              color: colors.muted, 
+                              padding: 28, 
+                              textAlign: "center" 
+                            }}>
+                              No hourly usage data
+                            </div>
+                          )}
+                        </div>
                       </ChartCard>
                     </>
                   ) : (
-                    <div style={{ color: colors.muted, padding: 36, textAlign: "center" }}>No Groq API usage data available for the selected time range</div>
+                    <ChartCard title="Groq Usage" isLoading={loadingGroq}>
+                      {!loadingGroq && (
+                        <ResponsiveContainer width="100%" height={360}>
+                          <LineChart data={[{ hour: "-", requests: 0 }]}> 
+                            <CartesianGrid strokeDasharray="3 3" stroke={colors.slate} />
+                            <XAxis dataKey="hour" stroke={colors.muted} fontSize={12} />
+                            <YAxis stroke={colors.muted} fontSize={12} />
+                            <Legend />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </ChartCard>
                   )}
                 </div>
               )}

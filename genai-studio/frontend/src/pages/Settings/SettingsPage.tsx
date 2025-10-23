@@ -36,9 +36,23 @@ type Settings = {
     token: string;
     connected: boolean;
   };
+  lmstudio?: {
+    baseUrl: string;
+    connected: boolean;
+  };
+  ollama?: {
+    baseUrl: string;
+    connected: boolean;
+    apiKey?: string;
+  };
+  vllm?: {
+    baseUrl: string;
+    connected: boolean;
+  };
   localModels: {
     selectedGpu: string;
     availableGpus: string[];
+    autoLoadOnSelect: boolean;
   };
 };
 
@@ -85,7 +99,10 @@ const defaultSettings: Settings = {
   presets: { ocr: [], prompt: [], chat: [] },
   groq: { apiKey: "", connected: false },
   huggingface: { token: "", connected: false },
-  localModels: { selectedGpu: "auto", availableGpus: ["auto", "cpu", "cuda:0", "cuda:1", "mps"] },
+  lmstudio: { baseUrl: "http://localhost:1234", connected: false },
+  ollama: { baseUrl: "http://localhost:11434", connected: false, apiKey: "" },
+  vllm: { baseUrl: "http://localhost:8000", connected: false },
+  localModels: { selectedGpu: "auto", availableGpus: ["auto", "cpu", "cuda:0", "cuda:1", "mps"], autoLoadOnSelect: true },
 };
 
 /** ------------------------------
@@ -98,6 +115,7 @@ export default function SettingsPage() {
   // state
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [activeTab, setActiveTab] = useState<"ui" | "paths" | "presets" | "groq" | "huggingface" | "localModels">("ui");
+  const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   // preset editor state
@@ -150,6 +168,9 @@ export default function SettingsPage() {
           prompt: promptEvalPresetStore.getPresets(),
           chat: chatPresetStore.getPresets(),
         });
+
+        // Load vLLM setup info
+        loadVllmSetupInfo();
       } catch (err: any) {
         console.error("Failed to load settings:", err);
         setSettings(defaultSettings);
@@ -194,6 +215,7 @@ export default function SettingsPage() {
 
   const saveSettings = async () => {
     try {
+      setIsSaving(true);
       await api.post("/settings/settings", settings); // backend persists & writes .env as needed
       showSuccess("Settings Saved", "Your settings have been saved successfully.");
       
@@ -207,6 +229,8 @@ export default function SettingsPage() {
       window.dispatchEvent(new CustomEvent("settings:changed", { detail: settings }));
     } catch (err: any) {
       showError("Save Failed", err?.message || "Failed to save settings.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -283,6 +307,91 @@ export default function SettingsPage() {
     } catch (e: any) {
       console.error("HF test error:", e);
       showError("HF Failed", e?.message || "Connection failed.");
+    }
+  };
+
+  const testLmStudio = async () => {
+    try {
+      const baseUrl = settings?.lmstudio?.baseUrl || "http://localhost:1234";
+      const res = await api.post("/settings/lmstudio/test", { baseUrl });
+      const ok = !!res.data?.connected;
+      setSettings((s) => s ? { ...s, lmstudio: { baseUrl, connected: ok } } : s);
+      ok ? showSuccess("LM Studio", "Connected") : showError("LM Studio", res.data?.error || "Connection failed");
+      if (ok) window.dispatchEvent(new Event("models:changed"));
+    } catch (e: any) {
+      showError("LM Studio", e?.message || "Connection failed");
+    }
+  };
+
+  const testOllama = async () => {
+    try {
+      const baseUrl = settings?.ollama?.baseUrl || "http://localhost:11434";
+      const res = await api.post("/settings/ollama/test", { baseUrl });
+      const ok = !!res.data?.connected;
+      setSettings((s) => s ? { ...s, ollama: { baseUrl, connected: ok } } : s);
+      ok ? showSuccess("Ollama", "Connected") : showError("Ollama", res.data?.error || "Connection failed");
+      if (ok) window.dispatchEvent(new Event("models:changed"));
+    } catch (e: any) {
+      showError("Ollama", e?.message || "Connection failed");
+    }
+  };
+
+  const testVllm = async () => {
+    try {
+      const baseUrl = settings?.vllm?.baseUrl || "http://localhost:8000";
+      const res = await api.post("/settings/vllm/test", { baseUrl });
+      const ok = !!res.data?.connected;
+      setSettings((s) => s ? { ...s, vllm: { baseUrl, connected: ok } } : s);
+      ok ? showSuccess("vLLM", "Connected") : showError("vLLM", res.data?.error || "Connection failed");
+      if (ok) window.dispatchEvent(new Event("models:changed"));
+    } catch (e: any) {
+      showError("vLLM", e?.message || "Connection failed");
+    }
+  };
+
+  // vLLM Setup state
+  const [vllmSetupInfo, setVllmSetupInfo] = useState<any>(null);
+  const [isInstallingVllm, setIsInstallingVllm] = useState(false);
+
+  const loadVllmSetupInfo = async () => {
+    try {
+      const res = await api.get("/settings/vllm/setup/info");
+      setVllmSetupInfo(res.data);
+    } catch (e: any) {
+      console.error("Failed to load vLLM setup info:", e);
+    }
+  };
+
+  const installVllm = async (method: string) => {
+    setIsInstallingVllm(true);
+    try {
+      const res = await api.post("/settings/vllm/setup/install", { method });
+      if (res.data.success) {
+        showSuccess("vLLM Installation", res.data.message);
+        loadVllmSetupInfo(); // Refresh setup info
+      } else {
+        showError("vLLM Installation", res.data.message);
+      }
+    } catch (e: any) {
+      showError("vLLM Installation", e?.message || "Installation failed");
+    } finally {
+      setIsInstallingVllm(false);
+    }
+  };
+
+  const testVllmSetup = async () => {
+    try {
+      const baseUrl = settings?.vllm?.baseUrl || "http://localhost:8000";
+      const res = await api.post("/settings/vllm/setup/test", { baseUrl });
+      if (res.data.success) {
+        showSuccess("vLLM Setup", res.data.message);
+        setSettings((s) => s ? { ...s, vllm: { baseUrl, connected: true } } : s);
+        window.dispatchEvent(new Event("models:changed"));
+      } else {
+        showError("vLLM Setup", res.data.message);
+      }
+    } catch (e: any) {
+      showError("vLLM Setup", e?.message || "Setup test failed");
     }
   };
 
@@ -680,14 +789,15 @@ export default function SettingsPage() {
           <div style={{ marginTop: "auto", paddingTop: 16 }}>
             <button
               onClick={saveSettings}
+              disabled={isSaving}
               style={{
                 width: "100%",
                 padding: "12px 16px",
                 borderRadius: 12,
-                background: "linear-gradient(135deg, #10b981, #059669)",
+                background: isSaving ? "#6b7280" : "linear-gradient(135deg, #10b981, #059669)",
                 border: "none",
                 color: "#ffffff",
-                cursor: "pointer",
+                cursor: isSaving ? "not-allowed" : "pointer",
                 fontSize: 14,
                 fontWeight: 600,
                 display: "flex",
@@ -695,21 +805,42 @@ export default function SettingsPage() {
                 justifyContent: "center",
                 gap: 8,
                 transition: "all 0.2s ease",
-                boxShadow: "0 2px 4px rgba(16, 185, 129, 0.3)"
+                boxShadow: isSaving ? "none" : "0 2px 4px rgba(16, 185, 129, 0.3)",
+                opacity: isSaving ? 0.7 : 1
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.transform = "translateY(-1px)";
-                e.currentTarget.style.boxShadow = "0 4px 8px rgba(16, 185, 129, 0.4)";
+                if (!isSaving) {
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                  e.currentTarget.style.boxShadow = "0 4px 8px rgba(16, 185, 129, 0.4)";
+                }
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.transform = "translateY(0)";
-                e.currentTarget.style.boxShadow = "0 2px 4px rgba(16, 185, 129, 0.3)";
+                if (!isSaving) {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "0 2px 4px rgba(16, 185, 129, 0.3)";
+                }
               }}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M17,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3M19,19H5V5H16.17L19,7.83V19M12,12A3,3 0 0,0 9,15A3,3 0 0,0 12,18A3,3 0 0,0 15,15A3,3 0 0,0 12,12M6,6H15V10H6V6Z"/>
-              </svg>
-              Save Changes
+              {isSaving ? (
+                <>
+                  <div style={{
+                    width: 16,
+                    height: 16,
+                    border: "2px solid #ffffff",
+                    borderTop: "2px solid transparent",
+                    borderRadius: "50%",
+                    animation: "spin 1s linear infinite"
+                  }} />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3M19,19H5V5H16.17L19,7.83V19M12,12A3,3 0 0,0 9,15A3,3 0 0,0 12,18A3,3 0 0,0 15,15A3,3 0 0,0 12,12M6,6H15V10H6V6Z"/>
+                  </svg>
+                  Save Changes
+                </>
+              )}
             </button>
           </div>
         </aside>
@@ -1175,6 +1306,83 @@ export default function SettingsPage() {
                 </div>
 
                 <div style={{ display: "grid", gap: 20 }}>
+                  {/* External local servers */}
+                  <div style={{
+                    display: "grid",
+                    gap: 16,
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 16
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 600 }}>Local Model Servers</div>
+                    </div>
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500 }}>LM Studio Base URL</label>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input
+                            value={settings.lmstudio?.baseUrl || ""}
+                            onChange={(e) => updateSetting("lmstudio.baseUrl", e.target.value)}
+                            placeholder="http://localhost:1234"
+                            style={input}
+                          />
+                          <button style={btnBlue} onClick={testLmStudio}>Test</button>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                          Status: <b style={{ color: settings.lmstudio?.connected ? "#10b981" : "#ef4444" }}>{settings.lmstudio?.connected ? "Connected" : "Not connected"}</b>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500 }}>Ollama Base URL</label>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input
+                            value={settings.ollama?.baseUrl || ""}
+                            onChange={(e) => updateSetting("ollama.baseUrl", e.target.value)}
+                            placeholder="http://localhost:11434"
+                            style={input}
+                          />
+                          <button style={btnBlue} onClick={testOllama}>Test</button>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                          Status: <b style={{ color: settings.ollama?.connected ? "#10b981" : "#ef4444" }}>{settings.ollama?.connected ? "Connected" : "Not connected"}</b>
+                        </div>
+                        
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500 }}>Ollama API Key (for cloud models)</label>
+                          <input
+                            type="password"
+                            value={settings.ollama?.apiKey || ""}
+                            onChange={(e) => updateSetting("ollama.apiKey", e.target.value)}
+                            placeholder="Optional - for Ollama cloud models"
+                            style={{
+                              ...input,
+                              background: "#0f172a"
+                            }}
+                          />
+                          <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                            Required for accessing Ollama cloud models (Claude, GPT, etc.)
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500 }}>vLLM Base URL</label>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input
+                            value={settings.vllm?.baseUrl || ""}
+                            onChange={(e) => updateSetting("vllm.baseUrl", e.target.value)}
+                            placeholder="http://localhost:8000"
+                            style={input}
+                          />
+                          <button style={btnBlue} onClick={testVllm}>Test</button>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                          Status: <b style={{ color: settings.vllm?.connected ? "#10b981" : "#ef4444" }}>{settings.vllm?.connected ? "Connected" : "Not connected"}</b>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>GPU Selection</label>
                     <select
@@ -1222,6 +1430,32 @@ export default function SettingsPage() {
                   </div>
 
                   <div style={{ 
+                    display: "flex", 
+                    alignItems: "center", 
+                    gap: 12,
+                    padding: "16px",
+                    background: "#1e293b",
+                    borderRadius: 10,
+                    border: "1px solid #334155"
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={settings.localModels.autoLoadOnSelect}
+                      onChange={(e) => updateSetting("localModels.autoLoadOnSelect", e.target.checked)}
+                      style={{ 
+                        width: 18, 
+                        height: 18, 
+                        accentColor: "#3b82f6",
+                        cursor: "pointer"
+                      }}
+                    />
+                    <div>
+                      <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Auto-load Models</div>
+                      <div style={{ color: "#94a3b8", fontSize: 13 }}>Automatically load models in the provider when selected from the dropdown</div>
+                    </div>
+                  </div>
+
+                  <div style={{ 
                     padding: "16px",
                     background: "#1e293b",
                     borderRadius: 10,
@@ -1244,6 +1478,190 @@ export default function SettingsPage() {
                         </>
                       )}
                     </div>
+                  </div>
+
+                  {/* vLLM Setup Information */}
+                  <div style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <div style={{ 
+                        width: 24, 
+                        height: 24, 
+                        background: "linear-gradient(135deg, #f59e0b, #d97706)", 
+                        borderRadius: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                          <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                        </svg>
+                      </div>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>vLLM Setup & Installation</h3>
+                    </div>
+                    
+                    {vllmSetupInfo && (
+                      <div style={{ fontSize: 13, color: "#cbd5e1", lineHeight: "1.6" }}>
+                        <div style={{ marginBottom: "12px" }}>
+                          <strong style={{ color: "#e2e8f0" }}>Status:</strong>{" "}
+                          <span style={{ 
+                            color: vllmSetupInfo.vllm_installed ? "#10b981" : "#ef4444",
+                            fontWeight: 500
+                          }}>
+                            {vllmSetupInfo.vllm_installed ? "Installed" : "Not Installed"}
+                          </span>
+                        </div>
+                        
+                        <div style={{ marginBottom: "12px" }}>
+                          <strong style={{ color: "#e2e8f0" }}>System:</strong> {vllmSetupInfo.system_info?.system || "Unknown"}
+                        </div>
+                        
+                        <div style={{ marginBottom: "12px" }}>
+                          <strong style={{ color: "#e2e8f0" }}>CUDA Available:</strong>{" "}
+                          <span style={{ 
+                            color: vllmSetupInfo.system_info?.cuda_available ? "#10b981" : "#ef4444"
+                          }}>
+                            {vllmSetupInfo.system_info?.cuda_available ? "Yes" : "No"}
+                          </span>
+                        </div>
+                        
+                        <div style={{ marginBottom: "16px" }}>
+                          <strong style={{ color: "#e2e8f0" }}>Installation Options:</strong>
+                        </div>
+                        
+                        <div style={{ display: "grid", gap: 8 }}>
+                          {Object.entries(vllmSetupInfo.installation_options || {}).map(([method, option]: [string, any]) => (
+                            <div key={method} style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              padding: "12px",
+                              background: "#0f172a",
+                              border: "1px solid #334155",
+                              borderRadius: "8px"
+                            }}>
+                              <div>
+                                <div style={{ 
+                                  color: "#e2e8f0", 
+                                  fontWeight: 500,
+                                  fontSize: 14
+                                }}>
+                                  {method.charAt(0).toUpperCase() + method.slice(1)}
+                                  {option.recommended && (
+                                    <span style={{
+                                      marginLeft: 8,
+                                      padding: "2px 6px",
+                                      background: "#10b981",
+                                      color: "#fff",
+                                      borderRadius: 4,
+                                      fontSize: 10,
+                                      fontWeight: 500
+                                    }}>
+                                      Recommended
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ 
+                                  color: "#94a3b8", 
+                                  fontSize: 12,
+                                  marginTop: 2
+                                }}>
+                                  {option.description}
+                                </div>
+                                <div style={{ 
+                                  color: "#6b7280", 
+                                  fontSize: 11,
+                                  marginTop: 4
+                                }}>
+                                  Requirements: {option.requirements?.join(", ")}
+                                </div>
+                              </div>
+                              <div style={{ display: "flex", gap: 8 }}>
+                                {option.available ? (
+                                  <button
+                                    onClick={() => installVllm(method)}
+                                    disabled={isInstallingVllm}
+                                    style={{
+                                      padding: "8px 12px",
+                                      borderRadius: 6,
+                                      border: "none",
+                                      background: isInstallingVllm ? "#6b7280" : "#3b82f6",
+                                      color: "#fff",
+                                      fontSize: 12,
+                                      fontWeight: 500,
+                                      cursor: isInstallingVllm ? "not-allowed" : "pointer",
+                                      transition: "all 0.2s ease"
+                                    }}
+                                  >
+                                    {isInstallingVllm ? "Installing..." : "Install"}
+                                  </button>
+                                ) : (
+                                  <span style={{
+                                    padding: "8px 12px",
+                                    borderRadius: 6,
+                                    background: "#374151",
+                                    color: "#9ca3af",
+                                    fontSize: 12,
+                                    fontWeight: 500
+                                  }}>
+                                    Not Available
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        
+                        <div style={{
+                          marginTop: "16px",
+                          padding: "12px",
+                          background: "#0f172a",
+                          border: "1px solid #334155",
+                          borderRadius: "8px",
+                          fontSize: "12px",
+                          color: "#94a3b8"
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
+                            </svg>
+                            <strong style={{ color: "#e2e8f0" }}>After Installation:</strong>
+                          </div>
+                          <div style={{ paddingLeft: "18px" }}>
+                            • Start vLLM server: <code style={{ background: "#374151", padding: "2px 4px", borderRadius: 3 }}>python -m vllm.entrypoints.openai.api_server --model MODEL_NAME --host 0.0.0.0 --port 8000</code><br/>
+                            • Configure the server URL above<br/>
+                            • Use vLLM for reliable model downloads from Hugging Face
+                          </div>
+                        </div>
+                        
+                        <div style={{
+                          marginTop: "12px",
+                          padding: "12px",
+                          background: "#1e293b",
+                          border: "1px solid #f59e0b",
+                          borderRadius: "8px",
+                          fontSize: "12px",
+                          color: "#fbbf24"
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12,2L13.09,8.26L22,9L13.09,9.74L12,16L10.91,9.74L2,9L10.91,8.26L12,2Z"/>
+                            </svg>
+                            <strong style={{ color: "#fbbf24" }}>Windows Installation Tips:</strong>
+                          </div>
+                          <div style={{ paddingLeft: "18px" }}>
+                            • <strong>Build Issues:</strong> vLLM may fail to build on Windows. Use Docker or Conda instead.<br/>
+                            • <strong>Docker Recommended:</strong> Easiest option - avoids all build issues.<br/>
+                            • <strong>Fallback:</strong> If vLLM fails, downloads will use the original method automatically.<br/>
+                            • <strong>GPU Support:</strong> Requires NVIDIA GPU and CUDA for best performance.
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

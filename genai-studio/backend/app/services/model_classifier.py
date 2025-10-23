@@ -149,8 +149,16 @@ class ModelClassifier:
         # Extract size
         size = model_data.get("size", "Unknown")
         
-        # Determine source
-        source = "groq" if model_data.get("provider") == "groq" else "local"
+        # Determine source - check for specific provider tags first
+        source = model_data.get("source", "local")
+        if model_data.get("provider") == "groq":
+            source = "groq"
+        elif "lmstudio" in model_data.get("tags", []):
+            source = "lmstudio"
+        elif "ollama" in model_data.get("tags", []):
+            source = "ollama"
+        elif "vllm" in model_data.get("tags", []):
+            source = "vllm"
         
         # Extract architecture
         architecture = cls._extract_architecture(model_id)
@@ -242,7 +250,9 @@ def classify_models(models: List[Dict]) -> List[Dict]:
     for model in models:
         try:
             metadata = classifier.extract_metadata(model)
-            classified_models.append({
+            # Preserve original model data and add classification metadata
+            classified_model = {
+                **model,  # Preserve all original fields including 'id'
                 "name": metadata.name,
                 "publisher": metadata.publisher,
                 "params": metadata.params,
@@ -252,11 +262,13 @@ def classify_models(models: List[Dict]) -> List[Dict]:
                 "source": metadata.source,
                 "architecture": metadata.architecture,
                 "original_data": model  # Keep original data for reference
-            })
+            }
+            classified_models.append(classified_model)
         except Exception as e:
             print(f"Error classifying model {model.get('id', 'unknown')}: {e}")
-            # Add fallback entry
-            classified_models.append({
+            # Add fallback entry with original data preserved
+            fallback_model = {
+                **model,  # Preserve all original fields including 'id'
                 "name": model.get("id", "Unknown"),
                 "publisher": "Unknown",
                 "params": "Unknown",
@@ -266,7 +278,8 @@ def classify_models(models: List[Dict]) -> List[Dict]:
                 "source": model.get("provider", "unknown"),
                 "architecture": None,
                 "original_data": model
-            })
+            }
+            classified_models.append(fallback_model)
     
     return classified_models
 

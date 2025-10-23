@@ -82,8 +82,20 @@ export default function PresetManager({
     if (exists) {
       setSelected(selectedPresetTitle);
       localStorage.setItem(`preset-selected-${presetStore.constructor.name}`, selectedPresetTitle);
+      
+      // Apply the preset's parameters and metrics when syncing from parent
+      const preset = presets.find(p => p.title === selectedPresetTitle);
+      if (preset) {
+        onPresetChange({
+          title: preset.title,
+          body: preset.body,
+          id: preset.id,
+          parameters: preset.parameters,
+          metrics: preset.metrics
+        });
+      }
     }
-  }, [selectedPresetTitle, presets, presetStore.constructor.name, selected]);
+  }, [selectedPresetTitle, presets, presetStore.constructor.name, selected, onPresetChange]);
 
   // Handle explicit preset selection (not tab switching)
   const handlePresetChange = (newPresetTitle: string) => {

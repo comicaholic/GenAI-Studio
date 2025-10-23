@@ -18,4 +18,5 @@ gpustat
 GPUtil
 pynvml
 torch
-
+huggingface_hub
+transformers

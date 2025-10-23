@@ -32,32 +32,6 @@ def _load():
 
 def _save(d): REG_PATH.parent.mkdir(parents=True, exist_ok=True); REG_PATH.write_text(json.dumps(d, indent=2))
 
-def scan_models_dir():
-    # read from config for portability
-    from app.services.config import load_config
-    cfg = load_config()
-    root = Path(cfg.get("models_dir") or "").expanduser()
-    res = []
-    if not root or not root.exists(): return res
-    for p in root.glob("**/*"):
-        if p.is_file() and p.suffix.lower() in {".gguf", ".bin", ".pth", ".safetensors"}:
-            res.append({
-                "id": p.stem,
-                "label": p.stem,
-                "provider": "local",
-                "size": f"{p.stat().st_size/1e9:.2f} GB",
-                "quant": "Q?" if ".gguf" in p.suffix.lower() else None,
-                "path": str(p),
-            })
-    # merge into registry (dedupe by id)
-    reg = _load()
-    ex_ids = {m["id"] for m in reg["local"]}
-    for m in res:
-        if m["id"] not in ex_ids:
-            reg["local"].append(m)
-    _save(reg)
-    return reg["local"]
-
 def register_local_model(m):
     reg = _load()
     # upsert by id
@@ -66,7 +40,6 @@ def register_local_model(m):
     else: reg["local"].append(m)
     _save(reg)
 
-
 import os, json
 from pathlib import Path
 import requests
@@ -74,8 +47,6 @@ import requests
 DATA = Path(__file__).resolve().parent.parent.parent / "data"
 DATA.mkdir(parents=True, exist_ok=True)
 LOCAL_REG = DATA / "local_models.json"
-
-
 
 def save_local_models(models):
     LOCAL_REG.write_text(json.dumps(models, indent=2), encoding="utf-8")
@@ -182,7 +153,7 @@ def scan_models_dir():
     reg = _load()
     ex_ids = {m["id"] for m in reg["local"]}
     for m in classified_models:
-        if m["name"] not in ex_ids:
+        if m["id"] not in ex_ids:
             reg["local"].append(m)
     _save(reg)
     return reg["local"]

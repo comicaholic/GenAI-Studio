@@ -6,6 +6,7 @@ from ..services.reports.pdf import build_pdf
 from fastapi.responses import Response
 import csv
 import io
+from typing import List, Dict, Any
 
 router = APIRouter(tags=["eval"])
 
@@ -15,6 +16,10 @@ class MetricsRequest(BaseModel):
     metrics: list[str]
     meta: dict = {}
     options: dict = {}
+
+class ExportRequest(BaseModel):
+    rows: List[Dict[str, Any]]
+    meta: Dict[str, Any] = {}
 
 @router.post("/metrics")
 async def metrics(req: MetricsRequest):
@@ -37,42 +42,50 @@ async def metrics(req: MetricsRequest):
 
 
 @router.post("/report/csv")
-async def report_csv(req: MetricsRequest):
+async def report_csv(req: ExportRequest):
     """
     Export evaluation results as CSV.
     """
-    if not req.metrics:
-        raise HTTPException(400, "Metrics must be non-empty")
+    if not req.rows:
+        raise HTTPException(400, "Rows must be non-empty")
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Metric", "Score"])
-    scores = compute_metrics(req.prediction, req.reference, req.metrics, req.options)
-    for k, v in scores.items():
-        writer.writerow([k, v])
+    
+    # Get all unique keys from all rows to create comprehensive headers
+    all_keys = set()
+    for row in req.rows:
+        all_keys.update(row.keys())
+    
+    # Sort keys for consistent ordering
+    headers = sorted(list(all_keys))
+    writer.writerow(headers)
+    
+    # Write data rows
+    for row in req.rows:
+        writer.writerow([row.get(key, "") for key in headers])
 
     return Response(
         content=output.getvalue(),
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="evaluation.csv"'},
+        headers={"Content-Disposition": 'attachment; filename="evaluation-results.csv"'},
     )
 
 
 @router.post("/report/pdf")
-async def report_pdf(req: MetricsRequest):
+async def report_pdf(req: ExportRequest):
     """
     Export evaluation results as PDF.
     """
-    if not req.metrics:
-        raise HTTPException(400, "Metrics must be non-empty")
+    if not req.rows:
+        raise HTTPException(400, "Rows must be non-empty")
 
     try:
-        scores = compute_metrics(req.prediction, req.reference, req.metrics, req.options)
-        pdf_bytes = build_pdf(scores, req.meta)
+        pdf_bytes = build_pdf(req.rows, req.meta)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={"Content-Disposition": 'attachment; filename="evaluation.pdf"'},
+            headers={"Content-Disposition": 'attachment; filename="evaluation-results.pdf"'},
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")

@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import LeftRail from "@/components/LeftRail/LeftRail";
 import LayoutShell from "@/components/Layout/LayoutShell";
+import { useLocation } from "react-router-dom";
 
 import FileDrop from "@/components/FileDrop/FileDrop";
 import ExpandableTextarea from "@/components/ExpandableTextarea/ExpandableTextarea";
@@ -17,6 +18,8 @@ import { useBackgroundState } from "@/stores/backgroundState";
 import { historyService } from "@/services/history";
 import ChatAutomationModal, { ChatAutomationConfig } from "@/components/ChatAutomationModal/ChatAutomationModal";
 import { automationStore } from "@/stores/automationStore";
+import AutomationProgressIndicator from "@/components/AutomationProgress/AutomationProgressIndicator";
+import AutomationProgressModal from "@/components/AutomationProgress/AutomationProgressModal";
 import { api } from "@/services/api";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.7, max_tokens: 1024, top_p: 1.0, top_k: 40 };
@@ -102,7 +105,61 @@ export default function ChatPage() {
 
   // Automation state
   const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
+  const [isAutomationProgressModalOpen, setIsAutomationProgressModalOpen] = useState(false);
   const [automationResults, setAutomationResults] = useState<Record<string, any>>({});
+
+  // Handle navigation state loading
+  const location = useLocation();
+  useEffect(() => {
+    const state: any = location.state;
+    const chatToLoad = state?.loadChat;
+    const automationToLoad = state?.loadAutomation;
+    
+    if (chatToLoad) {
+      try {
+        // Load chat session from history
+        const chatSession: ChatSession = {
+          id: chatToLoad.id,
+          title: chatToLoad.title,
+          messages: chatToLoad.usedText?.chatHistory || [],
+          createdAt: chatToLoad.lastActivityAt,
+          lastActivityAt: chatToLoad.lastActivityAt,
+          modelId: chatToLoad.model.id,
+          modelProvider: chatToLoad.model.provider,
+          parameters: chatToLoad.parameters || DEFAULT_PARAMS,
+          context: chatToLoad.context || "",
+        };
+        
+        setSessions(prev => [chatSession, ...prev]);
+        setCurrentSessionId(chatSession.id);
+        setContextPrompt(chatSession.context || "");
+        setParams(chatSession.parameters || DEFAULT_PARAMS);
+      } catch {}
+    } else if (automationToLoad?.type === 'chat') {
+      try {
+        // Load automation data
+        const firstRun = automationToLoad.runs?.[0];
+        if (firstRun) {
+          const chatSession: ChatSession = {
+            id: crypto.randomUUID(),
+            title: firstRun.chatTitle || "Automation Chat",
+            messages: [],
+            createdAt: new Date().toISOString(),
+            lastActivityAt: new Date().toISOString(),
+            modelId: firstRun.modelId || selected?.id,
+            modelProvider: firstRun.modelProvider || selected?.provider,
+            parameters: firstRun.parameters || DEFAULT_PARAMS,
+            context: "",
+          };
+          
+          setSessions(prev => [chatSession, ...prev]);
+          setCurrentSessionId(chatSession.id);
+          setContextPrompt("");
+          setParams(chatSession.parameters || DEFAULT_PARAMS);
+        }
+      } catch {}
+    }
+  }, [location.state, selected]);
 
   // load sessions from localStorage and history service on mount
   useEffect(() => {
@@ -482,14 +539,17 @@ export default function ChatPage() {
   const handleAutomationStart = async (config: ChatAutomationConfig) => {
     const automationId = automationStore.startAutomation('chat', config);
     setIsLoading(true);
+    setIsAutomationProgressModalOpen(true);
 
     try {
       const results: Record<string, any> = {};
+      let successCount = 0;
+      let errorCount = 0;
 
       for (let i = 0; i < config.runs.length; i++) {
         const run = config.runs[i];
         
-        // Update progress
+        // Update progress with animation
         automationStore.updateProgress(automationId, { currentRunIndex: i });
 
         try {
@@ -652,6 +712,7 @@ export default function ChatPage() {
           };
 
         } catch (error: any) {
+          errorCount++;
           results[run.id] = {
             runName: run.name,
             error: error?.message ?? String(error),
@@ -660,13 +721,25 @@ export default function ChatPage() {
       }
 
       setAutomationResults(results);
-      automationStore.completeAutomation(automationId);
+      
+      // Count successes
+      successCount = config.runs.length - errorCount;
+      
+      // Complete automation with appropriate status
+      if (errorCount === 0) {
+        automationStore.completeAutomation(automationId);
+      } else if (successCount === 0) {
+        automationStore.completeAutomation(automationId, "All runs failed");
+      } else {
+        automationStore.completeAutomation(automationId, `${errorCount} runs failed`);
+      }
       
       // Save automation aggregate to history
       try {
         const automationAggregate = {
           id: config.id,
           name: config.name,
+          type: 'chat',
           model: { id: selected?.id || "unknown", provider: selected?.provider || "local" },
           parameters: params,
           runs: config.runs.map(run => ({
@@ -675,16 +748,27 @@ export default function ChatPage() {
             chatTitle: run.chatTitle,
             prompts: results[run.id]?.prompts || [],
             error: results[run.id]?.error || null,
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            status: results[run.id]?.error ? "error" : "completed",
           })),
-          status: "completed",
-          completedAt: new Date().toISOString(),
+          status: errorCount === 0 ? "completed" : successCount === 0 ? "error" : "completed",
+          createdAt: new Date().toISOString(),
+          completedAt: new Date(),
         };
         await api.post("/history/automations", automationAggregate);
       } catch (e) {
         console.warn("Failed to save automation aggregate:", e);
       }
       
-      showSuccess("Automation Complete", `Completed ${config.runs.length} chat runs successfully!`);
+      // Show appropriate success/error message
+      if (errorCount === 0) {
+        showSuccess("Automation Complete", `All ${config.runs.length} chat runs completed successfully!`);
+      } else if (successCount === 0) {
+        showError("Automation Failed", `All ${config.runs.length} runs failed. Check the progress modal for details.`);
+      } else {
+        showSuccess("Automation Partially Complete", `${successCount} runs succeeded, ${errorCount} failed. Check the progress modal for details.`);
+      }
 
     } catch (error: any) {
       automationStore.completeAutomation(automationId, error?.message ?? String(error));
@@ -1407,31 +1491,35 @@ export default function ChatPage() {
                     Send
                   </LoadingButton>
 
-                  <button
-                    onClick={() => setIsAutomationModalOpen(true)}
-                    style={{ 
-                      padding: "10px 16px", 
-                      borderRadius: 8, 
-                      border: "1px solid #7c3aed", 
-                      background: "linear-gradient(135deg, #7c3aed, #6d28d9)", 
-                      color: "#fff",
-                      fontSize: 13,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      transition: "all 0.2s ease",
-                      boxShadow: "0 2px 4px rgba(124, 58, 237, 0.3)"
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.transform = "translateY(-1px)";
-                      e.currentTarget.style.boxShadow = "0 4px 8px rgba(124, 58, 237, 0.4)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.transform = "translateY(0)";
-                      e.currentTarget.style.boxShadow = "0 2px 4px rgba(124, 58, 237, 0.3)";
-                    }}
-                  >
-                    Automation
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button
+                      onClick={() => setIsAutomationModalOpen(true)}
+                      style={{ 
+                        padding: "10px 16px", 
+                        borderRadius: 8, 
+                        border: "1px solid #7c3aed", 
+                        background: "linear-gradient(135deg, #7c3aed, #6d28d9)", 
+                        color: "#fff",
+                        fontSize: 13,
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        transition: "all 0.2s ease",
+                        boxShadow: "0 2px 4px rgba(124, 58, 237, 0.3)"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = "translateY(-1px)";
+                        e.currentTarget.style.boxShadow = "0 4px 8px rgba(124, 58, 237, 0.4)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = "translateY(0)";
+                        e.currentTarget.style.boxShadow = "0 2px 4px rgba(124, 58, 237, 0.3)";
+                      }}
+                    >
+                      Automation
+                    </button>
+                    
+                    <AutomationProgressIndicator onOpenModal={() => setIsAutomationProgressModalOpen(true)} />
+                  </div>
 
                   <button
                     onClick={async () => {
@@ -1583,6 +1671,12 @@ export default function ChatPage() {
         onStart={handleAutomationStart}
         existingChats={sessions.map(s => ({ id: s.id, title: s.title }))}
         presetStore={chatPresetStore}
+      />
+      
+      {/* Automation Progress Modal */}
+      <AutomationProgressModal
+        isOpen={isAutomationProgressModalOpen}
+        onClose={() => setIsAutomationProgressModalOpen(false)}
       />
 
       {/* Context Menu - Rendered at root level to escape scrollable container */}

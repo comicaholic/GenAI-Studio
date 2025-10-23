@@ -1,9 +1,13 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { IconHome, IconDoc, IconBolt, IconGraph, IconSettings, IconChat, IconBot } from "@/components/icons/icons";
+import DownloadManager from "@/components/DownloadManager/DownloadManager";
+import { api } from "@/services/api";
 
 export default function LeftRail() {
   const location = useLocation();
+  const [isDownloadManagerOpen, setIsDownloadManagerOpen] = useState(false);
+  const [activeDownloadsCount, setActiveDownloadsCount] = useState(0);
 
   const navItems = [
     { path: "/", icon: "home", label: "Home", title: "Home", gradient: "linear-gradient(135deg, #3b82f6, #1d4ed8)" },
@@ -14,6 +18,22 @@ export default function LeftRail() {
     { path: "/analytics", icon: "graph", label: "Analytics", title: "Application Analytics", gradient: "linear-gradient(135deg, #ef4444, #dc2626)" },
     { path: "/settings", icon: "settings", label: "Settings", title: "Settings", gradient: "linear-gradient(135deg, #6b7280, #4b5563)" },
   ];
+
+  const loadActiveDownloads = async () => {
+    try {
+      const response = await api.get("/models/download/queue");
+      const activeCount = response.data.active?.length || 0;
+      setActiveDownloadsCount(activeCount);
+    } catch (error) {
+      console.error("Failed to load active downloads:", error);
+    }
+  };
+
+  useEffect(() => {
+    loadActiveDownloads();
+    const interval = setInterval(loadActiveDownloads, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <nav style={styles.container}>
@@ -76,6 +96,70 @@ export default function LeftRail() {
           );
         })}
       </div>
+
+      {/* Download Manager Button */}
+      {activeDownloadsCount > 0 && (
+        <div style={{ position: "absolute", bottom: 20, left: 20, right: 20 }}>
+          <button
+            onClick={() => setIsDownloadManagerOpen(true)}
+            style={{
+              width: "100%",
+              padding: "12px 16px",
+              background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+              border: "none",
+              borderRadius: 12,
+              color: "#ffffff",
+              cursor: "pointer",
+              fontSize: 14,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              transition: "all 0.2s ease",
+              boxShadow: "0 4px 12px rgba(59, 130, 246, 0.3)",
+              position: "relative"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-2px)";
+              e.currentTarget.style.boxShadow = "0 6px 16px rgba(59, 130, 246, 0.4)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.boxShadow = "0 4px 12px rgba(59, 130, 246, 0.3)";
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/>
+            </svg>
+            Downloads ({activeDownloadsCount})
+            <div style={{
+              position: "absolute",
+              top: -4,
+              right: -4,
+              width: 20,
+              height: 20,
+              background: "#ef4444",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 10,
+              fontWeight: "bold",
+              color: "white",
+              animation: "pulse 2s infinite"
+            }}>
+              {activeDownloadsCount}
+            </div>
+          </button>
+        </div>
+      )}
+
+      {/* Download Manager Modal */}
+      <DownloadManager 
+        isOpen={isDownloadManagerOpen} 
+        onClose={() => setIsDownloadManagerOpen(false)} 
+      />
     </nav>
   );
 }

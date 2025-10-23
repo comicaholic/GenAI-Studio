@@ -127,6 +127,14 @@ def calculate_groq_cost(model_id: str, tokens_used: int) -> float:
     
     return tokens_used * cost_per_token
 
+def estimate_tokens(text: str) -> int:
+    """Estimate token count for local models"""
+    if not text:
+        return 0
+    # Rough estimation: ~1.3 tokens per word, accounting for punctuation and encoding
+    word_count = len(text.split())
+    return max(1, int(word_count * 1.3))
+
 def record_groq_usage(model: str, tokens_used: int, cost_usd: float, duration_ms: int, success: bool = True):
     """Record Groq API usage for analytics"""
     try:
@@ -164,6 +172,152 @@ class ChatIn(BaseModel):
 
 @router.post("/complete")
 def complete(body: CompleteIn):
+    # Route to local servers (LM Studio, Ollama, or vLLM) if model_id is prefixed
+    if body.provider == "local" and (body.model_id.startswith("lmstudio/") or body.model_id.startswith("ollama/") or body.model_id.startswith("vllm/")):
+        from app.services.config import load_config
+        cfg = load_config()
+        is_lm = body.model_id.startswith("lmstudio/")
+        is_ol = body.model_id.startswith("ollama/")
+        is_vllm = body.model_id.startswith("vllm/")
+        model_name = body.model_id.split("/", 1)[1]
+
+        # Build messages from prompt if needed
+        messages = body.messages
+        if not messages and body.prompt:
+            messages = [{"role": "user", "content": body.prompt}]
+        if not messages:
+            raise HTTPException(400, "messages or prompt is required")
+
+        try:
+            start_time = time.time()
+            if is_lm:
+                base = (cfg.get("lmstudio", {}).get("baseUrl") or "http://localhost:1234").rstrip('/')
+                r = requests.post(
+                    f"{base}/v1/chat/completions",
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "max_tokens": body.max_tokens or 1024,
+                        "temperature": body.temperature or 0.2,
+                        "top_p": body.top_p or 1.0,
+                    },
+                    timeout=60,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                # Estimate tokens for local models
+                tokens_estimated = estimate_tokens(text)
+                record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+            elif is_ol:
+                base = (cfg.get("ollama", {}).get("baseUrl") or "http://localhost:11434").rstrip('/')
+                # Convert chat messages into single prompt (Ollama supports /api/chat too, but keep simple)
+                try:
+                    chat_r = requests.post(
+                        f"{base}/api/chat",
+                        json={
+                            "model": model_name,
+                            "messages": messages,
+                            "stream": False,
+                            "options": {
+                                "temperature": body.temperature or 0.2,
+                                "top_p": body.top_p or 1.0,
+                                "num_predict": body.max_tokens or 1024,
+                            },
+                        },
+                        timeout=120,
+                    )
+                    chat_r.raise_for_status()
+                    data = chat_r.json()
+                    text = (data.get("message") or {}).get("content", "")
+                except Exception:
+                    # Fallback to /api/generate if /api/chat unavailable
+                    prompt_text = "\n".join([m.get("content", "") for m in messages or []])
+                    gen_r = requests.post(
+                        f"{base}/api/generate",
+                        json={
+                            "model": model_name,
+                            "prompt": prompt_text,
+                            "stream": False,
+                            "options": {
+                                "temperature": body.temperature or 0.2,
+                                "top_p": body.top_p or 1.0,
+                                "num_predict": body.max_tokens or 1024,
+                            },
+                        },
+                        timeout=120,
+                    )
+                    gen_r.raise_for_status()
+                    data = gen_r.json()
+                    text = data.get("response", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                # Estimate tokens for local models
+                tokens_estimated = estimate_tokens(text)
+                record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+            elif is_vllm:
+                base = (cfg.get("vllm", {}).get("baseUrl") or "http://localhost:8000").rstrip('/')
+                r = requests.post(
+                    f"{base}/v1/chat/completions",
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "max_tokens": body.max_tokens or 1024,
+                        "temperature": body.temperature or 0.2,
+                        "top_p": body.top_p or 1.0,
+                    },
+                    timeout=60,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                # Estimate tokens for local models
+                tokens_estimated = estimate_tokens(text)
+                record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+        except requests.exceptions.ConnectionError as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            # Estimate tokens even for failed requests (based on input)
+            tokens_estimated = estimate_tokens(str(messages))
+            record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, False)
+            if is_lm:
+                raise HTTPException(502, f"LM Studio server not running. Please start LM Studio and ensure it's running on {base}")
+            elif is_ol:
+                raise HTTPException(502, f"Ollama server not running. Please start Ollama and ensure it's running on {base}")
+            elif is_vllm:
+                raise HTTPException(502, f"vLLM server not running. Please start vLLM and ensure it's running on {base}")
+        except requests.exceptions.Timeout as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            # Estimate tokens even for failed requests (based on input)
+            tokens_estimated = estimate_tokens(str(messages))
+            record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, False)
+            raise HTTPException(502, f"Local server timeout. The model may be overloaded or the request is too complex.")
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            # Estimate tokens even for failed requests (based on input)
+            tokens_estimated = estimate_tokens(str(messages))
+            record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, False)
+            error_msg = str(e)
+            if "Connection refused" in error_msg or "No connection could be made" in error_msg:
+                if is_lm:
+                    raise HTTPException(502, f"LM Studio server not running. Please start LM Studio and ensure it's running on {base}")
+                elif is_ol:
+                    raise HTTPException(502, f"Ollama server not running. Please start Ollama and ensure it's running on {base}")
+                elif is_vllm:
+                    raise HTTPException(502, f"vLLM server not running. Please start vLLM and ensure it's running on {base}")
+            elif "404" in error_msg or "Not Found" in error_msg:
+                raise HTTPException(502, f"Model '{model_name}' not found on local server. Please ensure the model is loaded.")
+            elif "500" in error_msg or "Internal Server Error" in error_msg:
+                raise HTTPException(502, f"Local server error. The model may be experiencing issues. Try restarting the local server.")
+            else:
+                raise HTTPException(502, f"Local server completion failed: {e}")
+
     if body.provider == "groq":
         # Try to get API key from environment first, then from config
         key = os.getenv("GROQ_API_KEY")
@@ -185,11 +339,16 @@ def complete(body: CompleteIn):
         try:
             start_time = time.time()
             # Groq exposes an OpenAI-compatible Chat Completions API
+            # Strip the groq/ prefix if present
+            groq_model_id = body.model_id
+            if groq_model_id.startswith("groq/"):
+                groq_model_id = groq_model_id.split("/", 1)[1]
+            
             r = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
                 json={
-                    "model": body.model_id,
+                    "model": groq_model_id,
                     "messages": messages,
                     "max_tokens": body.max_tokens or 1024,
                     "temperature": body.temperature or 0.2,
@@ -229,6 +388,122 @@ def chat(body: ChatIn):
     """
     Chat completion endpoint for LLM processing.
     """
+    # Route to local servers if prefixed
+    if body.model_id.startswith("lmstudio/") or body.model_id.startswith("ollama/") or body.model_id.startswith("vllm/"):
+        from app.services.config import load_config
+        cfg = load_config()
+        is_lm = body.model_id.startswith("lmstudio/")
+        is_ol = body.model_id.startswith("ollama/")
+        is_vllm = body.model_id.startswith("vllm/")
+        model_name = body.model_id.split("/", 1)[1]
+        messages = [{"role": m.role, "content": m.content} for m in body.messages]
+        try:
+            start_time = time.time()
+            if is_lm:
+                base = (cfg.get("lmstudio", {}).get("baseUrl") or "http://localhost:1234").rstrip('/')
+                r = requests.post(
+                    f"{base}/v1/chat/completions",
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "temperature": body.params.get("temperature", 0.2),
+                        "max_tokens": body.params.get("max_tokens", 1024),
+                        "top_p": body.params.get("top_p", 1.0),
+                    },
+                    timeout=60,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                # Estimate tokens for local models
+                tokens_estimated = estimate_tokens(text)
+                record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+            elif is_ol:
+                base = (cfg.get("ollama", {}).get("baseUrl") or "http://localhost:11434").rstrip('/')
+                chat_r = requests.post(
+                    f"{base}/api/chat",
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "stream": False,
+                        "options": {
+                            "temperature": body.params.get("temperature", 0.2),
+                            "top_p": body.params.get("top_p", 1.0),
+                            "num_predict": body.params.get("max_tokens", 1024),
+                        },
+                    },
+                    timeout=120,
+                )
+                chat_r.raise_for_status()
+                data = chat_r.json()
+                text = (data.get("message") or {}).get("content", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                # Estimate tokens for local models
+                tokens_estimated = estimate_tokens(text)
+                record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+            elif is_vllm:
+                base = (cfg.get("vllm", {}).get("baseUrl") or "http://localhost:8000").rstrip('/')
+                r = requests.post(
+                    f"{base}/v1/chat/completions",
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "temperature": body.params.get("temperature", 0.2),
+                        "max_tokens": body.params.get("max_tokens", 1024),
+                        "top_p": body.params.get("top_p", 1.0),
+                    },
+                    timeout=60,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                text = fix_truncated_json(text)
+                duration_ms = int((time.time() - start_time) * 1000)
+                # Estimate tokens for local models
+                tokens_estimated = estimate_tokens(text)
+                record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, True)
+                return {"output": text, "raw": data}
+        except requests.exceptions.ConnectionError as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            # Estimate tokens even for failed requests (based on input)
+            tokens_estimated = estimate_tokens(str(messages))
+            record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, False)
+            if is_lm:
+                raise HTTPException(502, f"LM Studio server not running. Please start LM Studio and ensure it's running on {base}")
+            elif is_ol:
+                raise HTTPException(502, f"Ollama server not running. Please start Ollama and ensure it's running on {base}")
+            elif is_vllm:
+                raise HTTPException(502, f"vLLM server not running. Please start vLLM and ensure it's running on {base}")
+        except requests.exceptions.Timeout as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            # Estimate tokens even for failed requests (based on input)
+            tokens_estimated = estimate_tokens(str(messages))
+            record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, False)
+            raise HTTPException(502, f"Local server timeout. The model may be overloaded or the request is too complex.")
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            # Estimate tokens even for failed requests (based on input)
+            tokens_estimated = estimate_tokens(str(messages))
+            record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, False)
+            error_msg = str(e)
+            if "Connection refused" in error_msg or "No connection could be made" in error_msg:
+                if is_lm:
+                    raise HTTPException(502, f"LM Studio server not running. Please start LM Studio and ensure it's running on {base}")
+                elif is_ol:
+                    raise HTTPException(502, f"Ollama server not running. Please start Ollama and ensure it's running on {base}")
+                elif is_vllm:
+                    raise HTTPException(502, f"vLLM server not running. Please start vLLM and ensure it's running on {base}")
+            elif "404" in error_msg or "Not Found" in error_msg:
+                raise HTTPException(502, f"Model '{model_name}' not found on local server. Please ensure the model is loaded.")
+            elif "500" in error_msg or "Internal Server Error" in error_msg:
+                raise HTTPException(502, f"Local server error. The model may be experiencing issues. Try restarting the local server.")
+            else:
+                raise HTTPException(502, f"Local server chat failed: {e}")
     # For now, we'll use Groq for all chat completions
     # In the future, this could route to local models based on model_id
     
@@ -263,11 +538,16 @@ def chat(body: ChatIn):
         print(f"Params: max_tokens={max_tokens}, temperature={temperature}, top_p={top_p}")
 
         # Call Groq API (without top_k as it's not supported)
+        # Strip the groq/ prefix if present
+        groq_model_id = body.model_id
+        if groq_model_id.startswith("groq/"):
+            groq_model_id = groq_model_id.split("/", 1)[1]
+        
         r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {key}"},
             json={
-                "model": body.model_id,
+                "model": groq_model_id,
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "temperature": temperature,

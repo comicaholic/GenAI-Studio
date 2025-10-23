@@ -121,9 +121,23 @@ def get_settings():
             "token": "",
             "connected": False
         },
+        # New: local model servers
+        "lmstudio": {
+            "baseUrl": "http://localhost:1234",
+            "connected": False
+        },
+        "ollama": {
+            "baseUrl": "http://localhost:11434",
+            "connected": False
+        },
+        "vllm": {
+            "baseUrl": "http://localhost:8000",
+            "connected": False
+        },
         "localModels": {
             "selectedGpu": "auto",
-            "availableGpus": detect_available_gpus()
+            "availableGpus": detect_available_gpus(),
+            "autoLoadOnSelect": True
         }
     }
     
@@ -173,6 +187,11 @@ def get_settings():
     if "huggingface" in cfg:
         hf_token = cfg["huggingface"].get("token", "") or os.getenv("HUGGINGFACE_TOKEN", "")
         cfg["huggingface"]["connected"] = bool(hf_token.strip())
+
+    # Ensure lmstudio/ollama/vllm blocks exist
+    for key, url in ("lmstudio", "http://localhost:1234"), ("ollama", "http://localhost:11434"), ("vllm", "http://localhost:8000"):
+        if key not in cfg:
+            cfg[key] = {"baseUrl": url, "connected": False}
     
     return cfg
 
@@ -208,6 +227,18 @@ def save_settings(settings: SettingsIn):
     if "huggingface" in cfg:
         hf_token = cfg["huggingface"].get("token", "") or os.getenv("HUGGINGFACE_TOKEN", "")
         cfg["huggingface"]["connected"] = bool(hf_token.strip())
+
+    # Normalize lmstudio/ollama/vllm shapes
+    for key in ["lmstudio", "ollama", "vllm"]:
+        if key not in cfg:
+            cfg[key] = {}
+        default_urls = {
+            "lmstudio": "http://localhost:1234",
+            "ollama": "http://localhost:11434", 
+            "vllm": "http://localhost:8000"
+        }
+        cfg[key]["baseUrl"] = cfg[key].get("baseUrl") or default_urls[key]
+        cfg[key]["connected"] = bool(cfg[key].get("connected", False))
     
     # Ensure directories exist
     paths = cfg.get("paths", {})
@@ -259,6 +290,121 @@ def test_groq_connection(request: dict):
         save_config(cfg)
         
         return {"connected": False, "error": str(e)}
+
+@router.post("/lmstudio/test")
+def test_lmstudio_connection(request: dict):
+    """Test LM Studio server (OpenAI-compatible) by listing models"""
+    base_url = (request or {}).get("baseUrl") or load_config().get("lmstudio", {}).get("baseUrl", "http://localhost:1234")
+    try:
+        r = requests.get(f"{base_url.rstrip('/')}/v1/models", timeout=10)
+        ok = r.status_code == 200
+        cfg = load_config()
+        if "lmstudio" not in cfg:
+            cfg["lmstudio"] = {}
+        cfg["lmstudio"]["baseUrl"] = base_url
+        cfg["lmstudio"]["connected"] = ok
+        save_config(cfg)
+        if ok:
+            data = r.json() or {}
+            return {"connected": True, "models_count": len((data.get("data") or []))}
+        return {"connected": False, "error": f"HTTP {r.status_code}"}
+    except Exception as e:
+        cfg = load_config()
+        if "lmstudio" not in cfg:
+            cfg["lmstudio"] = {}
+        cfg["lmstudio"]["baseUrl"] = base_url
+        cfg["lmstudio"]["connected"] = False
+        save_config(cfg)
+        return {"connected": False, "error": str(e)}
+
+@router.post("/ollama/test")
+def test_ollama_connection(request: dict):
+    """Test Ollama server by listing tags"""
+    base_url = (request or {}).get("baseUrl") or load_config().get("ollama", {}).get("baseUrl", "http://localhost:11434")
+    try:
+        r = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=10)
+        ok = r.status_code == 200
+        cfg = load_config()
+        if "ollama" not in cfg:
+            cfg["ollama"] = {}
+        cfg["ollama"]["baseUrl"] = base_url
+        cfg["ollama"]["connected"] = ok
+        save_config(cfg)
+        if ok:
+            data = r.json() or {}
+            return {"connected": True, "models_count": len((data.get("models") or []))}
+        return {"connected": False, "error": f"HTTP {r.status_code}"}
+    except Exception as e:
+        cfg = load_config()
+        if "ollama" not in cfg:
+            cfg["ollama"] = {}
+        cfg["ollama"]["baseUrl"] = base_url
+        cfg["ollama"]["connected"] = False
+        save_config(cfg)
+        return {"connected": False, "error": str(e)}
+
+@router.post("/vllm/test")
+def test_vllm_connection(request: dict):
+    """Test vLLM server (OpenAI-compatible) by listing models"""
+    base_url = (request or {}).get("baseUrl") or load_config().get("vllm", {}).get("baseUrl", "http://localhost:8000")
+    try:
+        r = requests.get(f"{base_url.rstrip('/')}/v1/models", timeout=10)
+        ok = r.status_code == 200
+        cfg = load_config()
+        if "vllm" not in cfg:
+            cfg["vllm"] = {}
+        cfg["vllm"]["baseUrl"] = base_url
+        cfg["vllm"]["connected"] = ok
+        save_config(cfg)
+        if ok:
+            data = r.json() or {}
+            return {"connected": True, "models_count": len((data.get("data") or []))}
+        return {"connected": False, "error": f"HTTP {r.status_code}"}
+    except Exception as e:
+        cfg = load_config()
+        if "vllm" not in cfg:
+            cfg["vllm"] = {}
+        cfg["vllm"]["baseUrl"] = base_url
+        cfg["vllm"]["connected"] = False
+        save_config(cfg)
+        return {"connected": False, "error": str(e)}
+
+@router.get("/vllm/setup/info")
+def get_vllm_setup_info():
+    """Get vLLM setup information and available installation options"""
+    from app.services.vllm_setup import vllm_setup
+    
+    return {
+        "system_info": vllm_setup.get_system_info(),
+        "installation_options": vllm_setup.get_installation_options(),
+        "vllm_installed": vllm_setup.check_vllm_installed()
+    }
+
+@router.post("/vllm/setup/install")
+def install_vllm(request: dict):
+    """Install vLLM using the specified method"""
+    method = request.get("method", "pip")
+    from app.services.vllm_setup import vllm_setup
+    
+    if method == "pip":
+        success, message = vllm_setup.install_vllm_pip()
+    elif method == "conda":
+        success, message = vllm_setup.install_vllm_conda()
+    elif method == "docker":
+        success, message = vllm_setup.setup_docker_vllm()
+    else:
+        return {"success": False, "message": f"Unknown installation method: {method}"}
+    
+    return {"success": success, "message": message}
+
+@router.post("/vllm/setup/test")
+def test_vllm_setup(request: dict):
+    """Test vLLM setup and connection"""
+    base_url = request.get("baseUrl", "http://localhost:8000")
+    from app.services.vllm_setup import vllm_setup
+    
+    success, message = vllm_setup.test_vllm_connection(base_url)
+    return {"success": success, "message": message}
 
 @router.get("/gpu/info")
 def get_gpu_info_endpoint():

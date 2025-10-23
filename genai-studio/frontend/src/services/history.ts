@@ -82,11 +82,24 @@ export const historyService = {
   // Get aggregated automation results for home page
   async getAutomationAggregates(): Promise<SavedAutomation[]> {
     try {
-      // Backend serves this at /api/automations/aggregates (no /history prefix)
-      const response = await api.get('/automations/aggregates');
+      // Backend serves this at /api/history/automations/aggregates
+      const response = await api.get('/history/automations/aggregates');
+      console.log('Automation aggregates response:', response.data);
       return Array.isArray(response.data) ? response.data : [];
     } catch (error) {
-      console.warn('Failed to fetch automation aggregates:', error);
+      console.error('Failed to fetch automation aggregates:', error);
+      return [];
+    }
+  },
+
+  // Get automation sets grouped by automationSetId
+  async getAutomationSets(): Promise<any[]> {
+    try {
+      const response = await api.get('/history/automations/sets');
+      console.log('Automation sets response:', response.data);
+      return Array.isArray(response.data) ? response.data : [];
+    } catch (error) {
+      console.error('Failed to fetch automation sets:', error);
       return [];
     }
   },

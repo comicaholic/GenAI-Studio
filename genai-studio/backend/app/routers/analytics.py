@@ -3,6 +3,8 @@ import psutil
 import time
 import json
 import os
+import gzip
+import base64
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -12,6 +14,25 @@ router = APIRouter()
 # Application start time for uptime calculation
 APP_START_TIME = datetime.now()
 
+# Compression utilities
+def compress_data(data: str) -> str:
+    """Compress JSON data using gzip and base64 encoding"""
+    try:
+        compressed = gzip.compress(data.encode('utf-8'))
+        return base64.b64encode(compressed).decode('utf-8')
+    except Exception as e:
+        print(f"Compression failed: {e}")
+        return data
+
+def decompress_data(compressed_data: str) -> str:
+    """Decompress data from base64 and gzip"""
+    try:
+        compressed_bytes = base64.b64decode(compressed_data.encode('utf-8'))
+        return gzip.decompress(compressed_bytes).decode('utf-8')
+    except Exception as e:
+        print(f"Decompression failed: {e}")
+        return compressed_data
+
 # Groq usage tracking
 GROQ_USAGE_FILE = Path(__file__).resolve().parents[2] / "data" / "groq_usage.json"
 SYSTEM_METRICS_FILE = Path(__file__).resolve().parents[2] / "data" / "system_metrics.json"
@@ -19,7 +40,19 @@ EVALUATIONS_FILE = Path(__file__).resolve().parents[2] / "data" / "evaluations.j
 CHATS_FILE = Path(__file__).resolve().parents[2] / "data" / "chats.json"
 
 def load_groq_usage() -> List[Dict]:
-    """Load Groq usage data from file"""
+    """Load Groq usage data from file (supports both compressed and uncompressed)"""
+    # Try compressed file first
+    compressed_file = GROQ_USAGE_FILE.with_suffix('.json.gz')
+    if compressed_file.exists():
+        try:
+            with open(compressed_file, "r", encoding="utf-8") as f:
+                compressed_data = f.read()
+            json_data = decompress_data(compressed_data)
+            return json.loads(json_data)
+        except Exception as e:
+            print(f"Error loading compressed Groq usage: {e}")
+    
+    # Fallback to uncompressed file
     if not GROQ_USAGE_FILE.exists():
         return []
     try:
@@ -30,16 +63,47 @@ def load_groq_usage() -> List[Dict]:
         return []
 
 def save_groq_usage(usage_data: List[Dict]):
-    """Save Groq usage data to file"""
+    """Save Groq usage data to file with compression"""
     GROQ_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(GROQ_USAGE_FILE, "w", encoding="utf-8") as f:
-            json.dump(usage_data, f, indent=2)
+        # Create backup of existing file
+        if GROQ_USAGE_FILE.exists():
+            backup_file = GROQ_USAGE_FILE.with_suffix('.json.backup')
+            GROQ_USAGE_FILE.rename(backup_file)
+        
+        # Compress data before saving
+        json_data = json.dumps(usage_data, indent=2)
+        compressed_data = compress_data(json_data)
+        
+        # Save compressed data
+        with open(GROQ_USAGE_FILE.with_suffix('.json.gz'), "w", encoding="utf-8") as f:
+            f.write(compressed_data)
+            
+        # Remove backup if save was successful
+        if backup_file.exists():
+            backup_file.unlink()
+            
     except Exception as e:
         print(f"Error saving Groq usage: {e}")
+        # Restore backup if save failed
+        backup_file = GROQ_USAGE_FILE.with_suffix('.json.backup')
+        if backup_file.exists():
+            backup_file.rename(GROQ_USAGE_FILE)
 
 def load_system_metrics() -> List[Dict]:
-    """Load system metrics data from file"""
+    """Load system metrics data from file (supports both compressed and uncompressed)"""
+    # Try compressed file first
+    compressed_file = SYSTEM_METRICS_FILE.with_suffix('.json.gz')
+    if compressed_file.exists():
+        try:
+            with open(compressed_file, "r", encoding="utf-8") as f:
+                compressed_data = f.read()
+            json_data = decompress_data(compressed_data)
+            return json.loads(json_data)
+        except Exception as e:
+            print(f"Error loading compressed system metrics: {e}")
+    
+    # Fallback to uncompressed file
     if not SYSTEM_METRICS_FILE.exists():
         return []
     try:
@@ -50,13 +114,33 @@ def load_system_metrics() -> List[Dict]:
         return []
 
 def save_system_metrics(metrics_data: List[Dict]):
-    """Save system metrics data to file"""
+    """Save system metrics data to file with compression"""
     try:
         SYSTEM_METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(SYSTEM_METRICS_FILE, "w", encoding="utf-8") as f:
-            json.dump(metrics_data, f, indent=2)
+        
+        # Create backup of existing file
+        if SYSTEM_METRICS_FILE.exists():
+            backup_file = SYSTEM_METRICS_FILE.with_suffix('.json.backup')
+            SYSTEM_METRICS_FILE.rename(backup_file)
+        
+        # Compress data before saving
+        json_data = json.dumps(metrics_data, indent=2)
+        compressed_data = compress_data(json_data)
+        
+        # Save compressed data
+        with open(SYSTEM_METRICS_FILE.with_suffix('.json.gz'), "w", encoding="utf-8") as f:
+            f.write(compressed_data)
+            
+        # Remove backup if save was successful
+        if backup_file.exists():
+            backup_file.unlink()
+            
     except Exception as e:
         print(f"Error saving system metrics: {e}")
+        # Restore backup if save failed
+        backup_file = SYSTEM_METRICS_FILE.with_suffix('.json.backup')
+        if backup_file.exists():
+            backup_file.rename(SYSTEM_METRICS_FILE)
 
 def record_system_metrics():
     """Record current system metrics with proper application detection"""
@@ -203,8 +287,7 @@ def record_system_metrics():
             print(f"WARNING: Memory usage over 100%: {memory.percent}%")
         if disk_percent > 100:
             print(f"WARNING: Disk usage over 100%: {disk_percent}% (used: {disk.used}, total: {disk.total})")
-        if gpu_percent and gpu_percent > 100:
-            print(f"WARNING: GPU usage over 100%: {gpu_percent}%")
+        # Note: gpu_percent is defined later in the function, so we can't check it here
         
         metric_record = {
             "timestamp": datetime.now().isoformat(),
@@ -228,9 +311,10 @@ def record_system_metrics():
         metrics_data = load_system_metrics()
         metrics_data.append(metric_record)
         
-        # Keep only last 50000 records (about 35 days at 1-minute intervals, or longer with larger intervals)
-        if len(metrics_data) > 50000:
-            metrics_data = metrics_data[-50000:]
+        # Keep only last 10000 records (about 7 days at 1-minute intervals, or longer with larger intervals)
+        # Reduced from 50000 to improve performance
+        if len(metrics_data) > 10000:
+            metrics_data = metrics_data[-10000:]
         
         save_system_metrics(metrics_data)
         return metric_record
@@ -290,16 +374,17 @@ def background_metrics_recorder():
             if record_count % 10 == 0:
                 print(f"📊 Background metrics recorded {record_count} times")
             
-            time.sleep(10)  # Record every 10 seconds for more responsive updates
+            time.sleep(30)  # Record every 30 seconds to reduce overhead
         except Exception as e:
             print(f"❌ Error in background metrics recording: {e}")
             time.sleep(30)  # Wait longer on error
 
 # Start background recording if not already running
 _metrics_thread = None
+_background_recording_logged = False
 def ensure_background_recording():
     """Ensure background metrics recording is running"""
-    global _metrics_thread
+    global _metrics_thread, _background_recording_logged
     
     if _metrics_thread is None or not _metrics_thread.is_alive():
         try:
@@ -315,7 +400,10 @@ def ensure_background_recording():
         except Exception as e:
             print(f"❌ Failed to start background metrics recording: {e}")
     else:
-        print("ℹ️ Background metrics recording already running")
+        # Only log this message once per session to avoid UI flickering
+        if not _background_recording_logged:
+            print("ℹ️ Background metrics recording already running")
+            _background_recording_logged = True
 
 def record_groq_usage(model: str, tokens_used: int, cost_usd: float, duration_ms: int, success: bool = True):
     """Record a Groq API usage event"""
@@ -515,8 +603,7 @@ def get_system_metrics():
             print(f"WARNING: Memory usage over 100%: {memory_percent}%")
         if disk_percent > 100:
             print(f"WARNING: Disk usage over 100%: {disk_percent}% (used: {disk.used}, total: {disk.total})")
-        if gpu_percent and gpu_percent > 100:
-            print(f"WARNING: GPU usage over 100%: {gpu_percent}%")
+        # Note: gpu_percent is defined later in the function, so we can't check it here
         
         # GPU usage - improved detection with multiple methods
         gpu_percent = None
@@ -709,11 +796,20 @@ def get_performance_trends(timeframe: str = "24h", interval_minutes: int = 5):
                 continue
         
         if not filtered_data:
-            return {
-                "trends": [],
-                "period": timeframe,
-                "note": f"No data available for the last {timeframe}."
-            }
+            # If no data in timeframe, try to return at least some recent data for debugging
+            recent_data = metrics_data[-50:] if len(metrics_data) >= 50 else metrics_data
+            if recent_data:
+                return {
+                    "trends": recent_data[-20:],  # Return last 20 data points
+                    "period": timeframe,
+                    "note": f"No data available for the last {timeframe}, showing recent data instead."
+                }
+            else:
+                return {
+                    "trends": [],
+                    "period": timeframe,
+                    "note": f"No data available for the last {timeframe}."
+                }
         
         # Sort by timestamp (oldest first)
         filtered_data.sort(key=lambda x: x["timestamp"])
@@ -787,6 +883,13 @@ def get_performance_trends(timeframe: str = "24h", interval_minutes: int = 5):
                 }
                 trends.append(trend_point)
         
+        # Limit trends to prevent frontend performance issues
+        max_trends = 200
+        if len(trends) > max_trends:
+            # Sample evenly across the data
+            step = len(trends) // max_trends
+            trends = trends[::step]
+        
         return {
             "trends": trends,
             "period": timeframe,
@@ -810,9 +913,8 @@ def get_groq_analytics(timeframe: str = "24h"):
         for record in usage_data:
             try:
                 record_time = datetime.fromisoformat(record["timestamp"])
-                # Make record time timezone-aware if it's naive
-                if record_time.tzinfo is None:
-                    record_time = record_time.replace(tzinfo=timezone.utc)
+                # Keep record time as naive (local time) to match start_time
+                # No need to convert to UTC since start_time is also naive
                 if record_time >= start_time:
                     filtered_data.append(record)
             except (ValueError, TypeError):
@@ -912,9 +1014,8 @@ def get_error_metrics(timeframe: str = "24h"):
         for record in usage_data:
             try:
                 record_time = datetime.fromisoformat(record["timestamp"])
-                # Make record time timezone-aware if it's naive
-                if record_time.tzinfo is None:
-                    record_time = record_time.replace(tzinfo=timezone.utc)
+                # Keep record time as naive (local time) to match start_time
+                # No need to convert to UTC since start_time is also naive
                 if record_time >= start_time:
                     filtered_data.append(record)
             except (ValueError, TypeError):
@@ -1034,9 +1135,8 @@ def get_throughput_metrics(timeframe: str = "24h"):
         for record in usage_data:
             try:
                 record_time = datetime.fromisoformat(record["timestamp"])
-                # Make record time timezone-aware if it's naive
-                if record_time.tzinfo is None:
-                    record_time = record_time.replace(tzinfo=timezone.utc)
+                # Keep record time as naive (local time) to match start_time
+                # No need to convert to UTC since start_time is also naive
                 if record_time >= start_time:
                     filtered_data.append(record)
             except (ValueError, TypeError):
@@ -1111,7 +1211,7 @@ def get_evaluation_metrics(timeframe: str = "24h"):
                 "note": "No evaluation data available yet."
             }
         
-        # Filter by timeframe
+        # Filter by timeframe - but be more lenient with timeframe filtering
         start_time = get_timeframe_filter(timeframe)
         filtered_evaluations = []
         
@@ -1129,15 +1229,26 @@ def get_evaluation_metrics(timeframe: str = "24h"):
                         # Already timezone-aware
                         eval_dt = datetime.fromisoformat(eval_timestamp)
                     else:
-                        # Naive timestamp, assume UTC
-                        eval_dt = datetime.fromisoformat(eval_timestamp).replace(tzinfo=timezone.utc)
+                        # Naive timestamp, assume local time (not UTC)
+                        eval_dt = datetime.fromisoformat(eval_timestamp)
+                        # Make it timezone-aware by assuming local timezone
+                        if eval_dt.tzinfo is None:
+                            eval_dt = eval_dt.replace(tzinfo=timezone.utc)
                 else:
                     eval_dt = eval_timestamp
                 
-                if eval_dt >= start_time:
+                # Convert start_time to timezone-aware if needed
+                if start_time.tzinfo is None:
+                    start_time_tz = start_time.replace(tzinfo=timezone.utc)
+                else:
+                    start_time_tz = start_time
+                
+                # For debugging - include all evaluations if timeframe is "all" or if no recent data
+                if timeframe == "all" or eval_dt >= start_time_tz:
                     filtered_evaluations.append(eval)
             except (ValueError, TypeError) as e:
-                # Skip invalid timestamps
+                # Skip invalid timestamps but log for debugging
+                print(f"Skipping evaluation with invalid timestamp: {e}")
                 continue
         
         if not filtered_evaluations:
@@ -1196,6 +1307,10 @@ def get_evaluation_metrics(timeframe: str = "24h"):
             # Handle ROUGE scores - use rougeL as the primary ROUGE score
             if "rougeL" in results:
                 score = results["rougeL"]
+                rouge_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
+                model_stats[model_id]["rouge_scores"].append(score)
+            elif "rouge1" in results:
+                score = results["rouge1"]
                 rouge_scores.append({"project": eval.get("title", "Unknown"), "score": score, "timestamp": timestamp})
                 model_stats[model_id]["rouge_scores"].append(score)
             elif "rouge" in results:
@@ -1282,7 +1397,12 @@ def get_evaluation_metrics(timeframe: str = "24h"):
             "debug_info": {
                 "all_evaluations_count": len(all_evaluations),
                 "after_automation_filter": len(evaluations),
-                "filtered_evaluations_count": len(filtered_evaluations)
+                "filtered_evaluations_count": len(filtered_evaluations),
+                "timeframe": timeframe,
+                "rouge_scores_count": len(rouge_scores),
+                "bleu_scores_count": len(bleu_scores),
+                "f1_scores_count": len(f1_scores),
+                "sample_evaluation": filtered_evaluations[0] if filtered_evaluations else None
             }
         }
         

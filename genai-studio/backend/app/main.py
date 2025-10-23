@@ -86,6 +86,8 @@ if not os.getenv("DOCKER"):
     if os.path.isdir(_assets_dir):
         app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
+# Register catch-all route AFTER API routes to avoid conflicts
+if not os.getenv("DOCKER"):
     @app.get("/{full_path:path}")
     def spa(full_path: str):
         """Serve index.html for any non-API path to support client-side routing."""

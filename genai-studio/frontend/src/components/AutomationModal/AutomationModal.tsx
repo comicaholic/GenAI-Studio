@@ -84,6 +84,28 @@ export default function AutomationModal({
   const { showError } = useNotifications();
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
+  // Initialize runs on first load with default preset
+  React.useEffect(() => {
+    if (runs.length === 0 && numRuns > 0) {
+      const defaultPreset = presetStore.getPresets()[0];
+      const defaultPresetParams = defaultPreset?.parameters || DEFAULT_PARAMS;
+      const defaultPresetMetrics = defaultPreset?.metrics || DEFAULT_METRICS;
+      
+      const initialRuns: AutomationRun[] = Array.from({ length: numRuns }, (_, i) => ({
+        id: crypto.randomUUID(),
+        name: `Run ${i + 1}`,
+        prompt: defaultPrompt,
+        parameters: { ...defaultPresetParams },
+        metrics: { ...defaultPresetMetrics },
+        modelId: selected?.id,
+        modelProvider: selected?.provider as any,
+        presetTitle: defaultPreset?.title,
+        status: 'pending',
+      }));
+      setRuns(initialRuns);
+    }
+  }, [numRuns, defaultPrompt, selected?.id, selected?.provider, presetStore, runs.length]);
+
   // Initialize runs when numRuns changes (preserve existing selections)
   React.useEffect(() => {
     setRuns(prev => {
@@ -98,22 +120,28 @@ export default function AutomationModal({
       const template = current[current.length - 1];
       const baseModelId = template?.modelId || selected?.id;
       const baseModelProvider = template?.modelProvider || selected?.provider;
+      
+      // Get default preset from preset store to apply its parameters and metrics
+      const defaultPreset = presetStore.getPresets()[0];
+      const defaultPresetParams = defaultPreset?.parameters || DEFAULT_PARAMS;
+      const defaultPresetMetrics = defaultPreset?.metrics || DEFAULT_METRICS;
+      
       const appended: AutomationRun[] = Array.from({ length: toAdd }, (_, j) => ({
         id: crypto.randomUUID(),
         name: `Run ${current.length + j + 1}`,
         prompt: template?.prompt ?? defaultPrompt,
-        parameters: { ...(template?.parameters || DEFAULT_PARAMS) },
-        metrics: { ...(template?.metrics || DEFAULT_METRICS) },
+        parameters: { ...(template?.parameters || defaultPresetParams) },
+        metrics: { ...(template?.metrics || defaultPresetMetrics) },
         modelId: baseModelId,
         modelProvider: baseModelProvider,
-        presetTitle: template?.presetTitle,
+        presetTitle: template?.presetTitle || defaultPreset?.title,
         status: 'pending',
       }));
       return [...current, ...appended];
     });
     // keep activeRunIndex if still valid
     setActiveRunIndex((idx) => Math.min(idx, Math.max(0, numRuns - 1)));
-  }, [numRuns, defaultPrompt, selected?.id, selected?.provider]);
+  }, [numRuns, defaultPrompt, selected?.id, selected?.provider, presetStore]);
 
   // Load file lists if needed
   React.useEffect(() => {
@@ -202,15 +230,47 @@ export default function AutomationModal({
   // Export current automation config to JSON
   const handleExport = useCallback(() => {
     const payload = {
+      // Automation metadata
       name: automationName || 'Automation',
+      type: kind,
+      createdAt: new Date().toISOString(),
+      
+      // Model information
+      model: {
+        id: selected?.id || 'unknown',
+        provider: selected?.provider || 'local',
+        label: selected?.label || selected?.id || 'unknown'
+      },
+      
+      // Default parameters and metrics
+      defaultParameters: DEFAULT_PARAMS,
+      defaultMetrics: DEFAULT_METRICS,
+      
+      // Runs with complete information
       runs: runs.map(r => ({
         id: r.id,
         name: r.name,
         prompt: r.prompt,
         parameters: r.parameters,
         metrics: r.metrics,
+        modelId: r.modelId || selected?.id,
+        modelProvider: r.modelProvider || selected?.provider,
+        sourceFileName: r.sourceFileName,
+        promptFileName: r.promptFileName,
+        referenceFileName: r.referenceFileName,
+        presetTitle: r.presetTitle,
+        status: r.status,
+        error: r.error,
+        results: r.results
       })),
+      
+      // File information
+      files: {
+        sourceChoices,
+        referenceChoices
+      }
     };
+    
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -219,7 +279,7 @@ export default function AutomationModal({
     a.click();
     a.remove();
     URL.revokeObjectURL(a.href);
-  }, [automationName, runs]);
+  }, [automationName, runs, kind, selected, sourceChoices, referenceChoices]);
 
   const handleImportClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -231,7 +291,11 @@ export default function AutomationModal({
     try {
       const text = await file.text();
       const data = JSON.parse(text);
+      
+      // Set automation name
       if (data.name) setAutomationName(String(data.name));
+      
+      // Import runs with all their data
       if (Array.isArray(data.runs)) {
         const imported: AutomationRun[] = data.runs.map((r: any, i: number) => ({
           id: r.id || crypto.randomUUID(),
@@ -239,11 +303,26 @@ export default function AutomationModal({
           prompt: r.prompt ?? defaultPrompt,
           parameters: { ...DEFAULT_PARAMS, ...(r.parameters || {}) },
           metrics: { ...DEFAULT_METRICS, ...(r.metrics || {}) },
+          modelId: r.modelId || data.model?.id,
+          modelProvider: r.modelProvider || data.model?.provider,
+          sourceFileName: r.sourceFileName,
+          promptFileName: r.promptFileName,
+          referenceFileName: r.referenceFileName,
+          presetTitle: r.presetTitle,
           status: 'pending',
         }));
         setRuns(imported);
         setNumRuns(imported.length);
         setActiveRunIndex(0);
+        
+        // Try to set the model if it's available and different from current
+        if (data.model?.id && data.model?.provider) {
+          // This would ideally trigger a model selection, but since we don't have direct access
+          // to the model context here, we'll just show a message about the model
+          showError("Import Successful", `Imported ${imported.length} runs from ${data.name || 'automation'}. Model: ${data.model.label || data.model.id} (${data.model.provider}). Please ensure this model is selected in the header.`);
+        } else {
+          showError("Import Successful", `Imported ${imported.length} runs from ${data.name || 'automation'}.`);
+        }
       }
       evt.target.value = '';
     } catch (e: any) {

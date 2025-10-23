@@ -4,23 +4,15 @@ import Switch from "@/components/ui/Switch";
 import axios from "axios";
 import { useModel } from "@/context/ModelContext";
 import { QuantizationTag, ArchitectureTag, FormatTag, ConfigIcon, PreviewIcon, Tag } from "@/components/ui/ModelTags";
-
-type Provider = "local" | "groq";
-type ModelInfo = {
-  id: string;
-  label: string;
-  provider: Provider;
-  size?: string | null;
-  quant?: string | null;
-  tags?: string[];
-  context?: number | null;
-  architecture?: string | null;
-  downloadedSize?: string | null;
-  lastUsed?: string | null;
-  hasConfig?: boolean;
-  hasPreview?: boolean;
-  format?: string | null;
-};
+import { 
+  modelKey, 
+  normalizeModelData, 
+  prettifyModelId, 
+  getProviderColor, 
+  getProviderDisplayName,
+  validateModelData,
+  type ModelInfo 
+} from "@/lib/modelUtils";
 
 type SortOption = "recency" | "size";
 
@@ -43,13 +35,6 @@ function useClickOutside<T extends HTMLElement>(onAway: () => void) {
   return ref;
 }
 
-function prettifyModelId(id: string | undefined | null): string {
-  if (!id) return "Unknown model";
-  const trimmed = id.trim();
-  const parts = trimmed.split(/[/:]/);
-  const last = parts[parts.length - 1] || trimmed;
-  return last.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-}
 
 export default function ModelSelector() {
   const { selected, setSelected } = useModel();
@@ -62,102 +47,129 @@ export default function ModelSelector() {
   const [warning, setWarning] = React.useState<string | null>(null);
   const [disabledIds, setDisabledIds] = React.useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = React.useState<SortOption>("recency");
-  const [memoryUsage, setMemoryUsage] = React.useState<{ used: number; total: number } | null>(null);
+  const [modelMemoryUsage, setModelMemoryUsage] = React.useState<{ 
+    used: number; 
+    total: number; 
+    estimated?: number;
+    isLoaded: boolean;
+  } | null>(null);
 
   const [query, setQuery] = React.useState("");
+  const [isLoading, setIsLoading] = React.useState(false);
   const rootRef = useClickOutside<HTMLDivElement>(() => setOpen(false));
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
-  const normalize = (raw: any, provider: Provider): ModelInfo => {
-    // Handle classified models structure where id is in original_data
-    const originalData = raw?.original_data || raw;
-    const id = originalData?.id || raw?.id || raw?.name || raw?.model_id || raw?.model || "";
-    const label = (raw?.label && String(raw.label).trim())
-      ? String(raw.label)
-      : (raw?.name || prettifyModelId(id));
-    const sizeRaw = raw?.size || raw?.details?.size || null;
-    const size = sizeRaw === "hosted" ? null : sizeRaw;
-    const quant = raw?.quant || raw?.details?.quantization || null;
-    const tags = Array.isArray(raw?.tags) ? raw.tags : undefined;
-    const context = raw?.context || raw?.details?.context || null;
-    const architecture = raw?.architecture || raw?.details?.architecture || null;
-    const downloadedSize = raw?.downloaded_size || raw?.details?.downloaded_size || null;
-    const lastUsed = raw?.last_used || raw?.details?.last_used || null;
-    const hasConfig = raw?.has_config || raw?.details?.has_config || false;
-    const hasPreview = raw?.has_preview || raw?.details?.has_preview || false;
-    
-    // Determine format based on file path or other indicators
-    let format = null;
-    if (provider === "local") {
-      const path = raw?.path || "";
-      if (path.toLowerCase().includes(".gguf")) {
-        format = "GGUF";
-      } else if (path.toLowerCase().includes(".safetensors")) {
-        format = "Safetensors";
-      } else if (path.toLowerCase().includes(".bin")) {
-        format = "GGML";
-      } else if (path.toLowerCase().includes(".pth")) {
-        format = "PyTorch";
-      }
-    } else if (provider === "groq") {
-      // Groq models are hosted, no specific format
-      format = null;
+  const fetchModelMemoryUsage = React.useCallback(async (modelId: string) => {
+    if (!modelId || modelId.startsWith('groq/')) {
+      setModelMemoryUsage(null);
+      return;
     }
     
-    return { 
-      id: String(id), 
-      label: String(label), 
-      provider, 
-      size: size ? String(size) : null, 
-      quant: quant ? String(quant) : null, 
-      tags,
-      context: context ? Number(context) : null,
-      architecture: architecture ? String(architecture) : null,
-      downloadedSize: downloadedSize ? String(downloadedSize) : null,
-      lastUsed: lastUsed ? String(lastUsed) : null,
-      hasConfig,
-      hasPreview,
-      format
-    };
-  };
-
-  const fetchMemoryUsage = React.useCallback(async () => {
     try {
-      const { data } = await axios.get("/api/analytics/system");
-      if (data.memory) {
-        setMemoryUsage({
-          used: data.memory.used_gb || 0,
-          total: data.memory.total_gb || 0
+      const { data } = await axios.get(`/api/models/memory/${encodeURIComponent(modelId)}`);
+      // Handle the new response format
+      if (data.used !== null && data.total !== null) {
+        setModelMemoryUsage({
+          used: data.used,
+          total: data.total,
+          estimated: data.estimated,
+          isLoaded: data.isLoaded
         });
+      } else if (data.tracked_memory_gb && data.tracked_memory_gb > 0) {
+        // Use tracked memory data if available
+        setModelMemoryUsage({
+          used: data.tracked_memory_gb,
+          total: data.tracked_memory_gb,
+          estimated: data.estimated,
+          isLoaded: data.isLoaded
+        });
+      } else if (data.estimated) {
+        setModelMemoryUsage({
+          used: 0,
+          total: data.estimated,
+          estimated: data.estimated,
+          isLoaded: data.isLoaded
+        });
+      } else {
+        setModelMemoryUsage(null);
       }
     } catch (error) {
-      console.warn("Failed to fetch memory usage:", error);
-      setMemoryUsage(null);
+      console.warn("Failed to fetch model memory usage:", error);
+      setModelMemoryUsage(null);
     }
   }, []);
 
   const fetchModels = React.useCallback(async () => {
-    const { data } = await axios.get<ListResponse>("/api/models/list", {
-      params: { include_groq: includeGroq },
-    });
-    const locals = (data.local || []).map(m => normalize(m, "local"));
-    const groqs = (data.groq || []).map(m => normalize(m, "groq"));
-    setLocalModels(locals);
-    setGroqModels(groqs);
-    setWarning(data.warning?.warning || data.warning?.error || null);
-    setGroqConnected(!data.warning?.error);
+    setIsLoading(true);
+    try {
+      // Get unfiltered models from backend (same as ModelsPage)
+      const { data } = await axios.get("/api/models/classified", {
+        params: { 
+          include_groq: includeGroq,
+          apply_visibility_filter: false  // Get all models, apply filtering on frontend
+        },
+      });
+      
+      // The classified endpoint returns all models in a single array
+      const allModels = data.models || [];
+      
+      // Validate and normalize model data
+      const validModels = allModels.filter(validateModelData);
+      
+      // Separate local and groq models from classified data
+      const locals = validModels.filter(m => m.source !== "groq").map(m => normalizeModelData(m, "local"));
+      const groqs = validModels.filter(m => m.source === "groq").map(m => normalizeModelData(m, "groq"));
+      
+      setLocalModels(locals);
+      setGroqModels(groqs);
+      setWarning(data.warning?.warning || data.warning?.error || null);
+      setGroqConnected(!data.warning?.error);
+    } catch (error) {
+      // Fallback to original /list endpoint if classified fails
+      console.warn("Failed to fetch classified models, falling back to list endpoint:", error);
+      const { data } = await axios.get<ListResponse>("/api/models/list", {
+        params: { include_groq: includeGroq },
+      });
+      
+      // Validate and normalize model data
+      const validLocalModels = (data.local || []).filter(validateModelData);
+      const validGroqModels = (data.groq || []).filter(validateModelData);
+      
+      const locals = validLocalModels.map(m => normalizeModelData(m, "local"));
+      const groqs = validGroqModels.map(m => normalizeModelData(m, "groq"));
+      
+      setLocalModels(locals);
+      setGroqModels(groqs);
+      setWarning(data.warning?.warning || data.warning?.error || null);
+      setGroqConnected(!data.warning?.error);
+    } finally {
+      setIsLoading(false);
+    }
   }, [includeGroq]);
 
   React.useEffect(() => { 
     fetchModels(); 
-    fetchMemoryUsage();
-  }, [fetchModels, fetchMemoryUsage]);
+  }, [fetchModels]);
+
+  // Fetch model memory usage when selected model changes
+  React.useEffect(() => {
+    if (selected?.id) {
+      fetchModelMemoryUsage(selected.id);
+      
+      // Set up periodic refresh of memory usage
+      const interval = setInterval(() => {
+        fetchModelMemoryUsage(selected.id);
+      }, 5000); // Refresh every 5 seconds
+      
+      return () => clearInterval(interval);
+    }
+  }, [selected?.id, fetchModelMemoryUsage]);
 
   React.useEffect(() => {
     const handler = () => fetchModels();
     window.addEventListener("models:changed", handler);
     return () => window.removeEventListener("models:changed", handler);
-  }, []);
+  }, [fetchModels]);
 
   // listen to visibility changes from Models page
   React.useEffect(() => {
@@ -165,15 +177,31 @@ export default function ModelSelector() {
       try {
         const { data } = await axios.get("/api/models/visibility");
         const arr: string[] | null = data.enabled_ids ?? null;
+        
         if (arr === null) {
           setDisabledIds(new Set());
         } else {
-          // Convert enabled list to disabled set
+          // The API returns actual model IDs, not keys
+          // We need to convert these to modelKey format for filtering
           const enabled = new Set(arr);
-          const allModelIds = [...localModels, ...groqModels].map(m => m.id);
-          setDisabledIds(new Set(allModelIds.filter(id => !enabled.has(id))));
+          const allModels = [...localModels, ...groqModels];
+          
+          // Create disabled set using modelKey format
+          const disabledKeys = new Set<string>();
+          for (const model of allModels) {
+            const key = modelKey(model);
+            // If the model's actual ID is not in the enabled list, mark the key as disabled
+            if (model.id && !enabled.has(model.id)) {
+              disabledKeys.add(key);
+            }
+          }
+          
+          setDisabledIds(disabledKeys);
         }
-      } catch { setDisabledIds(new Set()); }
+      } catch (error) {
+        console.error("Error loading visibility:", error);
+        setDisabledIds(new Set());
+      }
     };
     load();
     const onChange = () => load();
@@ -183,8 +211,12 @@ export default function ModelSelector() {
 
   const allModels = React.useMemo(() => {
     const q = query.toLowerCase();
-    const filter = (m: ModelInfo) =>
-      !disabledIds.has(m.id) && (!q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
+    const filter = (m: ModelInfo) => {
+      const key = modelKey(m);
+      const isDisabled = disabledIds.has(key);
+      const matchesQuery = !q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q);
+      return !isDisabled && matchesQuery;
+    };
 
     const local = localModels.filter(filter);
     const groq = includeGroq ? groqModels.filter(filter) : [];
@@ -219,12 +251,37 @@ export default function ModelSelector() {
     ? (selected.label && selected.label.trim() ? selected.label : prettifyModelId(selected.id))
     : (noneAvailable ? "No models available" : "Select a model…");
 
-  const handleEject = () => {
+  const handleEject = async () => {
+    if (selected?.id) {
+      try {
+        // Call the unload endpoint to unload the model from the provider
+        await axios.post(`/api/models/unload/${encodeURIComponent(selected.id)}`);
+        console.log(`Model ${selected.id} unloaded from provider`);
+      } catch (error) {
+        console.warn("Failed to unload model from provider:", error);
+        // Still proceed with ejecting from selection even if unload fails
+      }
+    }
     setSelected(null);
   };
 
+  const handleRefreshMemory = React.useCallback(() => {
+    if (selected?.id) {
+      fetchModelMemoryUsage(selected.id);
+    }
+  }, [selected?.id, fetchModelMemoryUsage]);
+
   return (
-    <div style={styles.container}>
+    <>
+      <style>
+        {`
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}
+      </style>
+      <div style={styles.container}>
       {/* Eject button */}
       <button
         type="button"
@@ -275,14 +332,38 @@ export default function ModelSelector() {
                   style={styles.search}
                 />
               </div>
-              {selected && selected.provider === "local" && memoryUsage && (
+              {selected && selected.provider === "local" && modelMemoryUsage && (
                 <div style={styles.memoryContainer}>
-                  <span style={styles.memoryLabel}>Memory Consumption:</span>
-                  <span style={styles.memoryValue}>
-                    {memoryUsage.used.toFixed(2)} GB / {memoryUsage.total} GB
+                  <span style={styles.memoryLabel}>
+                    {modelMemoryUsage.isLoaded ? "Model Memory Usage:" : "Estimated Memory:"}
                   </span>
+                  <span style={styles.memoryValue}>
+                    {modelMemoryUsage.isLoaded ? (
+                      `${modelMemoryUsage.used.toFixed(2)} GB${modelMemoryUsage.total > modelMemoryUsage.used ? ` / ${modelMemoryUsage.total} GB` : ''}`
+                    ) : (
+                      `~${modelMemoryUsage.estimated?.toFixed(2) || 'Unknown'} GB`
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleRefreshMemory}
+                    style={styles.refreshButton}
+                    title="Refresh memory usage"
+                  >
+                    🔄
+                  </button>
                 </div>
               )}
+              <button
+                type="button"
+                onClick={fetchModels}
+                style={styles.refreshButton}
+                title="Refresh models"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/>
+                </svg>
+              </button>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -356,50 +437,136 @@ export default function ModelSelector() {
 
             {/* Models List */}
             <div style={styles.modelsList}>
-              {noneAvailable && (
+              {isLoading ? (
+                <div style={styles.loadingContainer}>
+                  <div style={styles.loadingSpinner}>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ animation: "spin 1s linear infinite" }}>
+                      <path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/>
+                    </svg>
+                  </div>
+                  <div style={styles.loadingText}>Loading models...</div>
+                </div>
+              ) : noneAvailable ? (
                 <div style={styles.empty}>
                   No models available.<br />
                   Use the Models page to discover and load models.
                 </div>
-              )}
-
-              {/* All Models (Local + Groq combined) */}
-              {[...allModels.local, ...allModels.groq].map(m => (
-                <div
-                  key={m.id}
-                  style={styles.modelCard}
-                  onClick={() => { 
-                    setSelected(m); 
-                    setOpen(false); 
-                  }}
-                  className="rb-hover-lift rb-press"
-                >
-                  <div style={styles.modelCardContent}>
-                    <div style={styles.modelCardHeader}>
-                      <div style={styles.modelCardName}>{m.label || prettifyModelId(m.id)}</div>
-                      <div style={styles.modelCardTags}>
-                        {m.quant && <QuantizationTag quant={m.quant} />}
-                        {m.hasConfig && <ConfigIcon />}
-                        {m.hasPreview && <PreviewIcon />}
+              ) : (
+                /* All Models (Local + Groq combined) */
+                [...allModels.local, ...allModels.groq].map(m => (
+                  <div
+                    key={m.id}
+                    style={styles.modelCard}
+                    onClick={async () => { 
+                      setSelected(m); 
+                      setOpen(false);
+                      
+                      // Check if auto-loading is enabled
+                      try {
+                        const settingsResponse = await axios.get("/api/settings/settings");
+                        const autoLoadEnabled = settingsResponse.data?.localModels?.autoLoadOnSelect ?? true;
+                        
+                        if (autoLoadEnabled) {
+                          // Try to load the model in the appropriate provider
+                          try {
+                            const response = await axios.post(`/api/models/load/${encodeURIComponent(m.id)}`);
+                            if (response.data.success) {
+                              console.log("Model loaded successfully:", response.data.message);
+                              // Show success notification
+                              // You can add a notification system here if you have one
+                            } else {
+                              console.warn("Model load failed:", response.data.message);
+                              // Show warning notification
+                            }
+                          } catch (error: any) {
+                            console.error("Failed to load model:", error);
+                            // Show error notification
+                            if (error.response?.status === 400) {
+                              console.warn("No provider configured for model loading");
+                            } else if (error.response?.status === 502) {
+                              console.warn("Provider not responding - model may not be available");
+                            }
+                          }
+                        } else {
+                          console.log("Auto-loading disabled, model not loaded automatically");
+                        }
+                      } catch (error) {
+                        console.warn("Failed to check auto-loading setting:", error);
+                        // Default to auto-loading if we can't check the setting
+                        try {
+                          const response = await axios.post(`/api/models/load/${encodeURIComponent(m.id)}`);
+                          if (response.data.success) {
+                            console.log("Model loaded successfully:", response.data.message);
+                          } else {
+                            console.warn("Model load failed:", response.data.message);
+                          }
+                        } catch (loadError: any) {
+                          console.error("Failed to load model:", loadError);
+                        }
+                      }
+                    }}
+                    className="rb-hover-lift rb-press"
+                  >
+                    <div style={styles.modelCardContent}>
+                      <div style={styles.modelCardHeader}>
+                        <div style={styles.modelCardName}>{m.label || prettifyModelId(m.id)}</div>
+                        <div style={styles.modelCardTags}>
+                          {m.quant && <QuantizationTag quant={m.quant} />}
+                          {m.hasConfig && <ConfigIcon />}
+                          {m.hasPreview && <PreviewIcon />}
+                        </div>
+                      </div>
+                      <div style={styles.modelCardMeta}>
+                        <div style={styles.modelCardSize}>{m.size || "Unknown"}</div>
+                        {m.architecture && <ArchitectureTag arch={m.architecture} />}
+                        {m.format && <FormatTag format={m.format} />}
+                        {m.downloadedSize && (
+                          <span style={styles.modelCardDownloadedSize}>{m.downloadedSize}</span>
+                        )}
+                        {/* Provider and source tags */}
+                        {m.source && m.source !== "local" && (
+                          <span style={{
+                            padding: "2px 6px",
+                            borderRadius: 4,
+                            fontSize: 10,
+                            fontWeight: 500,
+                            background: m.source === "groq" ? "#059669" : 
+                                       m.source === "lmstudio" ? "#8b5cf6" :
+                                       m.source === "ollama" ? "#3b82f6" :
+                                       m.source === "vllm" ? "#f59e0b" : "#6b7280",
+                            color: "#fff",
+                            display: "inline-block"
+                          }}>
+                            {m.source === "groq" ? "Groq" : 
+                             m.source === "lmstudio" ? "LM Studio" :
+                             m.source === "ollama" ? "Ollama" :
+                             m.source === "vllm" ? "vLLM" : m.source}
+                          </span>
+                        )}
+                        {m.category && (
+                          <span style={{
+                            padding: "2px 6px",
+                            borderRadius: 4,
+                            fontSize: 10,
+                            fontWeight: 500,
+                            background: "#6b7280",
+                            color: "#fff",
+                            display: "inline-block"
+                          }}>
+                            {m.category}
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <div style={styles.modelCardMeta}>
-                      <div style={styles.modelCardAuthor}>{m.provider}</div>
-                      <div style={styles.modelCardSize}>{m.size || "Unknown"}</div>
-                      {m.architecture && <ArchitectureTag arch={m.architecture} />}
-                      {m.format && <FormatTag format={m.format} />}
-                      {m.downloadedSize && (
-                        <span style={styles.modelCardDownloadedSize}>{m.downloadedSize}</span>
-                      )}
-                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         )}
       </div>
     </div>
+    </>
   );
 }
 
@@ -424,7 +591,11 @@ const styles: Record<string, React.CSSProperties> = {
     transition: "all 0.2s ease",
     boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)"
   },
-  root: { position: "relative", display: "inline-block" },
+  root: { 
+    position: "relative", 
+    display: "inline-block",
+    zIndex: 99999
+  },
   button: {
     display: "inline-flex",
     alignItems: "center",
@@ -451,8 +622,8 @@ const styles: Record<string, React.CSSProperties> = {
   popover: {
     position: "absolute",
     top: "calc(100% + 12px)",
-    left: 0,
-    zIndex: 1000,
+    left: -150,
+    zIndex: 99999,
     width: 700,
     maxHeight: 600,
     overflow: "auto",
@@ -506,6 +677,20 @@ const styles: Record<string, React.CSSProperties> = {
   memoryValue: {
     color: "#60a5fa",
     fontWeight: 500,
+  },
+  refreshButton: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    border: "none",
+    background: "transparent",
+    color: "#94a3b8",
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+    padding: 0,
   },
   closeButton: {
     display: "flex",
@@ -650,5 +835,25 @@ const styles: Record<string, React.CSSProperties> = {
     margin: "8px 20px",
     borderRadius: 12,
     border: "1px solid #334155"
+  },
+  loadingContainer: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "40px 20px",
+    background: "#1e293b",
+    margin: "8px 20px",
+    borderRadius: 12,
+    border: "1px solid #334155"
+  },
+  loadingSpinner: {
+    marginBottom: 12,
+    color: "#60a5fa"
+  },
+  loadingText: {
+    fontSize: 14,
+    color: "#94a3b8",
+    fontWeight: 500
   },
 };
