@@ -146,6 +146,10 @@ class ModelClassifier:
         # Extract quantization
         quant = model_data.get("quant") or cls._extract_quantization(model_id)
         
+        # For Groq models, get quantization info if not already present
+        if not quant and model_data.get("provider") == "groq":
+            quant = cls._get_groq_quantization(model_id)
+        
         # Extract size
         size = model_data.get("size", "Unknown")
         
@@ -215,6 +219,87 @@ class ModelClassifier:
             return "fp32"
         
         return None
+    
+    @classmethod
+    def _get_groq_quantization(cls, model_id: str) -> Optional[str]:
+        """Get quantization information for Groq models."""
+        # Groq typically uses quantized models for performance
+        # Map known Groq models to their quantization types
+        groq_quantization_map = {
+            # Llama models - typically Q4_K_M or Q8_0
+            "meta-llama/llama-3.1-8b-instruct": "Q4_K_M",
+            "meta-llama/llama-3.1-70b-instruct": "Q4_K_M", 
+            "meta-llama/llama-3.1-405b-instruct": "Q4_K_M",
+            "meta-llama/llama-3.2-1b-instruct": "Q4_K_M",
+            "meta-llama/llama-3.2-3b-instruct": "Q4_K_M",
+            "meta-llama/llama-3.2-11b-instruct": "Q4_K_M",
+            "meta-llama/llama-3.2-90b-instruct": "Q4_K_M",
+            "meta-llama/llama-3.3-70b-instruct": "Q4_K_M",
+            "meta-llama/llama-3.3-405b-instruct": "Q4_K_M",
+            "meta-llama/llama-4-scout-17b-16e-instruct": "Q4_K_M",
+            "meta-llama/llama-4-maverick-17b-128e-instruct": "Q4_K_M",
+            "meta-llama/llama-prompt-guard-2-22m": "Q4_K_M",
+            
+            # Mistral models - typically Q4_K_M
+            "mistralai/mistral-7b-instruct": "Q4_K_M",
+            "mistralai/mixtral-8x7b-instruct": "Q4_K_M",
+            "mistralai/mixtral-8x22b-instruct": "Q4_K_M",
+            "mistralai/codestral-22b-instruct": "Q4_K_M",
+            
+            # Qwen models - typically Q4_K_M
+            "qwen/qwen-2.5-7b-instruct": "Q4_K_M",
+            "qwen/qwen-2.5-14b-instruct": "Q4_K_M",
+            "qwen/qwen-2.5-32b-instruct": "Q4_K_M",
+            "qwen/qwen-2.5-72b-instruct": "Q4_K_M",
+            
+            # Gemma models - typically Q4_K_M
+            "google/gemma-2-9b-it": "Q4_K_M",
+            "google/gemma-2-27b-it": "Q4_K_M",
+            
+            # DeepSeek models - typically Q4_K_M
+            "deepseek/deepseek-coder-6.7b-instruct": "Q4_K_M",
+            "deepseek/deepseek-coder-33b-instruct": "Q4_K_M",
+            "deepseek/deepseek-math-7b-instruct": "Q4_K_M",
+            "deepseek/deepseek-math-67b-instruct": "Q4_K_M",
+            
+            # Other models
+            "moonshotai/kimi-k2-instruct": "Q4_K_M",
+        }
+        
+        # Check exact match first
+        if model_id in groq_quantization_map:
+            return groq_quantization_map[model_id]
+        
+        # Check for partial matches based on model family
+        model_id_lower = model_id.lower()
+        
+        # Llama models
+        if "llama" in model_id_lower:
+            if "70b" in model_id_lower or "405b" in model_id_lower:
+                return "Q4_K_M"  # Large models typically use Q4_K_M
+            elif "8b" in model_id_lower or "7b" in model_id_lower:
+                return "Q4_K_M"  # Medium models typically use Q4_K_M
+            else:
+                return "Q4_K_M"  # Default for Llama models
+        
+        # Mistral models
+        elif "mistral" in model_id_lower or "mixtral" in model_id_lower:
+            return "Q4_K_M"
+        
+        # Qwen models
+        elif "qwen" in model_id_lower:
+            return "Q4_K_M"
+        
+        # Gemma models
+        elif "gemma" in model_id_lower:
+            return "Q4_K_M"
+        
+        # DeepSeek models
+        elif "deepseek" in model_id_lower:
+            return "Q4_K_M"
+        
+        # Default for unknown Groq models
+        return "Q4_K_M"
     
     @classmethod
     def _extract_architecture(cls, model_id: str) -> Optional[str]:

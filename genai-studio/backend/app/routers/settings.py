@@ -25,11 +25,16 @@ def update_env_file(key: str, value: str):
     pattern = rf"^{re.escape(key)}\s*=.*$"
     
     if re.search(pattern, content, re.MULTILINE):
-        # Update existing key
-        content = re.sub(pattern, f"{key}={value}", content, flags=re.MULTILINE)
+        if value.strip():  # If value is not empty, update the key
+            content = re.sub(pattern, f"{key}={value}", content, flags=re.MULTILINE)
+        else:  # If value is empty, remove the line entirely
+            content = re.sub(pattern, "", content, flags=re.MULTILINE)
+            # Clean up any double newlines that might result
+            content = re.sub(r'\n\n+', '\n\n', content)
     else:
-        # Add new key
-        content += f"\n{key}={value}"
+        # Only add new key if value is not empty
+        if value.strip():
+            content += f"\n{key}={value}"
     
     ENV_PATH.write_text(content, encoding="utf-8")
 
@@ -128,7 +133,9 @@ def get_settings():
         },
         "ollama": {
             "baseUrl": "http://localhost:11434",
-            "connected": False
+            "connected": False,
+            "apiKey": "",
+            "apiConnected": False
         },
         "vllm": {
             "baseUrl": "http://localhost:8000",
@@ -178,6 +185,10 @@ def get_settings():
         if not os.getenv("HUGGINGFACE_TOKEN"):
             os.environ["HUGGINGFACE_TOKEN"] = cfg["huggingface"]["token"]
     
+    if "ollama" in cfg and "apiKey" in cfg["ollama"] and cfg["ollama"]["apiKey"]:
+        if not os.getenv("OLLAMA_API_KEY"):
+            os.environ["OLLAMA_API_KEY"] = cfg["ollama"]["apiKey"]
+    
     # Validate connection status based on actual API key presence
     # Only mark as connected if there's actually an API key
     if "groq" in cfg:
@@ -187,17 +198,32 @@ def get_settings():
     if "huggingface" in cfg:
         hf_token = cfg["huggingface"].get("token", "") or os.getenv("HUGGINGFACE_TOKEN", "")
         cfg["huggingface"]["connected"] = bool(hf_token.strip())
+    
+    if "ollama" in cfg:
+        ollama_api_key = cfg["ollama"].get("apiKey", "") or os.getenv("OLLAMA_API_KEY", "")
+        cfg["ollama"]["apiConnected"] = bool(ollama_api_key.strip())
 
     # Ensure lmstudio/ollama/vllm blocks exist
-    for key, url in ("lmstudio", "http://localhost:1234"), ("ollama", "http://localhost:11434"), ("vllm", "http://localhost:8000"):
+    for key, url in ("lmstudio", "http://localhost:1234"), ("vllm", "http://localhost:8000"):
         if key not in cfg:
             cfg[key] = {"baseUrl": url, "connected": False}
+    
+    # Special handling for ollama to include API key fields
+    if "ollama" not in cfg:
+        cfg["ollama"] = {"baseUrl": "http://localhost:11434", "connected": False, "apiKey": "", "apiConnected": False}
+    else:
+        # Ensure API key fields exist
+        if "apiKey" not in cfg["ollama"]:
+            cfg["ollama"]["apiKey"] = ""
+        if "apiConnected" not in cfg["ollama"]:
+            cfg["ollama"]["apiConnected"] = False
     
     return cfg
 
 @router.post("/settings")
 def save_settings(settings: SettingsIn):
     """Save all settings"""
+    print(f"Received settings: {settings.dict()}")  # Debug log
     cfg = load_config()
     
     # Update settings
@@ -206,15 +232,33 @@ def save_settings(settings: SettingsIn):
     # Set environment variables for API keys and write to .env file
     if "groq" in settings.dict() and "apiKey" in settings.groq:
         api_key = settings.groq["apiKey"]
-        os.environ["GROQ_API_KEY"] = api_key
+        if api_key.strip():
+            os.environ["GROQ_API_KEY"] = api_key
+        else:
+            # Remove from environment if empty
+            os.environ.pop("GROQ_API_KEY", None)
         update_env_file("GROQ_API_KEY", api_key)
-        print(f"Updated GROQ_API_KEY in environment: {bool(api_key)}")
+        print(f"Updated GROQ_API_KEY in environment: {bool(api_key.strip())}")
     
     if "huggingface" in settings.dict() and "token" in settings.huggingface:
         token = settings.huggingface["token"]
-        os.environ["HUGGINGFACE_TOKEN"] = token
+        if token.strip():
+            os.environ["HUGGINGFACE_TOKEN"] = token
+        else:
+            # Remove from environment if empty
+            os.environ.pop("HUGGINGFACE_TOKEN", None)
         update_env_file("HUGGINGFACE_TOKEN", token)
-        print(f"Updated HUGGINGFACE_TOKEN in environment: {bool(token)}")
+        print(f"Updated HUGGINGFACE_TOKEN in environment: {bool(token.strip())}")
+    
+    if "ollama" in settings.dict() and "apiKey" in settings.ollama:
+        api_key = settings.ollama["apiKey"]
+        if api_key.strip():
+            os.environ["OLLAMA_API_KEY"] = api_key
+        else:
+            # Remove from environment if empty
+            os.environ.pop("OLLAMA_API_KEY", None)
+        update_env_file("OLLAMA_API_KEY", api_key)
+        print(f"Updated OLLAMA_API_KEY in environment: {bool(api_key.strip())}")
     
     # Reload environment variables from .env file to ensure all services pick up changes
     reload_env_file()
@@ -227,18 +271,29 @@ def save_settings(settings: SettingsIn):
     if "huggingface" in cfg:
         hf_token = cfg["huggingface"].get("token", "") or os.getenv("HUGGINGFACE_TOKEN", "")
         cfg["huggingface"]["connected"] = bool(hf_token.strip())
+    
+    if "ollama" in cfg:
+        ollama_api_key = cfg["ollama"].get("apiKey", "") or os.getenv("OLLAMA_API_KEY", "")
+        cfg["ollama"]["apiConnected"] = bool(ollama_api_key.strip())
 
     # Normalize lmstudio/ollama/vllm shapes
-    for key in ["lmstudio", "ollama", "vllm"]:
+    for key in ["lmstudio", "vllm"]:
         if key not in cfg:
             cfg[key] = {}
         default_urls = {
             "lmstudio": "http://localhost:1234",
-            "ollama": "http://localhost:11434", 
             "vllm": "http://localhost:8000"
         }
         cfg[key]["baseUrl"] = cfg[key].get("baseUrl") or default_urls[key]
         cfg[key]["connected"] = bool(cfg[key].get("connected", False))
+    
+    # Special handling for ollama
+    if "ollama" not in cfg:
+        cfg["ollama"] = {}
+    cfg["ollama"]["baseUrl"] = cfg["ollama"].get("baseUrl") or "http://localhost:11434"
+    cfg["ollama"]["connected"] = bool(cfg["ollama"].get("connected", False))
+    cfg["ollama"]["apiKey"] = cfg["ollama"].get("apiKey", "")
+    cfg["ollama"]["apiConnected"] = bool(cfg["ollama"].get("apiConnected", False))
     
     # Ensure directories exist
     paths = cfg.get("paths", {})
@@ -319,7 +374,7 @@ def test_lmstudio_connection(request: dict):
 
 @router.post("/ollama/test")
 def test_ollama_connection(request: dict):
-    """Test Ollama server by listing tags"""
+    """Test Ollama local server by listing tags"""
     base_url = (request or {}).get("baseUrl") or load_config().get("ollama", {}).get("baseUrl", "http://localhost:11434")
     try:
         r = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=10)
@@ -341,6 +396,76 @@ def test_ollama_connection(request: dict):
         cfg["ollama"]["baseUrl"] = base_url
         cfg["ollama"]["connected"] = False
         save_config(cfg)
+        return {"connected": False, "error": str(e)}
+
+@router.post("/ollama/api/test")
+def test_ollama_api_connection(request: dict):
+    """Test Ollama API connection (for cloud-hosted Ollama instances)"""
+    api_key = request.get("apiKey", "")
+    
+    if not api_key:
+        return {"connected": False, "error": "No API key provided"}
+    
+    # For cloud API, always use https://ollama.com
+    cloud_base_url = "https://ollama.com"
+    
+    try:
+        # Test with Ollama cloud API using the provided API key
+        headers = {"Authorization": f"Bearer {api_key}"}
+        
+        # Test the connection by listing models from cloud API
+        test_url = f"{cloud_base_url}/api/tags"
+        response = requests.get(test_url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            # Update the connection status in config
+            cfg = load_config()
+            if "ollama" not in cfg:
+                cfg["ollama"] = {}
+            cfg["ollama"]["apiKey"] = api_key
+            cfg["ollama"]["baseUrl"] = cloud_base_url
+            cfg["ollama"]["apiConnected"] = True
+            save_config(cfg)
+            
+            # Parse response to get model count
+            try:
+                data = response.json() or {}
+                models_count = len(data.get("models", []))
+                return {"connected": True, "models_count": models_count, "endpoint": test_url}
+            except:
+                return {"connected": True, "models_count": 0, "endpoint": test_url}
+                
+        elif response.status_code == 401:
+            # Update the connection status in config to reflect failure
+            cfg = load_config()
+            if "ollama" not in cfg:
+                cfg["ollama"] = {}
+            cfg["ollama"]["apiKey"] = api_key
+            cfg["ollama"]["baseUrl"] = cloud_base_url
+            cfg["ollama"]["apiConnected"] = False
+            save_config(cfg)
+            return {"connected": False, "error": "Invalid API key"}
+        else:
+            # Update the connection status in config to reflect failure
+            cfg = load_config()
+            if "ollama" not in cfg:
+                cfg["ollama"] = {}
+            cfg["ollama"]["apiKey"] = api_key
+            cfg["ollama"]["baseUrl"] = cloud_base_url
+            cfg["ollama"]["apiConnected"] = False
+            save_config(cfg)
+            return {"connected": False, "error": f"API endpoint returned status {response.status_code}"}
+            
+    except Exception as e:
+        # Update the connection status in config
+        cfg = load_config()
+        if "ollama" not in cfg:
+            cfg["ollama"] = {}
+        cfg["ollama"]["apiKey"] = api_key
+        cfg["ollama"]["baseUrl"] = cloud_base_url
+        cfg["ollama"]["apiConnected"] = False
+        save_config(cfg)
+        
         return {"connected": False, "error": str(e)}
 
 @router.post("/vllm/test")

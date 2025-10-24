@@ -34,7 +34,7 @@ def list_groq_models() -> List[Dict]:
             out.append({
                 "id": f"groq:{mid}",
                 "label": f"Groq • {mid}",
-                "tags": ["groq"],
+                "tags": ["groq", "cloud"],  # Groq always requires API key, so always cloud
                 "raw": m
             })
         return out
@@ -79,7 +79,14 @@ def chat_complete(model_id: str, messages, **params) -> str:
         
         # Analytics recording is handled centrally in llm.py router
         
-        return j["choices"][0]["message"]["content"]
+        message = j["choices"][0]["message"]
+        content = message.get("content", "")
+        
+        # Handle Groq models that return content in reasoning field instead of content field
+        if not content and "reasoning" in message:
+            content = message.get("reasoning", "")
+        
+        return content
         
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)

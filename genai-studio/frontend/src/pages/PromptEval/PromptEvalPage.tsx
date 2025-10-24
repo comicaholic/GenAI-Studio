@@ -30,6 +30,7 @@ import AutomationProgressIndicator from '@/components/AutomationProgress/Automat
 import AutomationProgressModal from '@/components/AutomationProgress/AutomationProgressModal';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import LoadingButton from '@/components/ui/LoadingButton';
+import TextDisplay from '@/components/TextDisplay/TextDisplay';
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.7, max_tokens: 1000, top_p: 1.0, top_k: 40 };
 
@@ -39,7 +40,7 @@ export default function PromptEvalPage() {
   const [rightOpen, setRightOpen] = useState(true);
 
   // Main state
-  const { selected } = useModel();
+  const { selected, setSelected } = useModel();
   const [draft, setDraft] = useState(promptEvalStore.getDraft());
   const [runHistory, setRunHistory] = useState(promptEvalStore.getRunHistory());
   const [currentRun, setCurrentRun] = useState<RunResult | null>(null);
@@ -62,6 +63,10 @@ export default function PromptEvalPage() {
   const [promptChoices, setPromptChoices] = useState<string[]>([]);
   const [referenceChoices, setReferenceChoices] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<"form" | "side-by-side" | "compare-two">("form");
+  const [compareSelection, setCompareSelection] = useState<{
+    first: "prompt" | "llm" | "reference";
+    second: "prompt" | "llm" | "reference";
+  }>({ first: "prompt", second: "reference" });
 
   // Evaluation results
   const [scores, setScores] = useState<Record<string, any> | null>(null);
@@ -71,6 +76,8 @@ export default function PromptEvalPage() {
   const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
   const [isAutomationProgressModalOpen, setIsAutomationProgressModalOpen] = useState(false);
   const [automationResults, setAutomationResults] = useState<Record<string, any>>({});
+  const [loadedAutomationSet, setLoadedAutomationSet] = useState<any>(null);
+  const [loadedAutomationName, setLoadedAutomationName] = useState<string>("");
   
   // Prompt enlarge modal state
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
@@ -78,25 +85,68 @@ export default function PromptEvalPage() {
 
   // Allow loading an evaluation from navigation state (HomePage "Load")
   useEffect(() => {
+    console.log("PromptEval Page - useEffect triggered");
+    console.log("PromptEval Page - location.state:", location.state);
+    
     const loadEvaluationData = async () => {
       const state: any = location.state;
+      console.log("PromptEval Page - Processing state:", state);
+      
       const evalToLoad = state?.loadEvaluation;
       const automationToLoad = state?.loadAutomation;
       const autoLoadFiles = state?.autoLoadFiles;
       const autoLoadPreset = state?.autoLoadPreset;
       const autoRun = state?.autoRun;
+      const showFeedback = state?.showFeedback;
+      const openAutomationModal = state?.openAutomationModal;
+      
+      console.log("PromptEval Page - evalToLoad:", evalToLoad);
+      console.log("PromptEval Page - automationToLoad:", automationToLoad);
+      console.log("PromptEval Page - autoLoadFiles:", autoLoadFiles);
+      console.log("PromptEval Page - autoLoadPreset:", autoLoadPreset);
       
       if (evalToLoad?.type === 'prompt') {
         try {
-          const used = evalToLoad.usedText || {};
-          setDraft((d) => ({ ...d, prompt: used.promptText ?? d.prompt, context: used.context ?? d.context }));
-          setReference(used.referenceText ?? "");
+          console.log("PromptEval Page - Loading evaluation:", evalToLoad);
+          console.log("PromptEval Page - evalToLoad.usedText:", evalToLoad.usedText);
+          console.log("PromptEval Page - evalToLoad.parameters:", evalToLoad.parameters);
+          console.log("PromptEval Page - evalToLoad.metrics:", evalToLoad.metrics);
+          console.log("PromptEval Page - evalToLoad.metricsState:", evalToLoad.metricsState);
           
-          if (evalToLoad.results && typeof evalToLoad.results === 'object') {
-            setScores(evalToLoad.results as any);
+          // IMMEDIATE DATA LOADING (fast, synchronous)
+          const used = evalToLoad.usedText || {};
+          console.log("PromptEval Page - used object:", used);
+          
+          // 0. Set model immediately
+          if (evalToLoad.model) {
+            setSelected({
+              id: evalToLoad.model.id,
+              label: evalToLoad.model.id, // Use id as label if no label provided
+              provider: evalToLoad.model.provider as any,
+            });
+            console.log("PromptEval Page - Set model:", evalToLoad.model);
+          } else {
+            console.log("PromptEval Page - No model found in evaluation");
           }
           
-          // Load parameters from evaluation
+          // 1. Set prompt text immediately
+          if (used.promptText) {
+            setDraft((d) => ({ ...d, prompt: used.promptText }));
+            setPromptText(used.promptText);
+            console.log("PromptEval Page - Set prompt text:", used.promptText);
+          } else {
+            console.log("PromptEval Page - No prompt text found in usedText");
+          }
+          
+          // 2. Set reference text immediately
+          if (used.referenceText) {
+            setReference(used.referenceText);
+            console.log("PromptEval Page - Set reference text:", used.referenceText);
+          } else {
+            console.log("PromptEval Page - No reference text found in usedText");
+          }
+          
+          // 3. Set parameters immediately
           if (evalToLoad.parameters) {
             setParams(prev => ({
               ...prev,
@@ -105,38 +155,56 @@ export default function PromptEvalPage() {
               top_p: evalToLoad.parameters?.top_p ?? prev.top_p,
               top_k: evalToLoad.parameters?.top_k ?? prev.top_k,
             }));
+            console.log("PromptEval Page - Set parameters:", evalToLoad.parameters);
+          } else {
+            console.log("PromptEval Page - No parameters found in evaluation");
           }
           
-        // Load metrics from evaluation
-        if ((evalToLoad as any).metricsState) {
-          // Use the saved metricsState if available
-          setMetricsState((evalToLoad as any).metricsState);
-        } else if (evalToLoad.metrics && Array.isArray(evalToLoad.metrics)) {
-          // Fallback to reconstructing from metrics array
-          const metricsConfig: MetricState = {
-            rouge: evalToLoad.metrics.includes('rouge'),
-            bleu: evalToLoad.metrics.includes('bleu'),
-            f1: evalToLoad.metrics.includes('f1'),
-            em: evalToLoad.metrics.includes('em'),
-            em_avg: evalToLoad.metrics.includes('em_avg'),
-            bertscore: evalToLoad.metrics.includes('bertscore'),
-            perplexity: evalToLoad.metrics.includes('perplexity'),
-            accuracy: evalToLoad.metrics.includes('accuracy'),
-            accuracy_avg: evalToLoad.metrics.includes('accuracy_avg'),
-            precision: evalToLoad.metrics.includes('precision'),
-            precision_avg: evalToLoad.metrics.includes('precision_avg'),
-            recall: evalToLoad.metrics.includes('recall'),
-            recall_avg: evalToLoad.metrics.includes('recall_avg'),
-          };
-          setMetricsState(metricsConfig);
-        }
+          // 4. Set metrics immediately
+          if ((evalToLoad as any).metricsState) {
+            setMetricsState((evalToLoad as any).metricsState);
+            console.log("PromptEval Page - Set metrics from state:", (evalToLoad as any).metricsState);
+          } else if (evalToLoad.metrics && Array.isArray(evalToLoad.metrics)) {
+            const metricsConfig: MetricState = {
+              rouge: evalToLoad.metrics.includes('rouge'),
+              bleu: evalToLoad.metrics.includes('bleu'),
+              f1: evalToLoad.metrics.includes('f1'),
+              em: evalToLoad.metrics.includes('em'),
+              em_avg: evalToLoad.metrics.includes('em_avg'),
+              bertscore: evalToLoad.metrics.includes('bertscore'),
+              perplexity: evalToLoad.metrics.includes('perplexity'),
+              accuracy: evalToLoad.metrics.includes('accuracy'),
+              accuracy_avg: evalToLoad.metrics.includes('accuracy_avg'),
+              precision: evalToLoad.metrics.includes('precision'),
+              precision_avg: evalToLoad.metrics.includes('precision_avg'),
+              recall: evalToLoad.metrics.includes('recall'),
+              recall_avg: evalToLoad.metrics.includes('recall_avg'),
+            };
+            setMetricsState(metricsConfig);
+            console.log("PromptEval Page - Set metrics from array:", metricsConfig);
+          } else {
+            console.log("PromptEval Page - No metrics found in evaluation");
+          }
           
-          // Load preset data if available
+          // 5. Set results if available
+          if (evalToLoad.results && typeof evalToLoad.results === 'object') {
+            setScores(evalToLoad.results as any);
+            console.log("PromptEval Page - Set scores:", evalToLoad.results);
+          }
+          
+          // 6. Load preset data (override previous settings if preset exists)
           if (autoLoadPreset && evalToLoad.loadedPreset) {
             const preset = evalToLoad.loadedPreset;
-            setDraft((d) => ({ ...d, prompt: preset.body || d.prompt }));
+            console.log("PromptEval Page - Loading preset:", preset);
             
-            // Apply parameters if they exist
+            // Override prompt with preset if preset has content
+            if (preset.body) {
+              setDraft((d) => ({ ...d, prompt: preset.body }));
+              setPromptText(preset.body);
+              console.log("PromptEval Page - Override prompt with preset:", preset.body);
+            }
+            
+            // Override parameters with preset if preset has parameters
             if (preset.parameters) {
               setParams(prev => ({
                 ...prev,
@@ -145,60 +213,118 @@ export default function PromptEvalPage() {
                 top_p: preset.parameters?.top_p ?? prev.top_p,
                 top_k: preset.parameters?.top_k ?? prev.top_k,
               }));
+              console.log("PromptEval Page - Override parameters with preset:", preset.parameters);
             }
             
-            // Apply metrics if they exist
+            // Override metrics with preset if preset has metrics
             if (preset.metrics) {
               setMetricsState(prev => ({
                 ...prev,
                 ...preset.metrics
               }));
+              console.log("PromptEval Page - Override metrics with preset:", preset.metrics);
             }
           }
           
-          // Load files if autoLoadFiles is enabled and files are available
-          if (autoLoadFiles && evalToLoad.loadedFiles) {
-            const files = evalToLoad.loadedFiles;
+          // FILE LOADING (synchronous, but after immediate data)
+          if (autoLoadFiles) {
+            console.log("PromptEval Page - Starting file loading...");
             
-            // Process prompt files
-            const promptFiles = files.filter(f => f.type === 'prompt');
-            if (promptFiles.length > 0) {
-              const promptFile = promptFiles[0];
-              if (promptFile.file) {
-                await onPromptUpload(promptFile.file);
+            try {
+              if (evalToLoad.loadedFiles) {
+                console.log("PromptEval Page - Loading files from loadedFiles:", evalToLoad.loadedFiles);
+                const files = evalToLoad.loadedFiles;
+                
+                // Process prompt files
+                const promptFiles = files.filter((f: any) => f.type === 'prompt');
+                if (promptFiles.length > 0) {
+                  const promptFile = promptFiles[0];
+                  if (promptFile.file) {
+                    setPromptFileName(promptFile.fileName);
+                    setPromptChoices(prev => {
+                      if (!prev.includes(promptFile.fileName)) {
+                        return [...prev, promptFile.fileName];
+                      }
+                      return prev;
+                    });
+                    console.log("PromptEval Page - Set prompt file:", promptFile.fileName);
+                  }
+                }
+                
+                // Process reference files
+                const referenceFiles = files.filter((f: any) => f.type === 'reference');
+                if (referenceFiles.length > 0) {
+                  const refFile = referenceFiles[0];
+                  if (refFile.data) {
+                    setRefFileName(refFile.fileName);
+                    setReference(refFile.data.text);
+                    setReferenceChoices(prev => {
+                      if (!prev.includes(refFile.fileName)) {
+                        return [...prev, refFile.fileName];
+                      }
+                      return prev;
+                    });
+                    console.log("PromptEval Page - Set reference file:", refFile.fileName);
+                  }
+                }
+              } else {
+                // Fallback file loading
+                console.log("PromptEval Page - Fallback file loading...");
+                const promptName = evalToLoad.files?.promptFileName;
+                const refName = evalToLoad.files?.referenceFileName;
+                
+                if (promptName) {
+                  setPromptFileName(promptName);
+                  setPromptChoices(prev => {
+                    if (!prev.includes(promptName)) {
+                      return [...prev, promptName];
+                    }
+                    return prev;
+                  });
+                  console.log("PromptEval Page - Set prompt file (fallback):", promptName);
+                }
+                
+                if (refName) {
+                  try {
+                    const data = await loadReferenceByName(refName);
+                    setRefFileName(data.filename);
+                    setReference(data.text);
+                    setReferenceChoices(prev => {
+                      if (!prev.includes(data.filename)) {
+                        return [...prev, data.filename];
+                      }
+                      return prev;
+                    });
+                    console.log("PromptEval Page - Set reference file (fallback):", data.filename);
+                  } catch (error) {
+                    console.warn(`Failed to load reference file ${refName}:`, error);
+                  }
+                }
               }
+            } catch (error) {
+              console.error("Error loading files:", error);
+            }
+          }
+          
+          // Show user feedback for missing items
+          if (showFeedback) {
+            const feedbackMessages: string[] = [];
+            
+            // Check for missing model
+            if (evalToLoad.missingModel) {
+              feedbackMessages.push(`Model "${evalToLoad.missingModel.id}" is not available. Using fallback model.`);
             }
             
-            // Process reference files
-            const referenceFiles = files.filter(f => f.type === 'reference');
-            if (referenceFiles.length > 0) {
-              const refFile = referenceFiles[0];
-              if (refFile.data) {
-                setRefFileName(refFile.fileName);
-                setReference(refFile.data.text);
-              }
+            // Check for missing files
+            if (evalToLoad.missingFiles && evalToLoad.missingFiles.length > 0) {
+              feedbackMessages.push(`Missing files: ${evalToLoad.missingFiles.join(', ')}`);
             }
-          } else {
-            // Fallback to original file loading logic
-            const promptName: string | undefined = evalToLoad.files?.promptFileName;
-            const refName: string | undefined = evalToLoad.files?.referenceFileName;
-            if (promptName) {
-              try {
-                const res = await api.get(`/files/load`, { params: { kind: 'source', name: promptName }, responseType: 'blob' });
-                const file = new File([res.data], promptName);
-                await onPromptUpload(file);
-              } catch (error) {
-                console.warn(`Failed to load prompt file ${promptName}:`, error);
-              }
-            }
-            if (refName) {
-              try {
-                const data = await loadReferenceByName(refName);
-                setRefFileName(data.filename);
-                setReference(data.text);
-              } catch (error) {
-                console.warn(`Failed to load reference file ${refName}:`, error);
-              }
+            
+            // Show consolidated feedback
+            if (feedbackMessages.length > 0) {
+              showError("Evaluation Loaded with Issues", feedbackMessages.join('\n'));
+            } else {
+              showSuccess("Evaluation Loaded", "All files and settings have been restored successfully.");
             }
           }
           
@@ -216,15 +342,86 @@ export default function PromptEvalPage() {
         }
       } else if (automationToLoad?.type === 'prompt') {
         try {
-          // Load automation data
-          const firstRun = automationToLoad.runs?.[0];
+          console.log("PromptEval Page - Loading automation:", automationToLoad);
+          console.log("PromptEval Page - automationToLoad.automations:", automationToLoad.automations);
+          console.log("PromptEval Page - automationToLoad.name:", automationToLoad.name);
+          
+          // Handle both single automation and automation set
+          let automation = automationToLoad;
+          let firstRun = null;
+          
+          // If it's an automation set, get the first automation
+          if (automationToLoad.automations && Array.isArray(automationToLoad.automations)) {
+            automation = automationToLoad.automations[0];
+            firstRun = automation?.runs?.[0];
+            console.log("PromptEval Page - Using first automation from set:", automation);
+            console.log("PromptEval Page - First run:", firstRun);
+          } else if (automationToLoad.runs && Array.isArray(automationToLoad.runs)) {
+            // It's a single automation
+            firstRun = automationToLoad.runs[0];
+            console.log("PromptEval Page - Using single automation:", automation);
+            console.log("PromptEval Page - First run:", firstRun);
+          }
+          
           if (firstRun) {
+            // Set model from automation
+            if (automation.model) {
+              setSelected({
+                id: automation.model.id,
+                label: automation.model.id, // Use id as label if no label provided
+                provider: automation.model.provider as any,
+              });
+              console.log("PromptEval Page - Set model from automation:", automation.model);
+            }
+            
             setDraft((d) => ({ 
               ...d, 
               prompt: firstRun.prompt ?? d.prompt, 
               context: d.context 
             }));
             setReference("");
+            
+            // Load automation parameters from the automation object
+            if (automation.parameters) {
+              setParams(prev => ({
+                ...prev,
+                temperature: automation.parameters.temperature ?? prev.temperature,
+                max_tokens: automation.parameters.max_tokens ?? prev.max_tokens,
+                top_p: automation.parameters.top_p ?? prev.top_p,
+                top_k: automation.parameters.top_k ?? prev.top_k,
+              }));
+            }
+            
+            // Load automation metrics from the first run
+            if (firstRun.metrics) {
+              if (Array.isArray(firstRun.metrics)) {
+                // If it's an array of metric names
+                const metricsState: MetricState = {
+                  rouge: false,
+                  bleu: false,
+                  f1: false,
+                  em: false,
+                  em_avg: false,
+                  bertscore: false,
+                  perplexity: false,
+                  accuracy: false,
+                  accuracy_avg: false,
+                  precision: false,
+                  precision_avg: false,
+                  recall: false,
+                  recall_avg: false,
+                };
+                firstRun.metrics.forEach((metric: string) => {
+                  if (metric in metricsState) {
+                    (metricsState as any)[metric] = true;
+                  }
+                });
+                setMetricsState(metricsState);
+              } else if (typeof firstRun.metrics === 'object') {
+                // If it's already a metrics state object
+                setMetricsState(firstRun.metrics as MetricState);
+              }
+            }
             
             // Load files from the first run
             if (firstRun.promptFileName) {
@@ -246,23 +443,64 @@ export default function PromptEvalPage() {
               }
             }
           }
-        } catch {}
+        } catch (error) {
+          console.error("Failed to load automation:", error);
+        }
+        
+        // Store automation set data for the modal
+        if (openAutomationModal) {
+          console.log("PromptEval Page - Opening automation modal with data:", automationToLoad);
+          console.log("PromptEval Page - Setting loadedAutomationSet:", automationToLoad);
+          console.log("PromptEval Page - Setting loadedAutomationName:", automationToLoad.name || "Loaded Automation");
+          
+          setLoadedAutomationSet(automationToLoad);
+          setLoadedAutomationName(automationToLoad.name || "Loaded Automation");
+          setIsAutomationModalOpen(true);
+          
+          console.log("PromptEval Page - Automation modal should now be open");
+        }
       }
     };
     
     loadEvaluationData();
-    // run once on mount
+    // run when location.state changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location.state]);
 
   const { showError, showSuccess } = useNotifications();
   const { addOperation, updateOperation } = useBackgroundState();
 
-  // Load initial state (store draft)
+  // Load initial state (store draft) - only clear if this is a fresh page load
   useEffect(() => {
-    const storedDraft = promptEvalStore.getDraft();
-    setDraft(storedDraft);
-  }, []);
+    const state: any = location.state;
+    const evalToLoad = state?.loadEvaluation;
+    const automationToLoad = state?.loadAutomation;
+    
+    // Only load stored draft if we're not loading from navigation state
+    if (!evalToLoad && !automationToLoad) {
+      // Check if this is truly a fresh load (no existing data in store)
+      const storedDraft = promptEvalStore.getDraft();
+      const hasExistingData = storedDraft.prompt || storedDraft.context || storedDraft.selectedModelId;
+      
+      if (hasExistingData) {
+        // Load existing data from store
+        setDraft(storedDraft);
+        setPromptText(storedDraft.prompt || "");
+        setReference(storedDraft.context || "");
+      } else {
+        // No existing data, start with clean state
+        setDraft(storedDraft);
+        setPromptText("");
+        setReference("");
+        setPromptFileName("");
+        setRefFileName("");
+        setLlmOutput("");
+        setScores(null);
+        setCurrentRun(null);
+        setError(null);
+      }
+    }
+  }, [location.state]);
 
   // Load file choices (safe)
   useEffect(() => {
@@ -299,6 +537,15 @@ export default function PromptEvalPage() {
 
   // File upload handlers
   const onPromptUpload = async (file: File) => {
+    // Validate file type for prompt uploads
+    const allowedExtensions = ['.txt', '.md'];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+    
+    if (!allowedExtensions.includes(fileExtension)) {
+      showError("Invalid File Type", "Prompt files must be .txt or .md files only.");
+      return;
+    }
+    
     setLoadingType('prompt');
     try {
       const text = await file.text();
@@ -325,6 +572,26 @@ export default function PromptEvalPage() {
     }
   };
 
+  // Process template variables in prompt
+  const processTemplateVariables = useCallback((prompt: string, context: string, resources: any[]) => {
+    let processedPrompt = prompt;
+    
+    // Replace {context} with actual context
+    if (processedPrompt.includes('{context}')) {
+      processedPrompt = processedPrompt.replace(/\{context\}/g, context || '');
+    }
+    
+    // Replace {resources} with formatted resources
+    if (processedPrompt.includes('{resources}')) {
+      const resourcesText = resources.length > 0 
+        ? resources.map(r => `- ${r.name} (${r.mime})`).join('\n')
+        : 'No resources attached';
+      processedPrompt = processedPrompt.replace(/\{resources\}/g, resourcesText);
+    }
+    
+    return processedPrompt;
+  }, []);
+
   // Handle run
   const handleRun = useCallback(async () => {
     if (!selected) {
@@ -344,6 +611,9 @@ export default function PromptEvalPage() {
     const runId = crypto.randomUUID?.() ?? (Date.now().toString() + Math.random().toString());
     const startTime = Date.now();
     const resources = resourceStore.getByIds(draft.resourceIds || []);
+    
+    // Process template variables in the prompt
+    const processedPrompt = processTemplateVariables(draft.prompt, draft.context || '', resources);
 
     const runResult: RunResult = {
       id: runId,
@@ -352,7 +622,7 @@ export default function PromptEvalPage() {
       output: '',
       modelId: selected.id,
       resources,
-      prompt: draft.prompt,
+      prompt: processedPrompt, // Use processed prompt
       context: draft.context,
       parameters: draft.parameters || params,
     };
@@ -366,7 +636,7 @@ export default function PromptEvalPage() {
       // callLLM is an async iterable (stream); iterate chunks
       for await (const chunk of callLLM({
         modelId: selected.id,
-        prompt: draft.prompt,
+        prompt: processedPrompt, // Use processed prompt
         context: draft.context,
         resources,
         parameters: draft.parameters,
@@ -411,7 +681,7 @@ export default function PromptEvalPage() {
       setIsRunning(false);
       setLoadingType(null);
     }
-  }, [selected, draft, params]);
+  }, [selected, draft, params, processTemplateVariables]);
 
   // Handle evaluation
   const onEvaluate = useCallback(async () => {
@@ -494,6 +764,35 @@ export default function PromptEvalPage() {
         endTime: Date.now()
       });
       showError("Metric Computation Failed", "Metric computation failed: " + (e?.response?.data?.detail ?? e?.message ?? String(e)));
+      
+      // Save failed evaluation to history
+      try {
+        const evaluation = {
+          id: crypto.randomUUID?.() ?? (Date.now().toString() + Math.random().toString()),
+          type: 'prompt' as const,
+          title: `Prompt Evaluation (Failed) - ${new Date().toLocaleDateString('en-GB')}`,
+          model: { id: selected.id, provider: selected.provider },
+          parameters: params,
+          metrics: selectedMetrics,
+          metricsState: metricsState,
+          usedText: {
+            promptText: draft.prompt,
+            context: draft.context,
+            referenceText: reference
+          },
+          files: {
+            promptFileName,
+            referenceFileName: refFileName
+          },
+          results: {}, // Empty results for failed evaluations
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          error: e?.response?.data?.detail ?? e?.message ?? String(e) // Store error message
+        };
+        await historyService.saveEvaluation?.(evaluation);
+      } catch (saveError) {
+        console.warn("Failed to save failed evaluation:", saveError);
+      }
     } finally {
       setLoadingType(null);
     }
@@ -617,14 +916,17 @@ export default function PromptEvalPage() {
         // Update progress with animation
         automationStore.updateProgress(automationId, { currentRunIndex: i });
 
+        // Declare variables outside try block so they're accessible in catch block
+        let runPromptText = draft?.prompt || "";
+        let runReference = reference || "";
+        let runPromptFileName = promptFileName;
+        let runRefFileName = refFileName;
+        let runModelId = run.modelId || selected?.id;
+        let runModelProvider = run.modelProvider || selected?.provider;
+        let runSelectedMetrics: string[] = [];
+
         try {
           // Load per-run files if specified
-          let runPromptText = draft?.prompt || "";
-          let runReference = reference || "";
-          let runPromptFileName = promptFileName;
-          let runRefFileName = refFileName;
-
-          // Load prompt file for this run if specified
           if (run.promptFileName && run.promptFileName !== promptFileName) {
             try {
               const data = await loadReferenceByName(run.promptFileName);
@@ -674,8 +976,8 @@ export default function PromptEvalPage() {
           }
 
           // Use per-run model if specified, otherwise use current selected model
-          const runModelId = run.modelId || selected?.id;
-          const runModelProvider = run.modelProvider || selected?.provider;
+          runModelId = run.modelId || selected?.id;
+          runModelProvider = run.modelProvider || selected?.provider;
           
           if (!runModelId) {
             results[run.id] = {
@@ -690,10 +992,13 @@ export default function PromptEvalPage() {
           const resources = resourceStore.getByIds(draft.resourceIds || []);
           let output = '';
           
+          // Process template variables for this run
+          const processedRunPrompt = processTemplateVariables(runPromptText, draft.context || '', resources);
+          
           // Use the same streaming approach as the regular run
           for await (const chunk of callLLM({
             modelId: runModelId,
-            prompt: runPromptText,
+            prompt: processedRunPrompt,
             context: draft.context,
             resources,
             parameters: run.parameters as any,
@@ -702,7 +1007,7 @@ export default function PromptEvalPage() {
           }
 
           // Compute metrics - only compute selected metrics
-          const runSelectedMetrics: string[] = [];
+          runSelectedMetrics = [];
           if (run.metrics.rouge) runSelectedMetrics.push("rouge");
           if (run.metrics.bleu) runSelectedMetrics.push("bleu");
           if (run.metrics.f1) runSelectedMetrics.push("f1");
@@ -745,7 +1050,7 @@ export default function PromptEvalPage() {
               id: crypto.randomUUID(),
               type: 'prompt' as const,
               title: `${config.name} - ${run.name}`,
-              model: { id: runModelId, provider: runModelProvider },
+              model: { id: runModelId || "unknown", provider: runModelProvider || "local" },
               parameters: run.parameters,
               metrics: runSelectedMetrics,
               usedText: {
@@ -774,6 +1079,36 @@ export default function PromptEvalPage() {
             runName: run.name,
             error: error?.message ?? String(error),
           };
+
+          // Save failed evaluation to history
+          try {
+            const evaluation = {
+              id: crypto.randomUUID(),
+              type: 'prompt' as const,
+              title: `${config.name} - ${run.name} (Failed)`,
+              model: { id: runModelId || "unknown", provider: runModelProvider || "local" },
+              parameters: run.parameters,
+              metrics: runSelectedMetrics,
+              usedText: {
+                promptText: runPromptText,
+                context: draft.context,
+                referenceText: runReference
+              },
+              files: {
+                promptFileName: runPromptFileName,
+                referenceFileName: runRefFileName
+              },
+              results: {}, // Empty results for failed evaluations
+              startedAt: new Date().toISOString(),
+              finishedAt: new Date().toISOString(),
+              automationId: config.id,
+              runId: run.id,
+              error: error?.message ?? String(error), // Store error message
+            };
+            await historyService.saveEvaluation?.(evaluation);
+          } catch (e) {
+            console.warn("Failed to save failed evaluation:", e);
+          }
         }
       }
 
@@ -793,6 +1128,7 @@ export default function PromptEvalPage() {
       
       // Save automation aggregate to history
       try {
+        const automationSetId = `prompt_${config.name}_${Date.now()}`;
         const automationAggregate = {
           id: config.id,
           name: config.name,
@@ -801,7 +1137,8 @@ export default function PromptEvalPage() {
           parameters: params,
           runs: config.runs.map(run => ({
             id: run.id,
-            name: run.name,
+            runId: run.id,
+            runName: run.name,
             prompt: run.prompt,
             parameters: run.parameters,
             metrics: run.metrics,
@@ -812,12 +1149,13 @@ export default function PromptEvalPage() {
             results: results[run.id]?.scores || null,
             error: results[run.id]?.error || null,
             startedAt: new Date().toISOString(),
-            completedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
             status: results[run.id]?.error ? "error" : "completed",
           })),
           status: errorCount === 0 ? "completed" : successCount === 0 ? "error" : "completed",
           createdAt: new Date().toISOString(),
           completedAt: new Date(),
+          automationSetId: automationSetId,
         };
         await api.post("/history/automations", automationAggregate);
       } catch (e) {
@@ -839,7 +1177,7 @@ export default function PromptEvalPage() {
     } finally {
       setLoadingType(null);
     }
-  }, [selected, draft, reference, promptFileName, refFileName, showError, showSuccess]);
+  }, [selected, draft, reference, promptFileName, refFileName, showError, showSuccess, processTemplateVariables]);
 
   // Handle preset apply
   const handlePresetApply = useCallback((preset: { title: string; body: string; id: string; parameters?: Preset['parameters']; metrics?: Preset['metrics'] }) => {
@@ -876,11 +1214,20 @@ export default function PromptEvalPage() {
 
   // Handle clear
   const handleClear = useCallback(() => {
-    promptEvalStore.clearDraft();
-    setDraft(promptEvalStore.getDraft());
-    setCurrentRun(null);
-    setError(null);
-  }, []);
+    if (window.confirm("Are you sure you want to clear all data? This action cannot be undone.")) {
+      promptEvalStore.clearDraft();
+      setDraft(promptEvalStore.getDraft());
+      setCurrentRun(null);
+      setError(null);
+      setPromptText("");
+      setReference("");
+      setPromptFileName("");
+      setRefFileName("");
+      setLlmOutput("");
+      setScores(null);
+      showSuccess("Data Cleared", "All data has been cleared successfully.");
+    }
+  }, [showSuccess]);
 
   // Left sidebar content
   const left = (
@@ -1021,6 +1368,43 @@ export default function PromptEvalPage() {
         resourceIds={draft.resourceIds}
         onResourceIdsChange={(ids: string[]) => updateDraft({ resourceIds: ids })}
       />
+      
+      {(draft?.prompt || draft?.context || promptText || reference || promptFileName || refFileName) && (
+        <div style={{ marginTop: 16 }}>
+          <button
+            onClick={handleClear}
+            style={{
+              width: "100%",
+              padding: "12px 16px",
+              background: "linear-gradient(135deg, #ef4444, #dc2626)",
+              border: "none",
+              color: "#ffffff",
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.15)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.boxShadow = "none";
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/>
+            </svg>
+            Clear All Data
+          </button>
+        </div>
+      )}
     </div>
   );
 
@@ -1209,8 +1593,8 @@ export default function PromptEvalPage() {
               <strong>Template Variables:</strong> Use
               <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3, marginLeft: 6 }}>{'{context}'}</code>
               and
-              <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3, marginLeft: 6 }}>{'{reference}'}</code>
-              inside your prompt to inject the current context and reference text.
+              <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3, marginLeft: 6 }}>{'{resources}'}</code>
+              inside your prompt to inject the current context and resources.
             </div>
           </div>
         </div>
@@ -1338,11 +1722,50 @@ export default function PromptEvalPage() {
             </p>
           </div>
         </div>
-        <ExpandableTextarea
+        <TextDisplay
           editable
           value={draft?.prompt ?? ""}
           onChange={(value) => updateDraft({ prompt: value })}
+          title="Prompt"
         />
+        
+        {/* Template Variable Preview */}
+        {(draft?.prompt?.includes('{context}') || draft?.prompt?.includes('{resources}')) && (
+          <div style={{ 
+            marginTop: 12,
+            padding: 12,
+            background: "#1e293b",
+            borderRadius: 8,
+            border: "1px solid #334155"
+          }}>
+            <div style={{ 
+              fontSize: 12, 
+              color: "#94a3b8", 
+              marginBottom: 8,
+              fontWeight: 600
+            }}>
+              Template Preview:
+            </div>
+            <div style={{ 
+              fontSize: 13, 
+              color: "#e2e8f0",
+              fontFamily: "monospace",
+              whiteSpace: "pre-wrap",
+              maxHeight: 150,
+              overflow: "auto",
+              padding: 8,
+              background: "#0f172a",
+              borderRadius: 4,
+              border: "1px solid #475569"
+            }}>
+              {processTemplateVariables(
+                draft?.prompt || "", 
+                draft?.context || "", 
+                resourceStore.getByIds(draft?.resourceIds || [])
+              )}
+            </div>
+          </div>
+        )}
         <div style={{ 
           fontSize: 12, 
           color: "#94a3b8", 
@@ -1355,8 +1778,8 @@ export default function PromptEvalPage() {
           <strong>Template Variables:</strong> Use
           <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3, marginLeft: 6 }}>{'{context}'}</code>
           and
-          <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3, marginLeft: 6 }}>{'{reference}'}</code>
-          inside your prompt to inject the current context and reference text.
+          <code style={{ background: "#1e293b", padding: "2px 4px", borderRadius: 3, marginLeft: 6 }}>{'{resources}'}</code>
+          inside your prompt to inject the current context and resources.
         </div>
       </section>
 
@@ -1394,9 +1817,11 @@ export default function PromptEvalPage() {
             </div>
           </div>
         </div>
-        <ExpandableTextarea
+        <TextDisplay
+          editable
           value={currentRun?.output ?? llmOutput ?? ""}
           onChange={setLlmOutput}
+          title="LLM Output"
         />
         <div>
           <button onClick={handleRun}
@@ -1471,10 +1896,11 @@ export default function PromptEvalPage() {
             </p>
           </div>
         </div>
-        <ExpandableTextarea
+        <TextDisplay
           editable
           value={reference}
           onChange={setReference}
+          title="Reference Text"
         />
       </section>
     </>
@@ -1484,7 +1910,7 @@ export default function PromptEvalPage() {
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, height: "100%", flex: 1 }}>
       <section style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
         <h3 style={{ margin: 0, color: "#e2e8f0" }}>Prompt</h3>
-        <ExpandableTextarea
+        <TextDisplay
           editable
           value={draft?.prompt ?? ""}
           onChange={(value) => updateDraft({ prompt: value })}
@@ -1493,7 +1919,8 @@ export default function PromptEvalPage() {
 
       <section style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
         <h3 style={{ margin: 0, color: "#e2e8f0" }}>LLM Output</h3>
-        <ExpandableTextarea
+        <TextDisplay
+          editable
           value={currentRun?.output ?? llmOutput ?? ""}
           onChange={setLlmOutput}
         />
@@ -1501,7 +1928,7 @@ export default function PromptEvalPage() {
 
       <section style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
         <h3 style={{ margin: 0, color: "#e2e8f0" }}>Reference Text</h3>
-        <ExpandableTextarea
+        <TextDisplay
           editable
           value={reference}
           onChange={setReference}
@@ -1510,26 +1937,128 @@ export default function PromptEvalPage() {
     </div>
   );
 
-  const renderCompareTwoView = () => (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, height: "100%", flex: 1 }}>
-      <section style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
-        <h3 style={{ margin: 0, color: "#e2e8f0" }}>LLM Output</h3>
-        <ExpandableTextarea
-          value={currentRun?.output ?? llmOutput ?? ""}
-          onChange={setLlmOutput}
-        />
-      </section>
+  const renderCompareTwoView = () => {
+    const getTextForType = (type: "prompt" | "llm" | "reference") => {
+      switch (type) {
+        case "prompt": return draft?.prompt ?? "";
+        case "llm": return currentRun?.output ?? llmOutput ?? "";
+        case "reference": return reference;
+        default: return "";
+      }
+    };
 
-      <section style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
-        <h3 style={{ margin: 0, color: "#e2e8f0" }}>Reference Text</h3>
-        <ExpandableTextarea
-          editable
-          value={reference}
-          onChange={setReference}
-        />
-      </section>
-    </div>
-  );
+    const getTitleForType = (type: "prompt" | "llm" | "reference") => {
+      switch (type) {
+        case "prompt": return "Prompt";
+        case "llm": return "LLM Output";
+        case "reference": return "Reference Text";
+        default: return "";
+      }
+    };
+
+    const isEditable = (type: "prompt" | "llm" | "reference") => {
+      return type === "prompt" || type === "llm" || type === "reference";
+    };
+
+    const handleTextChange = (type: "prompt" | "llm" | "reference", value: string) => {
+      switch (type) {
+        case "prompt": 
+          updateDraft({ prompt: value });
+          break;
+        case "llm": 
+          setLlmOutput(value);
+          break;
+        case "reference": 
+          setReference(value);
+          break;
+      }
+    };
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, height: "100%", flex: 1 }}>
+        {/* Selection Controls */}
+        <div style={{ 
+          display: "flex", 
+          gap: 16, 
+          padding: 16, 
+          background: "#1e293b", 
+          borderRadius: 8, 
+          border: "1px solid #334155" 
+        }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>First Item</label>
+            <select
+              value={compareSelection.first}
+              onChange={(e) => setCompareSelection(prev => ({ ...prev, first: e.target.value as "prompt" | "llm" | "reference" }))}
+              style={{
+                padding: "8px 12px",
+                border: "1px solid #334155",
+                borderRadius: 6,
+                background: "#0f172a",
+                color: "#e2e8f0",
+                fontSize: 14,
+                outline: "none",
+                transition: "all 0.2s ease"
+              }}
+            >
+              <option value="prompt">Prompt</option>
+              <option value="llm">LLM Output</option>
+              <option value="reference">Reference Text</option>
+            </select>
+          </div>
+          
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Second Item</label>
+            <select
+              value={compareSelection.second}
+              onChange={(e) => setCompareSelection(prev => ({ ...prev, second: e.target.value as "prompt" | "llm" | "reference" }))}
+              style={{
+                padding: "8px 12px",
+                border: "1px solid #334155",
+                borderRadius: 6,
+                background: "#0f172a",
+                color: "#e2e8f0",
+                fontSize: 14,
+                outline: "none",
+                transition: "all 0.2s ease"
+              }}
+            >
+              <option value="prompt">Prompt</option>
+              <option value="llm">LLM Output</option>
+              <option value="reference">Reference Text</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Comparison View */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, height: "100%", flex: 1 }}>
+          <section style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
+            <h3 style={{ margin: 0, color: "#e2e8f0" }}>{getTitleForType(compareSelection.first)}</h3>
+            <TextDisplay 
+              editable={isEditable(compareSelection.first)}
+              value={getTextForType(compareSelection.first)} 
+              onChange={isEditable(compareSelection.first) ? 
+                (value) => handleTextChange(compareSelection.first, value) : 
+                undefined
+              }
+            />
+          </section>
+
+          <section style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
+            <h3 style={{ margin: 0, color: "#e2e8f0" }}>{getTitleForType(compareSelection.second)}</h3>
+            <TextDisplay 
+              editable={isEditable(compareSelection.second)}
+              value={getTextForType(compareSelection.second)} 
+              onChange={isEditable(compareSelection.second) ? 
+                (value) => handleTextChange(compareSelection.second, value) : 
+                undefined
+              }
+            />
+          </section>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <LayoutShell title="Prompt Evaluation" left={left} right={right} rightWidth={400}>
@@ -1907,11 +2436,17 @@ export default function PromptEvalPage() {
       {/* Automation Modal */}
       <AutomationModal
         isOpen={isAutomationModalOpen}
-        onClose={() => setIsAutomationModalOpen(false)}
+        onClose={() => {
+          setIsAutomationModalOpen(false);
+          setLoadedAutomationSet(null);
+          setLoadedAutomationName("");
+        }}
         onStart={handleAutomationStart}
         presetStore={promptEvalPresetStore}
         defaultPrompt={draft?.prompt || ""}
         kind="prompt"
+        loadedAutomationSet={loadedAutomationSet}
+        loadedAutomationName={loadedAutomationName}
       />
       
       {/* Automation Progress Modal */}

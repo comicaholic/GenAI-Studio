@@ -172,6 +172,91 @@ class ChatIn(BaseModel):
 
 @router.post("/complete")
 def complete(body: CompleteIn):
+    if body.provider == "ollama-cloud":
+        # Handle Ollama cloud API independently (like Groq)
+        from app.services.llm.ollama_cloud_provider import OllamaCloudProvider
+        
+        # Try to get API key from environment first, then from config
+        key = os.getenv("OLLAMA_API_KEY")
+        if not key:
+            from app.services.config import load_config
+            cfg = load_config()
+            key = cfg.get("ollama", {}).get("apiKey", "")
+        
+        if not key:
+            raise HTTPException(400, "OLLAMA_API_KEY not set")
+
+        # Accept either chat-style messages or a single prompt
+        messages = body.messages
+        if not messages and body.prompt:
+            messages = [{"role": "user", "content": body.prompt}]
+        if not messages:
+            raise HTTPException(400, "messages or prompt is required")
+
+        try:
+            start_time = time.time()
+            
+            # Strip the ollama-cloud/ prefix if present
+            ollama_model_id = body.model_id
+            if ollama_model_id.startswith("ollama-cloud/"):
+                ollama_model_id = ollama_model_id.split("/", 1)[1]
+            
+            headers = {"Authorization": f"Bearer {key}"}
+            
+            # Try chat API first, fallback to generate API
+            try:
+                r = requests.post(
+                    "https://ollama.com/api/chat",
+                    headers=headers,
+                    json={
+                        "model": ollama_model_id,
+                        "messages": messages,
+                        "stream": False,
+                        "options": {
+                            "temperature": body.temperature or 0.2,
+                            "top_p": body.top_p or 1.0,
+                            "num_predict": body.max_tokens or 1024,
+                        },
+                    },
+                    timeout=120,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = (data.get("message") or {}).get("content", "")
+            except Exception:
+                # Fallback to generate API
+                prompt_text = "\n".join([m.get("content", "") for m in messages or []])
+                r = requests.post(
+                    "https://ollama.com/api/generate",
+                    headers=headers,
+                    json={
+                        "model": ollama_model_id,
+                        "prompt": prompt_text,
+                        "stream": False,
+                        "options": {
+                            "temperature": body.temperature or 0.2,
+                            "top_p": body.top_p or 1.0,
+                            "num_predict": body.max_tokens or 1024,
+                        },
+                    },
+                    timeout=120,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = data.get("response", "")
+            
+            # Record usage for analytics (using Groq's function for now)
+            duration_ms = int((time.time() - start_time) * 1000)
+            tokens_estimated = estimate_tokens(text)
+            record_groq_usage(body.model_id, tokens_estimated, 0.0, duration_ms, True)
+            
+            return {"output": text, "raw": data}
+        except Exception as e:
+            # Record failed request
+            duration_ms = int((time.time() - start_time) * 1000)
+            record_groq_usage(body.model_id, 0, 0.0, duration_ms, False)
+            raise HTTPException(502, f"Ollama cloud completion failed: {e}")
+
     # Route to local servers (LM Studio, Ollama, or vLLM) if model_id is prefixed
     if body.provider == "local" and (body.model_id.startswith("lmstudio/") or body.model_id.startswith("ollama/") or body.model_id.startswith("vllm/")):
         from app.services.config import load_config
@@ -213,7 +298,23 @@ def complete(body: CompleteIn):
                 record_groq_usage(model_name, tokens_estimated, 0.0, duration_ms, True)
                 return {"output": text, "raw": data}
             elif is_ol:
-                base = (cfg.get("ollama", {}).get("baseUrl") or "http://localhost:11434").rstrip('/')
+                ol_cfg = cfg.get("ollama", {})
+                
+                # Determine if this is a cloud model by checking if API key is available
+                # If API key is available, use cloud API; otherwise use local server
+                if ol_cfg.get("apiKey") and ol_cfg.get("apiConnected"):
+                    # Use Ollama cloud API
+                    base = "https://ollama.com"
+                else:
+                    # Use local Ollama server
+                    base = (ol_cfg.get("baseUrl") or "http://localhost:11434").rstrip('/')
+                
+                # Determine if this is a cloud model by checking if API key is needed
+                # We'll try with API key first if available, then fallback to no auth
+                headers = {}
+                if ol_cfg.get("apiKey"):
+                    headers["Authorization"] = f"Bearer {ol_cfg['apiKey']}"
+                
                 # Convert chat messages into single prompt (Ollama supports /api/chat too, but keep simple)
                 try:
                     chat_r = requests.post(
@@ -228,6 +329,7 @@ def complete(body: CompleteIn):
                                 "num_predict": body.max_tokens or 1024,
                             },
                         },
+                        headers=headers,
                         timeout=120,
                     )
                     chat_r.raise_for_status()
@@ -248,6 +350,7 @@ def complete(body: CompleteIn):
                                 "num_predict": body.max_tokens or 1024,
                             },
                         },
+                        headers=headers,
                         timeout=120,
                     )
                     gen_r.raise_for_status()
@@ -358,7 +461,12 @@ def complete(body: CompleteIn):
             )
             r.raise_for_status()
             data = r.json()
-            text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+            message = (data.get("choices") or [{}])[0].get("message", {})
+            text = message.get("content", "")
+            
+            # Handle Groq models that return content in reasoning field instead of content field
+            if not text and "reasoning" in message:
+                text = message.get("reasoning", "")
             
             # Check if the response looks like truncated JSON and attempt to fix it
             text = fix_truncated_json(text)
@@ -388,6 +496,85 @@ def chat(body: ChatIn):
     """
     Chat completion endpoint for LLM processing.
     """
+    # Handle Ollama cloud API independently (like Groq)
+    if body.model_id.startswith("ollama-cloud/"):
+        # Try to get API key from environment first, then from config
+        key = os.getenv("OLLAMA_API_KEY")
+        if not key:
+            from app.services.config import load_config
+            cfg = load_config()
+            key = cfg.get("ollama", {}).get("apiKey", "")
+        
+        if not key:
+            raise HTTPException(400, "OLLAMA_API_KEY not set")
+
+        # Convert messages to the format expected by Ollama
+        messages = [{"role": msg.role, "content": msg.content} for msg in body.messages]
+
+        try:
+            start_time = time.time()
+            
+            # Strip the ollama-cloud/ prefix
+            ollama_model_id = body.model_id.split("/", 1)[1]
+            
+            headers = {"Authorization": f"Bearer {key}"}
+            
+            # Try chat API first
+            try:
+                r = requests.post(
+                    "https://ollama.com/api/chat",
+                    headers=headers,
+                    json={
+                        "model": ollama_model_id,
+                        "messages": messages,
+                        "stream": False,
+                        "options": {
+                            "temperature": body.params.get("temperature", 0.2),
+                            "top_p": body.params.get("top_p", 1.0),
+                            "num_predict": body.params.get("max_tokens", 1024),
+                        },
+                    },
+                    timeout=120,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = (data.get("message") or {}).get("content", "")
+            except Exception:
+                # Fallback to generate API
+                prompt_text = "\n".join([m.get("content", "") for m in messages])
+                r = requests.post(
+                    "https://ollama.com/api/generate",
+                    headers=headers,
+                    json={
+                        "model": ollama_model_id,
+                        "prompt": prompt_text,
+                        "stream": False,
+                        "options": {
+                            "temperature": body.params.get("temperature", 0.2),
+                            "top_p": body.params.get("top_p", 1.0),
+                            "num_predict": body.params.get("max_tokens", 1024),
+                        },
+                    },
+                    timeout=120,
+                )
+                r.raise_for_status()
+                data = r.json()
+                text = data.get("response", "")
+            
+            text = fix_truncated_json(text)
+            
+            # Record usage for analytics
+            duration_ms = int((time.time() - start_time) * 1000)
+            tokens_estimated = estimate_tokens(text)
+            record_groq_usage(body.model_id, tokens_estimated, 0.0, duration_ms, True)
+            
+            return {"output": text, "raw": data}
+        except Exception as e:
+            # Record failed request
+            duration_ms = int((time.time() - start_time) * 1000)
+            record_groq_usage(body.model_id, 0, 0.0, duration_ms, False)
+            raise HTTPException(502, f"Ollama cloud chat failed: {e}")
+
     # Route to local servers if prefixed
     if body.model_id.startswith("lmstudio/") or body.model_id.startswith("ollama/") or body.model_id.startswith("vllm/"):
         from app.services.config import load_config
@@ -423,6 +610,13 @@ def chat(body: ChatIn):
                 return {"output": text, "raw": data}
             elif is_ol:
                 base = (cfg.get("ollama", {}).get("baseUrl") or "http://localhost:11434").rstrip('/')
+                ol_cfg = cfg.get("ollama", {})
+                
+                # Add authentication headers if API key is available
+                headers = {}
+                if ol_cfg.get("apiKey"):
+                    headers["Authorization"] = f"Bearer {ol_cfg['apiKey']}"
+                
                 chat_r = requests.post(
                     f"{base}/api/chat",
                     json={
@@ -435,6 +629,7 @@ def chat(body: ChatIn):
                             "num_predict": body.params.get("max_tokens", 1024),
                         },
                     },
+                    headers=headers,
                     timeout=120,
                 )
                 chat_r.raise_for_status()
@@ -561,7 +756,12 @@ def chat(body: ChatIn):
         
         r.raise_for_status()
         data = r.json()
-        text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        message = (data.get("choices") or [{}])[0].get("message", {})
+        text = message.get("content", "")
+        
+        # Handle Groq models that return content in reasoning field instead of content field
+        if not text and "reasoning" in message:
+            text = message.get("reasoning", "")
         
         # Check if the response looks like truncated JSON and attempt to fix it
         text = fix_truncated_json(text)

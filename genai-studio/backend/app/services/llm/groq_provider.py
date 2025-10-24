@@ -18,7 +18,7 @@ class GroqProvider(LLMProvider):
                              headers={"Authorization": f"Bearer {self.key}"})
         r.raise_for_status()
         models = r.json().get("data", [])
-        return [{"id": m["id"], "label": m["id"], "tags": ["groq"]} for m in models]
+        return [{"id": m["id"], "label": m["id"], "tags": ["groq", "cloud"]} for m in models]
 
     def complete(self, prompt, params, files=None):
         if not self.key:
@@ -45,7 +45,14 @@ class GroqProvider(LLMProvider):
             
             # Analytics recording is handled centrally in llm.py router
             
-            return response_data["choices"][0]["message"]["content"]
+            message = response_data["choices"][0]["message"]
+            content = message.get("content", "")
+            
+            # Handle Groq models that return content in reasoning field instead of content field
+            if not content and "reasoning" in message:
+                content = message.get("reasoning", "")
+            
+            return content
             
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)

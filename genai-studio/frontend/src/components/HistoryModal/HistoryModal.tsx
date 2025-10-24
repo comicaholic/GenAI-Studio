@@ -438,37 +438,112 @@ export default function HistoryModal({ item, onClose, onLoad, onRun, onDelete }:
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: "90vw",
-          maxWidth: "1200px",
-          height: "80vh",
-          background: "#0b1220",
-          border: "1px solid #334155",
-          borderRadius: 12,
-          padding: 24,
+          width: "95vw",
+          maxWidth: "1400px",
+          height: "85vh",
+          background: "linear-gradient(135deg, #0b1220 0%, #1e293b 100%)",
+          border: "1px solid rgba(51, 65, 85, 0.5)",
+          borderRadius: 20,
+          padding: 32,
           color: "#e2e8f0",
           display: "flex",
           flexDirection: "column",
+          boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05)",
+          backdropFilter: "blur(20px)",
+          overflow: "hidden"
         }}
       >
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>
-              {isAutomation ? "🤖" : isEvaluation ? "📁" : "💬"} {isAutomation ? (item as SavedAutomation).name : item.title}
-            </h2>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
-              {isAutomation ? "Automation" : isEvaluation ? `${(item as SavedEvaluation).type.toUpperCase()} Evaluation` : "Chat"}
+        {/* Enhanced Header */}
+        <div style={{ 
+          display: "flex", 
+          justifyContent: "space-between", 
+          alignItems: "center", 
+          marginBottom: 32,
+          padding: "24px 0",
+          borderBottom: "1px solid rgba(51, 65, 85, 0.3)"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{
+              width: 56,
+              height: 56,
+              borderRadius: 16,
+              background: isAutomation 
+                ? "linear-gradient(135deg, #8b5cf6, #7c3aed)" 
+                : isEvaluation 
+                ? "linear-gradient(135deg, #3b82f6, #1d4ed8)"
+                : "linear-gradient(135deg, #10b981, #059669)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: isAutomation 
+                ? "0 8px 24px rgba(139, 92, 246, 0.4)" 
+                : isEvaluation 
+                ? "0 8px 24px rgba(59, 130, 246, 0.4)"
+                : "0 8px 24px rgba(16, 185, 129, 0.4)"
+            }}>
+              {isAutomation ? (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
+                  <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
+                </svg>
+              ) : isEvaluation ? (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
+                  <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                </svg>
+              ) : (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
+                  <path d="M12,3C17.5,3 22,6.58 22,11C22,15.42 17.5,19 12,19C10.76,19 9.57,18.82 8.47,18.5C7.55,20.1 5.68,21 3.5,21C3.25,21 3,20.75 3,20.5V20.5C3,18.83 4.15,17.5 5.7,17.5C4.15,16.5 3,14.83 3,13C3,8.58 7.5,5 12,5Z"/>
+                </svg>
+              )}
+            </div>
+            <div>
+              <h2 style={{ 
+                margin: 0, 
+                fontSize: 24, 
+                fontWeight: 700,
+                color: "#e2e8f0",
+                textShadow: "0 1px 2px rgba(0, 0, 0, 0.3)"
+              }}>
+                {isAutomation ? (item as SavedAutomation).name : item.title}
+              </h2>
+              <div style={{ 
+                fontSize: 14, 
+                color: "#94a3b8", 
+                marginTop: 6,
+                fontWeight: 500
+              }}>
+                {isAutomation ? "Automation" : isEvaluation ? `${(item as SavedEvaluation).type.toUpperCase()} Evaluation` : "Chat"}
+              </div>
             </div>
           </div>
           <button
             onClick={onClose}
             style={{
-              background: "transparent",
-              border: "none",
+              background: "rgba(0, 0, 0, 0.3)",
+              border: "1px solid rgba(255, 255, 255, 0.1)",
               color: "#94a3b8",
               cursor: "pointer",
-              fontSize: 24,
-              padding: 4,
+              fontSize: 20,
+              padding: "12px",
+              borderRadius: "50%",
+              width: 44,
+              height: 44,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 0.2s ease",
+              backdropFilter: "blur(8px)"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(239, 68, 68, 0.8)";
+              e.currentTarget.style.color = "#ffffff";
+              e.currentTarget.style.borderColor = "#ef4444";
+              e.currentTarget.style.transform = "scale(1.1)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(0, 0, 0, 0.3)";
+              e.currentTarget.style.color = "#94a3b8";
+              e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.1)";
+              e.currentTarget.style.transform = "scale(1)";
             }}
           >
             ×
@@ -490,16 +565,49 @@ export default function HistoryModal({ item, onClose, onLoad, onRun, onDelete }:
                       key={snapshot.id}
                       onClick={() => setSelectedSnapshotId(snapshot.id)}
                       style={{
-                        padding: 12,
-                        border: "1px solid #334155",
-                        borderRadius: 8,
-                        background: selectedSnapshotId === snapshot.id ? "#1e293b" : "#0f172a",
+                        padding: 16,
+                        border: selectedSnapshotId === snapshot.id ? "2px solid #3b82f6" : "1px solid rgba(51, 65, 85, 0.5)",
+                        borderRadius: 12,
+                        background: selectedSnapshotId === snapshot.id 
+                          ? "linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(30, 41, 59, 0.8) 100%)" 
+                          : "rgba(15, 23, 42, 0.6)",
                         cursor: "pointer",
-                        transition: "background-color 0.2s",
+                        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                        backdropFilter: "blur(8px)",
+                        boxShadow: selectedSnapshotId === snapshot.id 
+                          ? "0 8px 24px rgba(59, 130, 246, 0.2)" 
+                          : "0 2px 8px rgba(0, 0, 0, 0.1)"
+                      }}
+                      onMouseEnter={(e) => {
+                        if (selectedSnapshotId !== snapshot.id) {
+                          e.currentTarget.style.background = "rgba(30, 41, 59, 0.8)";
+                          e.currentTarget.style.borderColor = "#475569";
+                          e.currentTarget.style.transform = "translateY(-2px)";
+                          e.currentTarget.style.boxShadow = "0 4px 16px rgba(0, 0, 0, 0.15)";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (selectedSnapshotId !== snapshot.id) {
+                          e.currentTarget.style.background = "rgba(15, 23, 42, 0.6)";
+                          e.currentTarget.style.borderColor = "rgba(51, 65, 85, 0.5)";
+                          e.currentTarget.style.transform = "translateY(0)";
+                          e.currentTarget.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.1)";
+                        }
                       }}
                     >
-                      <div style={{ fontWeight: 500, marginBottom: 4 }}>{snapshot.title}</div>
-                      <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                      <div style={{ 
+                        fontWeight: 600, 
+                        marginBottom: 6, 
+                        color: "#e2e8f0",
+                        fontSize: 14
+                      }}>
+                        {snapshot.title}
+                      </div>
+                      <div style={{ 
+                        fontSize: 12, 
+                        color: "#94a3b8",
+                        fontWeight: 500
+                      }}>
                         {snapshot.text ? `${snapshot.text.length} characters` : snapshot.filename || "No content"}
                       </div>
                     </div>
@@ -610,65 +718,136 @@ export default function HistoryModal({ item, onClose, onLoad, onRun, onDelete }:
           )}
         </div>
 
-        {/* Actions */}
+        {/* Enhanced Actions */}
         {!isAutomation && (
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 24 }}>
+          <div style={{ 
+            display: "flex", 
+            justifyContent: "flex-end", 
+            gap: 16, 
+            marginTop: 32,
+            padding: "24px 0",
+            borderTop: "1px solid rgba(51, 65, 85, 0.3)"
+          }}>
             <button
               onClick={handleExport}
               style={{
-                padding: "10px 20px",
-                border: "1px solid #334155",
-                borderRadius: 6,
-                background: "#0f172a",
+                padding: "12px 24px",
+                border: "1px solid rgba(51, 65, 85, 0.5)",
+                borderRadius: 12,
+                background: "rgba(15, 23, 42, 0.6)",
                 color: "#e2e8f0",
                 cursor: "pointer",
                 fontSize: 14,
+                fontWeight: 600,
+                transition: "all 0.2s ease",
+                backdropFilter: "blur(8px)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(30, 41, 59, 0.8)";
+                e.currentTarget.style.borderColor = "#475569";
+                e.currentTarget.style.transform = "translateY(-2px)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "rgba(15, 23, 42, 0.6)";
+                e.currentTarget.style.borderColor = "rgba(51, 65, 85, 0.5)";
+                e.currentTarget.style.transform = "translateY(0)";
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+              </svg>
               Export
             </button>
             <button
               onClick={handleLoad}
               style={{
-                padding: "10px 20px",
-                border: "1px solid #334155",
-                borderRadius: 6,
-                background: "#0f172a",
-                color: "#e2e8f0",
+                padding: "12px 24px",
+                border: "1px solid rgba(59, 130, 246, 0.3)",
+                borderRadius: 12,
+                background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                color: "#ffffff",
                 cursor: "pointer",
                 fontSize: 14,
+                fontWeight: 700,
+                transition: "all 0.2s ease",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                boxShadow: "0 4px 12px rgba(59, 130, 246, 0.3)"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-2px)";
+                e.currentTarget.style.boxShadow = "0 6px 20px rgba(59, 130, 246, 0.4)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = "0 4px 12px rgba(59, 130, 246, 0.3)";
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+              </svg>
               Load
             </button>
             <button
               onClick={handleRun}
               style={{
-                padding: "10px 20px",
-                border: "1px solid #2563eb",
-                borderRadius: 6,
-                background: "#2563eb",
-                color: "#fff",
+                padding: "12px 24px",
+                border: "1px solid rgba(16, 185, 129, 0.3)",
+                borderRadius: 12,
+                background: "linear-gradient(135deg, #10b981, #059669)",
+                color: "#ffffff",
                 cursor: "pointer",
                 fontSize: 14,
+                fontWeight: 700,
+                transition: "all 0.2s ease",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                boxShadow: "0 4px 12px rgba(16, 185, 129, 0.3)"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-2px)";
+                e.currentTarget.style.boxShadow = "0 6px 20px rgba(16, 185, 129, 0.4)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = "0 4px 12px rgba(16, 185, 129, 0.3)";
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8,5.14V19.14L19,12.14L8,5.14Z"/>
+              </svg>
               Run
             </button>
             {onDelete && (
               <button
                 onClick={() => setShowDeleteConfirm(true)}
                 style={{
-                  padding: "10px 20px",
-                  border: "1px solid #ef4444",
-                  borderRadius: 6,
-                  background: "#ef4444",
-                  color: "#fff",
+                  padding: "12px 20px",
+                  border: "1px solid rgba(239, 68, 68, 0.3)",
+                  borderRadius: 12,
+                  background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                  color: "#ffffff",
                   cursor: "pointer",
                   fontSize: 14,
+                  fontWeight: 700,
+                  transition: "all 0.2s ease",
                   display: "flex",
                   alignItems: "center",
-                  gap: 6,
+                  gap: 8,
+                  boxShadow: "0 4px 12px rgba(239, 68, 68, 0.3)"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.boxShadow = "0 6px 20px rgba(239, 68, 68, 0.4)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(239, 68, 68, 0.3)";
                 }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">

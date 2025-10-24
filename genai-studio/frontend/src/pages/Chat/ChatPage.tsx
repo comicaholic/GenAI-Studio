@@ -40,6 +40,8 @@ interface ChatMessage {
   timestamp: string; // ISO to simplify serialization
   files?: { name: string; size?: number }[]; // don't store File objects in storage
   meta?: UsageMeta;
+  modelId?: string; // Model that generated this message (for assistant messages)
+  modelProvider?: string; // Provider of the model that generated this message
 }
 
 interface ChatSession {
@@ -65,6 +67,9 @@ export default function ChatPage() {
   const [contextPrompt, setContextPrompt] = useState("");
   const [params, setParams] = useState<ModelParams>(DEFAULT_PARAMS);
   const [activeRightTab, setActiveRightTab] = useState<"context" | "parameters">("context");
+
+  // Session-specific loading state to prevent typing indicator showing in wrong chat
+  const [sessionLoadingStates, setSessionLoadingStates] = useState<Record<string, boolean>>({});
 
   // Handle preset changes - update both context and parameters
   const handlePresetChange = useCallback((preset: { title: string; body: string; id: string; parameters?: Preset['parameters']; metrics?: any }) => {
@@ -96,9 +101,11 @@ export default function ChatPage() {
     }
     setActiveRightTab(newTab);
   }, [currentSessionId, sessions, contextPrompt, params]);
+  
+  // Global loading state for UI elements that aren't session-specific
   const [isLoading, setIsLoading] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const { selected } = useModel();
+  const { selected, setSelected } = useModel();
   const { showError, showSuccess } = useNotifications();
   const { addOperation, updateOperation } = useBackgroundState();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -113,51 +120,179 @@ export default function ChatPage() {
   useEffect(() => {
     const state: any = location.state;
     const chatToLoad = state?.loadChat;
+    const chatIdToLoad = state?.loadChatById;
+    const chatRunToLoad = state?.loadChatRun;
+    const autoRun = state?.autoRun;
     const automationToLoad = state?.loadAutomation;
+    const openAutomationModal = state?.openAutomationModal;
     
-    if (chatToLoad) {
+    if (chatIdToLoad) {
+      // Load existing chat by ID from history service
+      const loadExistingChat = async () => {
+        try {
+          const response = await historyService.getChat(chatIdToLoad);
+          if (response) {
+            const chatSession: ChatSession = {
+              id: response.id,
+              title: response.title,
+              messages: response.usedText?.chatHistory?.map((msg: any, index: number) => ({
+                id: `${response.id}-${index}`,
+                role: msg.role as "user" | "assistant",
+                content: msg.content,
+                timestamp: msg.timestamp || new Date().toISOString(),
+              })) || [],
+              createdAt: response.lastActivityAt,
+              lastActivityAt: response.lastActivityAt,
+              modelId: response.model.id,
+              modelProvider: response.model.provider,
+              parameters: (response.parameters as ModelParams) || DEFAULT_PARAMS,
+              context: response.context || "",
+            };
+            
+            // Check if this session already exists in our sessions
+            setSessions(prev => {
+              const existingIndex = prev.findIndex(s => s.id === chatSession.id);
+              if (existingIndex >= 0) {
+                // Session exists, update it with latest data and switch to it
+                const updatedSessions = [...prev];
+                updatedSessions[existingIndex] = chatSession;
+                setCurrentSessionId(chatSession.id);
+                return updatedSessions;
+              } else {
+                // Session doesn't exist, add it and switch to it
+                setCurrentSessionId(chatSession.id);
+                return [chatSession, ...prev];
+              }
+            });
+            
+            // If autoRun is requested, send a message to continue the conversation
+            if (autoRun && chatSession.messages.length > 0) {
+              // Find the last user message and resend it
+              const lastUserMessage = [...chatSession.messages].reverse().find(msg => msg.role === 'user');
+              if (lastUserMessage) {
+                setTimeout(() => {
+                  setMessageInput(lastUserMessage.content);
+                  sendMessage();
+                }, 1000); // Small delay to ensure UI is ready
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Failed to load chat by ID:", error);
+        }
+      };
+      loadExistingChat();
+    } else if (chatRunToLoad) {
+      // Load chat run data (from automation run)
+      try {
+        const { run, automation, model, loadedFiles, loadedPreset, modelValidation, missingFiles, missingModel } = chatRunToLoad;
+        
+        // Create a chat session from the run data
+        const chatSession: ChatSession = {
+          id: run.id,
+          title: `${automation.name} - ${run.runName}`,
+          messages: run.usedText?.chatHistory?.map((msg: any, index: number) => ({
+            id: `${run.id}-${index}`,
+            role: msg.role as "user" | "assistant",
+            content: msg.content,
+            timestamp: msg.timestamp || new Date().toISOString(),
+          })) || [],
+          createdAt: run.startedAt,
+          lastActivityAt: run.finishedAt || run.startedAt,
+          modelId: model.id,
+          modelProvider: model.provider,
+          parameters: (run.parameters as ModelParams) || DEFAULT_PARAMS,
+          context: run.usedText?.context || "",
+        };
+        
+        setSessions(prev => [chatSession, ...prev]);
+        switchToSession(chatSession.id);
+        
+        // Show feedback about missing files/model if any
+        if (missingFiles.length > 0 || missingModel) {
+          const feedback = [];
+          if (missingFiles.length > 0) {
+            feedback.push(`Missing files: ${missingFiles.join(', ')}`);
+          }
+          if (missingModel) {
+            feedback.push(`Model ${missingModel.id} not available, using fallback`);
+          }
+          showError("Load Warning", feedback.join('; '));
+        }
+      } catch (error) {
+        console.error("Failed to load chat run:", error);
+        showError("Load Failed", "Failed to load chat run data");
+      }
+    } else if (chatToLoad) {
       try {
         // Load chat session from history
         const chatSession: ChatSession = {
           id: chatToLoad.id,
           title: chatToLoad.title,
-          messages: chatToLoad.usedText?.chatHistory || [],
+          messages: chatToLoad.usedText?.chatHistory?.map((msg: any, index: number) => ({
+            id: `${chatToLoad.id}-${index}`,
+            role: msg.role as "user" | "assistant",
+            content: msg.content,
+            timestamp: msg.timestamp || new Date().toISOString(),
+          })) || [],
           createdAt: chatToLoad.lastActivityAt,
           lastActivityAt: chatToLoad.lastActivityAt,
           modelId: chatToLoad.model.id,
           modelProvider: chatToLoad.model.provider,
-          parameters: chatToLoad.parameters || DEFAULT_PARAMS,
+          parameters: (chatToLoad.parameters as ModelParams) || DEFAULT_PARAMS,
           context: chatToLoad.context || "",
         };
         
         setSessions(prev => [chatSession, ...prev]);
-        setCurrentSessionId(chatSession.id);
-        setContextPrompt(chatSession.context || "");
-        setParams(chatSession.parameters || DEFAULT_PARAMS);
+        switchToSession(chatSession.id);
       } catch {}
     } else if (automationToLoad?.type === 'chat') {
       try {
-        // Load automation data
-        const firstRun = automationToLoad.runs?.[0];
+        // Handle both single automation and automation set
+        let automation = automationToLoad;
+        let firstRun = null;
+        
+        // If it's an automation set, get the first automation
+        if (automationToLoad.automations && Array.isArray(automationToLoad.automations)) {
+          automation = automationToLoad.automations[0];
+          firstRun = automation?.runs?.[0];
+        } else if (automationToLoad.runs && Array.isArray(automationToLoad.runs)) {
+          // It's a single automation
+          firstRun = automationToLoad.runs[0];
+        }
+        
         if (firstRun) {
+          // Set model from automation
+          if (automation.model) {
+            setSelected({
+              id: automation.model.id,
+              label: automation.model.id, // Use id as label if no label provided
+              provider: automation.model.provider as any,
+            });
+            console.log("Chat Page - Set model from automation:", automation.model);
+          }
+          
           const chatSession: ChatSession = {
             id: crypto.randomUUID(),
             title: firstRun.chatTitle || "Automation Chat",
             messages: [],
             createdAt: new Date().toISOString(),
             lastActivityAt: new Date().toISOString(),
-            modelId: firstRun.modelId || selected?.id,
-            modelProvider: firstRun.modelProvider || selected?.provider,
+            modelId: firstRun.modelId || automation.model?.id || selected?.id,
+            modelProvider: firstRun.modelProvider || automation.model?.provider || selected?.provider,
             parameters: firstRun.parameters || DEFAULT_PARAMS,
             context: "",
           };
           
           setSessions(prev => [chatSession, ...prev]);
-          setCurrentSessionId(chatSession.id);
-          setContextPrompt("");
-          setParams(chatSession.parameters || DEFAULT_PARAMS);
+          switchToSession(chatSession.id);
         }
       } catch {}
+      
+      // Open automation modal if requested
+      if (openAutomationModal) {
+        setIsAutomationModalOpen(true);
+      }
     }
   }, [location.state, selected]);
 
@@ -167,10 +302,9 @@ export default function ChatPage() {
       try {
         // First try to load from localStorage (for immediate display)
         const raw = localStorage.getItem(STORAGE_KEY);
+        let localSessions: ChatSession[] = [];
         if (raw) {
-          const parsed = JSON.parse(raw) as ChatSession[];
-          setSessions(parsed);
-          if (parsed.length > 0) setCurrentSessionId(parsed[0].id);
+          localSessions = JSON.parse(raw) as ChatSession[];
         }
 
         // Then load from history service to get the latest data
@@ -181,27 +315,77 @@ export default function ChatPage() {
             const convertedSessions: ChatSession[] = historyChats.map(chat => ({
               id: chat.id,
               title: chat.title,
-              messages: chat.usedText?.chatHistory?.map((msg, index) => ({
+              messages: chat.usedText?.chatHistory?.map((msg: any, index: number) => ({
                 id: `${chat.id}-${index}`,
                 role: msg.role as "user" | "assistant",
                 content: msg.content,
-                timestamp: chat.lastActivityAt || new Date().toISOString(),
+                timestamp: msg.timestamp || chat.lastActivityAt || new Date().toISOString(),
               })) || [],
               createdAt: chat.lastActivityAt || new Date().toISOString(),
               lastActivityAt: chat.lastActivityAt,
               modelId: chat.model.id,
               modelProvider: chat.model.provider,
               parameters: (chat.parameters as ModelParams) || DEFAULT_PARAMS,
-              context: chat.context,
+              context: chat.context || "",
             }));
 
-            setSessions(convertedSessions);
-            if (convertedSessions.length > 0 && !currentSessionId) {
-              setCurrentSessionId(convertedSessions[0].id);
+            // Merge local and history sessions, prioritizing history data for consistency
+            const mergedSessions = [...convertedSessions];
+            localSessions.forEach(localSession => {
+              const historyIndex = convertedSessions.findIndex(historySession => historySession.id === localSession.id);
+              if (historyIndex >= 0) {
+                // Session exists in both - use history data as source of truth
+                const historySession = convertedSessions[historyIndex];
+                const mergedSession = {
+                  ...historySession,
+                  // Only keep local changes if they're meaningful (not default values)
+                  title: localSession.title !== "New Chat" ? localSession.title : historySession.title,
+                  context: localSession.context !== "" ? localSession.context : historySession.context,
+                  parameters: localSession.parameters || historySession.parameters,
+                };
+                mergedSessions[historyIndex] = mergedSession;
+              } else {
+                // Session only exists locally - include it if it has messages OR if it's a new chat
+                if (localSession.messages.length > 0 || localSession.title === "New Chat") {
+                  mergedSessions.push(localSession);
+                }
+              }
+            });
+
+            // Sort by lastActivityAt (most recent first)
+            mergedSessions.sort((a, b) => {
+              const aTime = new Date(a.lastActivityAt || a.createdAt).getTime();
+              const bTime = new Date(b.lastActivityAt || b.createdAt).getTime();
+              return bTime - aTime;
+            });
+
+            setSessions(mergedSessions);
+            // Only set current session if we don't already have one (from navigation state)
+            if (mergedSessions.length > 0 && !currentSessionId) {
+              setCurrentSessionId(mergedSessions[0].id);
+            }
+          } else if (localSessions.length > 0) {
+            // No history chats, use local sessions (include new chats and sessions with messages)
+            const validLocalSessions = localSessions.filter(s => 
+              s.messages.length > 0 || s.title === "New Chat"
+            );
+            setSessions(validLocalSessions);
+            if (validLocalSessions.length > 0 && !currentSessionId) {
+              setCurrentSessionId(validLocalSessions[0].id);
             }
           }
         } catch (e) {
           console.warn("Failed to load chats from history service:", e);
+          // Fallback to local sessions if history fails
+          if (localSessions.length > 0) {
+            const validLocalSessions = localSessions.filter(s => 
+              s.messages.length > 0 || s.title === "New Chat"
+            );
+            setSessions(validLocalSessions);
+            if (validLocalSessions.length > 0 && !currentSessionId) {
+              setCurrentSessionId(validLocalSessions[0].id);
+            }
+          }
         }
       } catch (e) {
         console.warn("Failed to load sessions:", e);
@@ -209,7 +393,7 @@ export default function ChatPage() {
     };
 
     loadSessions();
-  }, []);
+  }, []); // Only run once on mount to prevent conflicts with session creation
 
   // persist sessions to localStorage whenever they change
   useEffect(() => {
@@ -221,6 +405,36 @@ export default function ChatPage() {
   }, [sessions]);
 
   const currentSession = sessions.find((s) => s.id === currentSessionId) ?? null;
+
+  // Handle session switching
+  const switchToSession = useCallback((sessionId: string) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (session && sessionId !== currentSessionId) {
+      // Only switch if it's a different session to prevent unnecessary updates
+      console.log(`Switching from session ${currentSessionId} to ${sessionId}`);
+      setCurrentSessionId(sessionId);
+      // Update UI state immediately
+      setContextPrompt(session.context || "");
+      setParams(session.parameters || DEFAULT_PARAMS);
+    }
+  }, [sessions, currentSessionId]);
+
+  // Update UI state when switching sessions
+  useEffect(() => {
+    if (currentSession) {
+      setContextPrompt(currentSession.context || "");
+      setParams(currentSession.parameters || DEFAULT_PARAMS);
+    }
+  }, [currentSessionId, currentSession]);
+
+  // Only set initial session if we have sessions but no current session
+  // This prevents conflicts with manual session switching
+  useEffect(() => {
+    if (sessions.length > 0 && !currentSessionId) {
+      // Only set if we don't have a current session and we have sessions
+      setCurrentSessionId(sessions[0].id);
+    }
+  }, [sessions.length]); // Only depend on sessions.length to prevent conflicts
 
   // UI state: per-item context menu and delete confirmation
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -250,6 +464,8 @@ export default function ChatPage() {
   }, [menuOpenId]);
 
   const createNewSession = useCallback(async () => {
+    // Allow creating new chats even while assistant is responding
+
     const newSession: ChatSession = {
       id: crypto.randomUUID(),
       title: "New Chat",
@@ -258,11 +474,11 @@ export default function ChatPage() {
       lastActivityAt: new Date().toISOString(),
       modelId: selected?.id,
       modelProvider: selected?.provider,
-      parameters: params,
-      context: contextPrompt,
+      parameters: DEFAULT_PARAMS, // Start with default parameters
+      context: "", // Start with empty context
     };
     
-    // Update sessions state first
+    // Update sessions state and immediately switch to new session
     setSessions((prev) => {
       const updatedSessions = [newSession, ...prev];
       // Immediately save to localStorage
@@ -274,24 +490,15 @@ export default function ChatPage() {
       return updatedSessions;
     });
     
+    // Switch to new session immediately
+    console.log(`Creating new session: ${newSession.id}`);
     setCurrentSessionId(newSession.id);
+    setContextPrompt("");
+    setParams(DEFAULT_PARAMS);
     
-    // Auto-save the new session to history
-    try {
-      await historyService.saveChat({
-        id: newSession.id,
-        title: newSession.title,
-        model: { id: selected?.id ?? "", provider: selected?.provider ?? "" },
-        parameters: params,
-        context: contextPrompt,
-        messagesSummary: "0 messages",
-        usedText: { chatHistory: [] },
-        lastActivityAt: newSession.lastActivityAt ?? new Date().toISOString(),
-      });
-    } catch (e) {
-      console.warn("Failed to auto-save new chat:", e);
-    }
-  }, [params, contextPrompt, selected]);
+    // Don't auto-save empty sessions to history - only save when they have content
+    // This prevents creating duplicate empty sessions
+  }, [selected]);
 
   // rename session
   const renameSession = async (id: string, title: string) => {
@@ -370,12 +577,23 @@ export default function ChatPage() {
   };
 
   // delete session
-  const deleteSession = (id: string) => {
-    setSessions((prev) => prev.filter((s) => s.id !== id));
-    if (currentSessionId === id) {
-      const remaining = sessions.filter((s) => s.id !== id);
-      setCurrentSessionId(remaining.length > 0 ? remaining[0].id : null);
+  const deleteSession = async (id: string) => {
+    try {
+      // Delete from history service first for consistency with HomePage
+      await historyService.deleteChat(id);
+    } catch (e) {
+      console.warn("Failed to delete chat from history service:", e);
+      // Continue with local deletion even if history fails
     }
+    
+    setSessions((prev) => {
+      const filtered = prev.filter((s) => s.id !== id);
+      // If we're deleting the current session, switch to the first remaining session
+      if (currentSessionId === id) {
+        setCurrentSessionId(filtered.length > 0 ? filtered[0].id : null);
+      }
+      return filtered;
+    });
   };
 
   // add a message to current session (user or assistant)
@@ -403,8 +621,10 @@ export default function ChatPage() {
   };
 
   const sendMessage = async () => {
-    if ((!messageInput.trim() && attachedFiles.length === 0) || !selected) return;
-    setIsLoading(true);
+    if ((!messageInput.trim() && attachedFiles.length === 0) || !selected || !currentSessionId) return;
+    
+    // Set loading state for current session only
+    setSessionLoadingStates(prev => ({ ...prev, [currentSessionId]: true }));
 
     const operationId = addOperation({ type: "chat", status: "running", progress: 0 });
 
@@ -476,29 +696,41 @@ export default function ChatPage() {
         content: text,
         timestamp: new Date().toISOString(),
         meta: usage,
+        modelId: selected.id,
+        modelProvider: selected.provider,
       };
 
       // append assistant message
       pushMessageToCurrent(assistantMsg);
 
       // persist to history service - build a minimal chat object
-      if (currentSession) {
-        const s = sessions.find((x) => x.id === currentSession.id) ?? currentSession;
-        const finalSession = { ...s, messages: [...s.messages, userMsg, assistantMsg], lastActivityAt: new Date().toISOString() };
-        try {
-          await historyService.saveChat({
-            id: finalSession.id,
-            title: finalSession.title,
-            model: { id: selected.id, provider: selected.provider },
-            parameters: params,
-            context: contextPrompt,
-            messagesSummary: `${finalSession.messages.length} messages`,
-            usedText: { chatHistory: finalSession.messages.map((m) => ({ role: m.role, content: m.content })) },
-            lastActivityAt: finalSession.lastActivityAt,
-          });
-        } catch (e) {
-          // non-blocking if history fails
-          console.warn("historyService.saveChat failed:", e);
+      if (currentSessionId) {
+        // Get the current session and create the final session with both messages
+        const currentSession = sessions.find(s => s.id === currentSessionId);
+        if (currentSession) {
+          const finalSession = { 
+            ...currentSession, 
+            messages: [...currentSession.messages, userMsg, assistantMsg], 
+            lastActivityAt: new Date().toISOString() 
+          };
+          
+          try {
+            console.log(`Saving chat to history: ${finalSession.id} with ${finalSession.messages.length} messages`);
+            await historyService.saveChat({
+              id: finalSession.id,
+              title: finalSession.title,
+              model: { id: finalSession.modelId || selected.id, provider: finalSession.modelProvider || selected.provider },
+              parameters: finalSession.parameters || params,
+              context: finalSession.context || contextPrompt,
+              messagesSummary: `${finalSession.messages.length} messages`,
+              usedText: { chatHistory: finalSession.messages.map((m) => ({ role: m.role, content: m.content })) },
+              lastActivityAt: finalSession.lastActivityAt,
+            });
+            console.log(`Successfully saved chat: ${finalSession.id}`);
+          } catch (e) {
+            // non-blocking if history fails
+            console.warn("historyService.saveChat failed:", e);
+          }
         }
       }
 
@@ -515,8 +747,40 @@ export default function ChatPage() {
         timestamp: new Date().toISOString(),
       };
       pushMessageToCurrent(errMsg);
+
+      // Also save to history service even on error (so user message is preserved)
+      if (currentSessionId) {
+        const currentSession = sessions.find(s => s.id === currentSessionId);
+        if (currentSession) {
+          const finalSession = { 
+            ...currentSession, 
+            messages: [...currentSession.messages, userMsg, errMsg], 
+            lastActivityAt: new Date().toISOString() 
+          };
+          
+          try {
+            console.log(`Saving chat to history (error case): ${finalSession.id} with ${finalSession.messages.length} messages`);
+            await historyService.saveChat({
+              id: finalSession.id,
+              title: finalSession.title,
+              model: { id: finalSession.modelId || selected.id, provider: finalSession.modelProvider || selected.provider },
+              parameters: finalSession.parameters || params,
+              context: finalSession.context || contextPrompt,
+              messagesSummary: `${finalSession.messages.length} messages`,
+              usedText: { chatHistory: finalSession.messages.map((m) => ({ role: m.role, content: m.content })) },
+              lastActivityAt: finalSession.lastActivityAt,
+            });
+            console.log(`Successfully saved chat (error case): ${finalSession.id}`);
+          } catch (e) {
+            console.warn("historyService.saveChat failed (error case):", e);
+          }
+        }
+      }
     } finally {
-      setIsLoading(false);
+      // Clear loading state for current session only
+      if (currentSessionId) {
+        setSessionLoadingStates(prev => ({ ...prev, [currentSessionId]: false }));
+      }
     }
   };
 
@@ -657,6 +921,8 @@ export default function ChatPage() {
               content: text,
               timestamp: new Date().toISOString(),
               meta: usage,
+              modelId: runModelId,
+              modelProvider: runModelProvider,
             };
 
             // Add assistant message to session
@@ -849,7 +1115,7 @@ export default function ChatPage() {
         {sessions.map((s) => (
           <div
             key={s.id}
-            onClick={() => setCurrentSessionId(s.id)}
+            onClick={() => switchToSession(s.id)}
             style={{
               padding: 16,
               background: currentSessionId === s.id 
@@ -1256,7 +1522,7 @@ export default function ChatPage() {
                           🤖
                         </div>
                         <span style={{ fontWeight: 500 }}>
-                          {selected?.id || "AI"}
+                          {m.modelId || selected?.id || "AI"}
                         </span>
                         <span>•</span>
                         <span>{new Date(m.timestamp).toLocaleTimeString()}</span>
@@ -1317,7 +1583,7 @@ export default function ChatPage() {
                   </div>
                 </div>
               ))}
-              {isLoading && (
+              {currentSessionId && sessionLoadingStates[currentSessionId] && (
                 <div style={{ 
                   display: "flex", 
                   justifyContent: "flex-start",
@@ -1473,7 +1739,7 @@ export default function ChatPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <LoadingButton 
                     onClick={sendMessage} 
-                    isLoading={isLoading} 
+                    isLoading={currentSessionId ? sessionLoadingStates[currentSessionId] : false} 
                     disabled={!messageInput.trim() && attachedFiles.length === 0}
                     style={{
                       padding: "12px 20px",
@@ -1578,7 +1844,10 @@ export default function ChatPage() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button onClick={() => setDeleteConfirmId(null)} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}>Cancel</button>
               <button
-                onClick={() => { deleteSession(deleteConfirmId); setDeleteConfirmId(null); }}
+                onClick={async () => { 
+                  await deleteSession(deleteConfirmId); 
+                  setDeleteConfirmId(null); 
+                }}
                 style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #7f1d1d", background: "#1e293b", color: "#ef4444" }}
               >
                 Delete

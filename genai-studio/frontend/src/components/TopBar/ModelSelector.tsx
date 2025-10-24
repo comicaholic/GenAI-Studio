@@ -35,6 +35,24 @@ function useClickOutside<T extends HTMLElement>(onAway: () => void) {
   return ref;
 }
 
+/**
+ * Highlights search terms in text
+ */
+function highlightSearchTerm(text: string, searchTerm: string): React.ReactNode {
+  if (!searchTerm.trim()) return text;
+  
+  const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  const parts = text.split(regex);
+  
+  return parts.map((part, index) => 
+    regex.test(part) ? (
+      <span key={index} style={{ backgroundColor: '#fbbf24', color: '#1e293b', fontWeight: 600 }}>
+        {part}
+      </span>
+    ) : part
+  );
+}
+
 
 export default function ModelSelector() {
   const { selected, setSelected } = useModel();
@@ -66,32 +84,45 @@ export default function ModelSelector() {
     }
     
     try {
-      const { data } = await axios.get(`/api/models/memory/${encodeURIComponent(modelId)}`);
-      // Handle the new response format
-      if (data.used !== null && data.total !== null) {
+      // Get GPU memory usage from analytics system endpoint (like AnalyticsPage)
+      const { data: systemData } = await axios.get('/api/analytics/system');
+      
+      if (systemData.gpu && systemData.gpu.memory_used_gb !== null && systemData.gpu.memory_total_gb !== null) {
+        // Show total GPU memory usage like AnalyticsPage
         setModelMemoryUsage({
-          used: data.used,
-          total: data.total,
-          estimated: data.estimated,
-          isLoaded: data.isLoaded
-        });
-      } else if (data.tracked_memory_gb && data.tracked_memory_gb > 0) {
-        // Use tracked memory data if available
-        setModelMemoryUsage({
-          used: data.tracked_memory_gb,
-          total: data.tracked_memory_gb,
-          estimated: data.estimated,
-          isLoaded: data.isLoaded
-        });
-      } else if (data.estimated) {
-        setModelMemoryUsage({
-          used: 0,
-          total: data.estimated,
-          estimated: data.estimated,
-          isLoaded: data.isLoaded
+          used: systemData.gpu.memory_used_gb,
+          total: systemData.gpu.memory_total_gb,
+          estimated: systemData.gpu.memory_used_gb, // Use actual usage as "estimated"
+          isLoaded: true // Always show as loaded since this is real GPU data
         });
       } else {
-        setModelMemoryUsage(null);
+        // Fallback to model-specific memory endpoint if GPU data not available
+        const { data } = await axios.get(`/api/models/memory/${encodeURIComponent(modelId)}`);
+        
+        if (data.used !== null && data.total !== null) {
+          setModelMemoryUsage({
+            used: data.used,
+            total: data.total,
+            estimated: data.estimated,
+            isLoaded: data.isLoaded
+          });
+        } else if (data.tracked_memory_gb && data.tracked_memory_gb > 0) {
+          setModelMemoryUsage({
+            used: data.tracked_memory_gb,
+            total: data.tracked_memory_gb,
+            estimated: data.estimated,
+            isLoaded: data.isLoaded
+          });
+        } else if (data.estimated) {
+          setModelMemoryUsage({
+            used: 0,
+            total: data.estimated,
+            estimated: data.estimated,
+            isLoaded: data.isLoaded
+          });
+        } else {
+          setModelMemoryUsage(null);
+        }
       }
     } catch (error) {
       console.warn("Failed to fetch model memory usage:", error);
@@ -106,6 +137,7 @@ export default function ModelSelector() {
       const { data } = await axios.get("/api/models/classified", {
         params: { 
           include_groq: includeGroq,
+          include_ollama_cloud: true,  // Include Ollama cloud models
           apply_visibility_filter: false  // Get all models, apply filtering on frontend
         },
       });
@@ -116,11 +148,12 @@ export default function ModelSelector() {
       // Validate and normalize model data
       const validModels = allModels.filter(validateModelData);
       
-      // Separate local and groq models from classified data
-      const locals = validModels.filter(m => m.source !== "groq").map(m => normalizeModelData(m, "local"));
+      // Separate local, groq, and ollama-cloud models from classified data
+      const locals = validModels.filter(m => m.source !== "groq" && m.source !== "ollama-cloud").map(m => normalizeModelData(m, "local"));
       const groqs = validModels.filter(m => m.source === "groq").map(m => normalizeModelData(m, "groq"));
+      const ollamaClouds = validModels.filter(m => m.source === "ollama-cloud").map(m => normalizeModelData(m, "ollama-cloud"));
       
-      setLocalModels(locals);
+      setLocalModels([...locals, ...ollamaClouds]); // Combine local and ollama-cloud models
       setGroqModels(groqs);
       setWarning(data.warning?.warning || data.warning?.error || null);
       setGroqConnected(!data.warning?.error);
@@ -128,17 +161,22 @@ export default function ModelSelector() {
       // Fallback to original /list endpoint if classified fails
       console.warn("Failed to fetch classified models, falling back to list endpoint:", error);
       const { data } = await axios.get<ListResponse>("/api/models/list", {
-        params: { include_groq: includeGroq },
+        params: { 
+          include_groq: includeGroq,
+          include_ollama_cloud: true  // Include Ollama cloud models
+        },
       });
       
       // Validate and normalize model data
       const validLocalModels = (data.local || []).filter(validateModelData);
       const validGroqModels = (data.groq || []).filter(validateModelData);
+      const validOllamaCloudModels = (data.ollama_cloud || []).filter(validateModelData);
       
       const locals = validLocalModels.map(m => normalizeModelData(m, "local"));
       const groqs = validGroqModels.map(m => normalizeModelData(m, "groq"));
+      const ollamaClouds = validOllamaCloudModels.map(m => normalizeModelData(m, "ollama-cloud"));
       
-      setLocalModels(locals);
+      setLocalModels([...locals, ...ollamaClouds]); // Combine local and ollama-cloud models
       setGroqModels(groqs);
       setWarning(data.warning?.warning || data.warning?.error || null);
       setGroqConnected(!data.warning?.error);
@@ -210,12 +248,38 @@ export default function ModelSelector() {
   }, [localModels, groqModels]);
 
   const allModels = React.useMemo(() => {
-    const q = query.toLowerCase();
+    const q = query.toLowerCase().trim();
     const filter = (m: ModelInfo) => {
       const key = modelKey(m);
       const isDisabled = disabledIds.has(key);
-      const matchesQuery = !q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q);
-      return !isDisabled && matchesQuery;
+      
+      if (isDisabled) return false;
+      if (!q) return true;
+      
+      // Enhanced search across multiple model properties
+      const searchableFields = [
+        m.label,
+        m.name,
+        m.id,
+        m.publisher,
+        m.category,
+        m.architecture,
+        m.arch,
+        m.quant,
+        m.size,
+        m.source,
+        m.format,
+        m.params
+      ].filter(Boolean).map(field => String(field).toLowerCase());
+      
+      // Also search in tags array if it exists
+      const tagFields = Array.isArray(m.tags) ? m.tags.map(tag => String(tag).toLowerCase()) : [];
+      
+      // Check if query matches any field or tag
+      const matchesQuery = searchableFields.some(field => field.includes(q)) ||
+                          tagFields.some(tag => tag.includes(q));
+      
+      return matchesQuery;
     };
 
     const local = localModels.filter(filter);
@@ -246,6 +310,8 @@ export default function ModelSelector() {
   }, [localModels, groqModels, includeGroq, query, disabledIds, sortBy]);
 
   const noneAvailable = allModels.local.length === 0 && allModels.groq.length === 0;
+  const totalFilteredCount = allModels.local.length + allModels.groq.length;
+  const totalAvailableCount = localModels.length + groqModels.length;
 
   const closedLabel = selected
     ? (selected.label && selected.label.trim() ? selected.label : prettifyModelId(selected.id))
@@ -255,10 +321,22 @@ export default function ModelSelector() {
     if (selected?.id) {
       try {
         // Call the unload endpoint to unload the model from the provider
-        await axios.post(`/api/models/unload/${encodeURIComponent(selected.id)}`);
-        console.log(`Model ${selected.id} unloaded from provider`);
-      } catch (error) {
+        const response = await axios.post(`/api/models/unload/${encodeURIComponent(selected.id)}`);
+        
+        if (response.data.success) {
+          console.log(`Model ${selected.id} unloaded from provider:`, response.data.message);
+          // Show success notification if you have a notification system
+          // You could add a toast notification here
+        } else {
+          console.warn("Model unload failed:", response.data.message);
+          // Show warning notification
+        }
+      } catch (error: any) {
         console.warn("Failed to unload model from provider:", error);
+        // Show error notification
+        if (error.response?.data?.message) {
+          console.warn("Unload error:", error.response.data.message);
+        }
         // Still proceed with ejecting from selection even if unload fails
       }
     }
@@ -326,7 +404,7 @@ export default function ModelSelector() {
                 </svg>
                 <input
                   ref={inputRef}
-                  placeholder="Type to filter models..."
+                  placeholder="Search by name, category, architecture, size, quantization..."
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   style={styles.search}
@@ -335,23 +413,24 @@ export default function ModelSelector() {
               {selected && selected.provider === "local" && modelMemoryUsage && (
                 <div style={styles.memoryContainer}>
                   <span style={styles.memoryLabel}>
-                    {modelMemoryUsage.isLoaded ? "Model Memory Usage:" : "Estimated Memory:"}
+                    GPU Memory Usage:
                   </span>
                   <span style={styles.memoryValue}>
-                    {modelMemoryUsage.isLoaded ? (
-                      `${modelMemoryUsage.used.toFixed(2)} GB${modelMemoryUsage.total > modelMemoryUsage.used ? ` / ${modelMemoryUsage.total} GB` : ''}`
-                    ) : (
-                      `~${modelMemoryUsage.estimated?.toFixed(2) || 'Unknown'} GB`
-                    )}
+                    {`${modelMemoryUsage.used.toFixed(2)} GB / ${modelMemoryUsage.total.toFixed(2)} GB`}
                   </span>
                   <button
                     type="button"
                     onClick={handleRefreshMemory}
                     style={styles.refreshButton}
-                    title="Refresh memory usage"
+                    title="Refresh GPU memory usage"
                   >
                     🔄
                   </button>
+                </div>
+              )}
+              {query.trim() && (
+                <div style={styles.searchResultsCount}>
+                  {totalFilteredCount} of {totalAvailableCount} models
                 </div>
               )}
               <button
@@ -448,8 +527,17 @@ export default function ModelSelector() {
                 </div>
               ) : noneAvailable ? (
                 <div style={styles.empty}>
-                  No models available.<br />
-                  Use the Models page to discover and load models.
+                  {query.trim() ? (
+                    <>
+                      No models match "{query}".<br />
+                      Try searching for: name, category, architecture, size, or quantization.
+                    </>
+                  ) : (
+                    <>
+                      No models available.<br />
+                      Use the Models page to discover and load models.
+                    </>
+                  )}
                 </div>
               ) : (
                 /* All Models (Local + Groq combined) */
@@ -509,7 +597,9 @@ export default function ModelSelector() {
                   >
                     <div style={styles.modelCardContent}>
                       <div style={styles.modelCardHeader}>
-                        <div style={styles.modelCardName}>{m.label || prettifyModelId(m.id)}</div>
+                        <div style={styles.modelCardName}>
+                          {highlightSearchTerm(m.label || prettifyModelId(m.id), query)}
+                        </div>
                         <div style={styles.modelCardTags}>
                           {m.quant && <QuantizationTag quant={m.quant} />}
                           {m.hasConfig && <ConfigIcon />}
@@ -677,6 +767,15 @@ const styles: Record<string, React.CSSProperties> = {
   memoryValue: {
     color: "#60a5fa",
     fontWeight: 500,
+  },
+  searchResultsCount: {
+    fontSize: 12,
+    color: "#94a3b8",
+    fontWeight: 500,
+    padding: "4px 8px",
+    borderRadius: 6,
+    background: "#1e293b",
+    border: "1px solid #334155",
   },
   refreshButton: {
     display: "flex",

@@ -34,7 +34,10 @@ class DownloadQueue:
     """Manages download queue and progress tracking"""
     
     def __init__(self):
-        self.queue_file = Path("data/download_queue.json")
+        # Get the backend directory and create absolute path to data directory
+        BACKEND_DIR = Path(__file__).resolve().parents[2]  # backend/
+        DATA_DIR = BACKEND_DIR / "data"
+        self.queue_file = DATA_DIR / "download_queue.json"
         self.queue_file.parent.mkdir(parents=True, exist_ok=True)
         self.downloads: Dict[str, DownloadItem] = {}
         self.downloader = ModelDownloader()

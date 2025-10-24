@@ -39,6 +39,7 @@ export interface SavedEvaluation {
   automationId?: string;
   runId?: string;
   promptId?: string;
+  error?: string; // Error message for failed evaluations
 }
 
 export interface SavedChat {
@@ -72,17 +73,24 @@ export interface AutomationRun {
   id: string;
   runId: string;
   runName: string;
-  type: 'ocr' | 'prompt' | 'chat';
-  title: string;
-  model: ModelInfo;
+  type?: 'ocr' | 'prompt' | 'chat';
+  title?: string;
+  model?: ModelInfo;
   parameters: Record<string, any>;
-  metrics?: string[];
-  usedText: UsedText;
+  metrics?: string[] | Record<string, any>;
+  usedText?: UsedText;
   files?: FileInfo;
   results?: Record<string, any>;
   startedAt: string;
   finishedAt?: string;
   error?: string;
+  status?: string;
+  modelId?: string;
+  modelProvider?: string;
+  sourceFileName?: string;
+  referenceFileName?: string;
+  promptFileName?: string;
+  prompt?: string;
 }
 
 export interface SavedAutomation {

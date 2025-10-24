@@ -18,7 +18,10 @@ class ModelMemoryTracker:
     """Track memory usage for loaded models"""
     
     def __init__(self):
-        self.data_file = Path("data/model_memory_tracking.json")
+        # Get the backend directory and create absolute path to data directory
+        BACKEND_DIR = Path(__file__).resolve().parents[2]  # backend/
+        DATA_DIR = BACKEND_DIR / "data"
+        self.data_file = DATA_DIR / "model_memory_tracking.json"
         self.data_file.parent.mkdir(exist_ok=True)
         self._records: List[ModelMemoryRecord] = []
         self._load_records()
@@ -28,10 +31,10 @@ class ModelMemoryTracker:
         try:
             if self.data_file.exists():
                 with open(self.data_file, 'r') as f:
-                data = json.load(f)
-                self._records = [
-                    ModelMemoryRecord(**record) for record in data
-                ]
+                    data = json.load(f)
+                    self._records = [
+                        ModelMemoryRecord(**record) for record in data
+                    ]
         except Exception as e:
             print(f"Failed to load model memory records: {e}")
             self._records = []

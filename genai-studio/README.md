@@ -11,13 +11,15 @@ A comprehensive AI development platform that combines modern web technologies wi
 - **Comprehensive Evaluation Suite**: OCR evaluation, prompt testing, and performance benchmarking
 - **Real-time Analytics**: System monitoring, GPU utilization, and performance metrics
 - **Flexible Deployment**: Docker containers or native installation options
+- **Advanced Text Display**: Intelligent text splitting with user-controlled expansion and character limits
 
 ### **Model Management**
 - **Smart Model Discovery**: Browse and search Hugging Face models with intelligent categorization
 - **Multi-Provider Downloads**: Automatic vLLM integration for reliable model downloads
-- **Local Model Support**: LM Studio, Ollama, and vLLM integration with automatic detection
+- **Local Model Support**: LM Studio (with CLI unload), Ollama, and vLLM integration with automatic detection
 - **Model Classification**: Automatic categorization (chat, coding, embedding, vision, etc.)
 - **System Requirements**: GPU memory estimation and compatibility checking
+- **Model Unloading**: Proper GPU memory management with provider-specific unload methods
 
 ### **Evaluation & Testing**
 - **OCR Evaluation**: Test OCR models with PDF/image processing and accuracy metrics
@@ -30,6 +32,13 @@ A comprehensive AI development platform that combines modern web technologies wi
 - **Performance Tracking**: Historical trends and usage analytics
 - **Model Performance**: Response times, token consumption, and error rates
 - **Resource Management**: GPU memory tracking and optimization recommendations
+
+### **Advanced Text Display System**
+- **Intelligent Text Splitting**: Automatically splits long text at word boundaries
+- **User-Controlled Expansion**: Individual and bulk reveal/hide controls
+- **Performance Optimization**: Collapsed sections by default for better performance
+- **Configurable Limits**: User-defined character limits with disable option
+- **Safety Mechanisms**: Prevents infinite loops and memory issues
 
 ## 🚀 Quick Start
 
@@ -79,6 +88,32 @@ cd frontend && npm run dev
 - **Hugging Face**: For model discovery and downloads
 - **Local Models**: LM Studio, Ollama, vLLM servers
 
+## 📝 Text Display Features
+
+### Smart Text Handling
+GenAI Studio automatically handles long text content with intelligent splitting and user controls:
+
+**Key Features:**
+- **Automatic Splitting**: Long text is split into manageable sections at word boundaries
+- **Individual Controls**: Each section has its own reveal/hide button
+- **Bulk Controls**: "Reveal All" / "Hide All" functionality
+- **Performance Optimized**: Sections are collapsed by default for better performance
+- **Configurable Limits**: Set character limits from 100-10,000 characters
+- **Default Expansion Options**: Choose how sections appear initially
+
+**Configuration:**
+- **Character Limit**: Set when text should split (100-10,000 characters)
+- **Default Expansion**: Choose initial visibility behavior
+  - **First Part Expanded**: Shows Part 1 by default, others collapsed
+  - **All Parts Collapsed**: All parts hidden by default
+  - **All Parts Expanded**: All parts visible by default
+- **Enable/Disable**: Turn the feature on/off entirely
+
+**Access Settings:**
+1. Go to Settings → UI & Appearance
+2. Configure "Text Box Character Limit" section
+3. Set character limit and default expansion behavior
+
 ## 🛠️ Troubleshooting
 
 ### Windows vLLM Installation Issues
@@ -119,34 +154,12 @@ cd frontend && npm run dev
 
 **Note:** The app works perfectly without vLLM! You can still download and use Hugging Face models through other methods.
 
-### Manual vLLM Installation for Advanced Users
-If you need vLLM functionality, install it manually on your system:
-
-**Option 1: WSL Installation (Recommended)**
-1. Install Windows Subsystem for Linux (WSL)
-2. Install Ubuntu or another compatible Linux distribution
-3. Install NVIDIA drivers and CUDA toolkit within WSL
-4. Follow standard Linux vLLM installation instructions
-5. Configure the app to connect to your WSL vLLM instance
-
-**Option 2: Community Windows Build**
-1. Use the community-maintained [vllm-windows](https://github.com/SystemPanic/vllm-windows) repository
-2. Follow their specific installation instructions
-3. This is community-supported and may require additional configuration
-
-**Option 3: Docker Installation**
-1. Install Docker Desktop
-2. Run: `docker pull vllm/vllm-openai:latest`
-3. Start vLLM container with appropriate configuration
-4. Configure the app to connect to your Docker vLLM instance
-
-**Important:** These methods require manual setup and configuration. The app's automatic installation will skip vLLM to avoid Windows compatibility issues.
-
 ### Common Issues
 - **Backend not starting**: Check if port 8000 is available
 - **Frontend build errors**: Run `npm install` in the frontend directory
 - **Model download failures**: Verify your Hugging Face token is valid
 - **GPU detection issues**: Ensure CUDA drivers are properly installed
+- **Text display issues**: Check character limit settings and browser console for errors
 
 ## 📁 Project Structure
 
@@ -162,10 +175,17 @@ genai-studio/
 ├── frontend/               # React frontend
 │   ├── src/
 │   │   ├── components/     # Reusable components
+│   │   │   └── TextDisplay/ # Advanced text display component
 │   │   ├── pages/          # Main application pages
 │   │   ├── services/       # API clients
-│   │   └── stores/         # State management
+│   │   ├── stores/         # State management
+│   │   ├── hooks/           # Custom React hooks
+│   │   └── lib/            # Utility libraries
 │   └── package.json        # Node dependencies
+├── User Manuals/           # Documentation
+│   ├── ARCHITECTURE.md     # System architecture
+│   ├── TECHNICAL_USER_GUIDE.md # Complete user guide
+│   └── USER_MANUAL.md      # User-friendly guide
 └── docker-compose.yml      # Container orchestration
 ```
 
@@ -187,11 +207,13 @@ genai-studio/
 - Context management
 - Parameter tuning (temperature, max tokens, etc.)
 - Model switching
+- Advanced text display with character limits
 
 ### **Evaluation Suite**
 - **OCR Evaluation**: Test OCR models with PDFs and images
 - **Prompt Evaluation**: Systematic prompt testing
 - **Performance Metrics**: Response times and quality scores
+- **Text Display Integration**: Long results split into manageable sections
 
 ### **Analytics Dashboard**
 - Real-time system metrics
@@ -205,6 +227,7 @@ genai-studio/
 - vLLM setup and installation
 - Path configuration
 - Preset management
+- **Text Display Settings**: Character limits and expansion behavior
 
 ## 🔌 Local Model Integration
 
@@ -212,11 +235,13 @@ genai-studio/
 - Automatic detection and connection
 - Model loading and inference
 - Parameter configuration
+- **CLI-based model unloading**: Proper GPU memory management
 
 ### **Ollama**
 - Local model management
 - Cloud model detection
 - Automatic model pulling
+- **API-based model unloading**: Proper GPU memory management
 
 ### **vLLM (New!)**
 - High-performance inference engine
@@ -260,11 +285,24 @@ genai-studio/
 - Use vLLM for reliable downloads (automatic installation available)
 - Check internet connection and disk space
 
+**Model unloading issues**
+- **LM Studio**: Ensure LM Studio CLI is installed (automatic during setup)
+- **Ollama**: Verify Ollama server is running and accessible
+- **General**: Check console for specific error messages
+
+**Text display issues**
+- Check character limit settings in Settings → UI & Appearance
+- Verify character limit is enabled and set to a valid value
+- Check browser console for error messages
+- Try reducing character limit or disabling the feature
+
 ### Performance Optimization
 
 **For accurate analytics**: Use Conda/native installation instead of Docker
 **For reliable downloads**: Install and configure vLLM via Settings
 **For GPU acceleration**: Ensure CUDA drivers and libraries are installed
+**For text display performance**: Use smaller character limits and "All Collapsed" setting
+**For model unloading**: LM Studio CLI is automatically installed during setup
 
 ## 🔄 Development
 
@@ -293,6 +331,13 @@ npm run dev      # Development server with hot reload
 - **Memory**: 8GB+ RAM recommended
 - **Storage**: 10GB+ free space for models
 
+## 📚 Documentation
+
+- **User Manual**: `User Manuals/USER_MANUAL.md` - User-friendly guide
+- **Technical Guide**: `User Manuals/TECHNICAL_USER_GUIDE.md` - Complete technical documentation
+- **Architecture Guide**: `User Manuals/ARCHITECTURE.md` - System design and implementation
+- **API Documentation**: Available at `http://localhost:8000/docs`
+
 ## 🤝 Contributing
 
 1. Fork the repository
@@ -315,4 +360,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-**GenAI Studio** - Empowering AI development with modern tools and intuitive interfaces.
+**GenAI Studio** - Empowering AI development with modern tools, intuitive interfaces, and advanced text handling capabilities.

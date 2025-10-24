@@ -36,7 +36,7 @@ GenAI Studio follows a modern microservices-inspired architecture with a clear s
 │  │ • Analytics     │  │ • Modals        │  │ • File Mgmt  │ │
 │  │ • Settings      │  │ • Forms         │  │ • LLM Client │ │
 │  │ • OCR           │  │ • UI Components │  │ • History    │ │
-│  │ • PromptEval    │  │ • Automation    │  │ • Evaluation │ │
+│  │ • PromptEval    │  │ • TextDisplay   │  │ • Evaluation │ │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘ │
 ├─────────────────────────────────────────────────────────────┤
 │  Backend (FastAPI + Python)                                 │
@@ -116,10 +116,11 @@ src/
 │   ├── HistoryModal/    # History viewing modals
 │   ├── Layout/          # Layout components
 │   ├── ModelLoader/     # Model loading components
-│   ├── Notification/    # Notification system
+│   ├── Notification/     # Notification system
 │   ├── PresetEditor/    # Preset editing components
 │   ├── PresetPanel/     # Preset management panels
 │   ├── RightPanel/      # Parameter and metrics panels
+│   ├── TextDisplay/     # Advanced text display with character limits
 │   └── ui/              # Basic UI components
 ├── pages/               # Main application pages
 │   ├── Home/            # Dashboard with history
@@ -146,13 +147,15 @@ src/
 ├── context/            # React context providers
 │   └── ModelContext.tsx # Global model selection context
 ├── hooks/              # Custom React hooks
-│   └── useSelectedModelId.ts # Model selection hook
+│   ├── useSelectedModelId.ts # Model selection hook
+│   └── useSettings.ts  # Settings management hook
 ├── lib/                # Utility libraries
 │   ├── files.ts        # File handling utilities
 │   ├── groqErrorMitigation.ts # Error handling
 │   ├── llm.ts          # LLM utilities
 │   ├── modelUtils.ts   # Model data utilities
-│   └── pathUtils.ts    # Path handling utilities
+│   ├── pathUtils.ts    # Path handling utilities
+│   └── textUtils.ts    # Text processing and character limit utilities
 └── types/              # TypeScript type definitions
     ├── history.ts      # History data types
     └── promptEval.ts   # Evaluation types
@@ -260,6 +263,47 @@ export const useBackgroundState = create<BackgroundState>()(
   )
 );
 ```
+
+### Advanced Text Display System
+
+The TextDisplay component represents a sophisticated approach to handling large text content with intelligent splitting and user-controlled expansion:
+
+```typescript
+// TextDisplay component with character limit management
+interface TextDisplayProps {
+  value: string;
+  onChange?: (value: string) => void;
+  editable?: boolean;
+  title?: string;
+  className?: string;
+  style?: React.CSSProperties;
+}
+
+// Character limit configuration
+interface TextBoxSettings {
+  characterLimit: number;
+  characterLimitEnabled: boolean;
+  defaultExpansion: "all-collapsed" | "all-expanded" | "first-expanded";
+}
+
+// Text splitting algorithm with safety checks
+export function splitTextByCharacterLimit(
+  text: string, 
+  characterLimit: number | null
+): string[] {
+  // Safety checks and iteration limits
+  // Word boundary detection
+  // Progress guarantees
+  // Fallback handling
+}
+```
+
+**Key Features:**
+- **Intelligent Text Splitting**: Breaks long text at word boundaries
+- **User-Controlled Expansion**: Individual and bulk reveal/hide controls
+- **Performance Optimization**: Collapsed sections by default
+- **Safety Mechanisms**: Prevents infinite loops and memory issues
+- **Configurable Limits**: User-defined character limits with disable option
 
 ## 🔧 Backend Architecture
 
@@ -920,8 +964,8 @@ class ModelServiceClient:
 ### External Integrations
 - **Groq API**: High-performance inference with error mitigation
 - **Hugging Face Hub**: Model repository and discovery
-- **LM Studio**: Local model management and inference
-- **Ollama**: Local AI infrastructure
+- **LM Studio**: Local model management and inference with CLI-based model unloading
+- **Ollama**: Local AI infrastructure with proper API-based model unloading
 - **vLLM**: Optimized inference engine with GPU support
 - **OpenAI API**: GPT models (planned)
 - **Custom APIs**: Extensible provider system
@@ -957,6 +1001,7 @@ class ModelServiceClient:
 - **Preset System**: Configurable presets for different use cases
 - **Error Mitigation**: Automatic Groq error handling and retry logic
 - **Background Operations**: Persistent background task management
+- **Advanced Text Display**: Character limit management with intelligent splitting
 
 #### Backend
 - **API Endpoints**: Complete REST API with 50+ endpoints
@@ -974,8 +1019,9 @@ class ModelServiceClient:
 #### Integrations
 - **Groq API**: Full integration with error mitigation
 - **Hugging Face**: Model discovery and download
-- **Local Services**: LM Studio, Ollama, vLLM support
+- **Local Services**: LM Studio (with CLI unload support), Ollama, vLLM support
 - **GPU Support**: CUDA, ROCm, MPS detection and management
+- **Model Unloading**: Proper GPU memory management with provider-specific unload methods
 
 ### 🚧 In Progress Features
 
@@ -997,6 +1043,7 @@ class ModelServiceClient:
 6. **Monitoring**: Comprehensive analytics and system health monitoring
 7. **Cross-platform**: Support for Windows, macOS, and Linux
 8. **Local-first**: Strong support for local model inference
+9. **Advanced Text Handling**: Intelligent text splitting with user control
 
 ### 🔧 Technical Debt & Improvements
 
@@ -1008,6 +1055,3 @@ class ModelServiceClient:
 6. **Security**: Additional security hardening needed for production
 
 This architecture documentation provides a comprehensive overview of GenAI Studio's current implementation, design decisions, and future scalability considerations. The system is designed to be maintainable, extensible, and performant while providing a solid foundation for continued development.
-
-
-

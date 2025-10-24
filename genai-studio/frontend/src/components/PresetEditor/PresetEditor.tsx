@@ -1,38 +1,7 @@
 // frontend/src/components/PresetEditor/PresetEditor.tsx
 import React, { useState, useEffect } from 'react';
 import { useNotifications } from '@/components/Notification/Notification';
-import { api } from '@/services/api';
-
-interface PresetData {
-  id?: string;
-  name: string;
-  type: "ocr" | "prompt" | "chat";
-  content: {
-    prompt?: string;
-    context?: string;
-    params?: {
-      temperature: number;
-      max_tokens: number;
-      top_p: number;
-      top_k: number;
-    };
-    metrics?: {
-      rouge: boolean;
-      bleu: boolean;
-      f1: boolean;
-      em: boolean;
-      em_avg: boolean;
-      bertscore: boolean;
-      perplexity: boolean;
-      accuracy: boolean;
-      accuracy_avg: boolean;
-      precision: boolean;
-      precision_avg: boolean;
-      recall: boolean;
-      recall_avg: boolean;
-    };
-  };
-}
+import { PresetData } from '@/types/settings';
 
 interface PresetEditorProps {
   preset?: PresetData | null;
@@ -54,32 +23,30 @@ export default function PresetEditor({
   const { showSuccess, showError } = useNotifications();
   const [activeTab, setActiveTab] = useState<'prompt' | 'parameters' | 'metrics'>('prompt');
   const [formData, setFormData] = useState<PresetData>({
-    name: "",
+    title: "",
     type: "ocr",
-    content: {
-      prompt: "",
-      context: "",
-      params: {
-        temperature: 0.2,
-        max_tokens: 1024,
-        top_p: 1.0,
-        top_k: 40,
-      },
-      metrics: {
-        rouge: true,
-        bleu: true,
-        f1: true,
-        em: false,
-        em_avg: false,
-        bertscore: false,
-        perplexity: false,
-        accuracy: false,
-        accuracy_avg: false,
-        precision: false,
-        precision_avg: false,
-        recall: false,
-        recall_avg: false,
-      },
+    body: "",
+    context: "",
+    parameters: {
+      temperature: 0.2,
+      max_tokens: 1024,
+      top_p: 1.0,
+      top_k: 40,
+    },
+    metrics: {
+      rouge: true,
+      bleu: true,
+      f1: true,
+      em: false,
+      em_avg: false,
+      bertscore: false,
+      perplexity: false,
+      accuracy: false,
+      accuracy_avg: false,
+      precision: false,
+      precision_avg: false,
+      recall: false,
+      recall_avg: false,
     },
   });
 
@@ -90,19 +57,19 @@ export default function PresetEditor({
   }, [preset]);
 
   const handleSave = async () => {
-    if (!formData.name.trim()) {
-      showError("Invalid Preset", "Please provide a name for the preset.");
+    if (!formData.title.trim()) {
+      showError("Invalid Preset", "Please provide a title for the preset.");
       return;
     }
 
-    if (!formData.content.prompt?.trim() && !formData.content.context?.trim()) {
+    if (!formData.body?.trim() && !formData.context?.trim()) {
       showError("Invalid Preset", "Please provide either a prompt or context.");
       return;
     }
 
     try {
       await onSave(formData);
-      showSuccess("Preset Saved", `Preset "${formData.name}" has been saved successfully.`);
+      showSuccess("Preset Saved", `Preset "${formData.title}" has been saved successfully.`);
     } catch (error: any) {
       showError("Save Failed", "Failed to save preset: " + (error.message || error));
     }
@@ -111,10 +78,10 @@ export default function PresetEditor({
   const handleDelete = async () => {
     if (!preset?.id || !onDelete) return;
     
-    if (window.confirm(`Are you sure you want to delete preset "${formData.name}"?`)) {
+    if (window.confirm(`Are you sure you want to delete preset "${formData.title}"?`)) {
       try {
         await onDelete(preset.id);
-        showSuccess("Preset Deleted", `Preset "${formData.name}" has been deleted successfully.`);
+        showSuccess("Preset Deleted", `Preset "${formData.title}" has been deleted successfully.`);
       } catch (error: any) {
         showError("Delete Failed", "Failed to delete preset: " + (error.message || error));
       }
@@ -125,7 +92,7 @@ export default function PresetEditor({
     if (!onClone) return;
     const clonedPreset = {
       ...formData,
-      name: `${formData.name} (Copy)`,
+      title: `${formData.title} (Copy)`,
       id: undefined
     };
     onClone(clonedPreset);
@@ -170,7 +137,7 @@ export default function PresetEditor({
       const text = textarea.value;
       const newText = text.substring(0, start) + placeholder + text.substring(end);
       
-      updateFormData('content.prompt', newText);
+      updateFormData('body', newText);
       
       // Restore cursor position
       setTimeout(() => {
@@ -185,7 +152,7 @@ export default function PresetEditor({
       <div style={styles.modal}>
         <div style={styles.header}>
           <h3 style={styles.title}>
-            {preset ? `Edit Preset: ${preset.name}` : 'Create New Preset'}
+            {preset ? `Edit Preset: ${preset.title}` : 'Create New Preset'}
           </h3>
           <div style={styles.headerActions}>
             {preset && onClone && (
@@ -213,12 +180,12 @@ export default function PresetEditor({
           {/* Basic Info */}
           <div style={styles.section}>
             <div style={styles.inputGroup}>
-              <label style={styles.label}>Preset Name</label>
+              <label style={styles.label}>Preset Title</label>
               <input
                 type="text"
-                value={formData.name}
-                onChange={(e) => updateFormData('name', e.target.value)}
-                placeholder="Enter preset name"
+                value={formData.title}
+                onChange={(e) => updateFormData('title', e.target.value)}
+                placeholder="Enter preset title"
                 style={styles.input}
               />
             </div>
@@ -271,12 +238,12 @@ export default function PresetEditor({
                 {formData.type === 'chat' ? (
                   <div style={styles.inputGroup}>
                     <label style={styles.label}>Context/System Prompt</label>
-                    <textarea
-                      value={formData.content.context || ""}
-                      onChange={(e) => updateFormData('content.context', e.target.value)}
-                      placeholder="Enter context prompt for the chat assistant..."
-                      style={{...styles.textarea, minHeight: 120}}
-                    />
+                      <textarea
+                        value={formData.context || ""}
+                        onChange={(e) => updateFormData('context', e.target.value)}
+                        placeholder="Enter context prompt for the chat assistant..."
+                        style={{...styles.textarea, minHeight: 120}}
+                      />
                   </div>
                 ) : (
                   <>
@@ -295,8 +262,8 @@ export default function PresetEditor({
                       </div>
                       <textarea
                         id="prompt-textarea"
-                        value={formData.content.prompt || ""}
-                        onChange={(e) => updateFormData('content.prompt', e.target.value)}
+                        value={formData.body || ""}
+                        onChange={(e) => updateFormData('body', e.target.value)}
                         placeholder={`Enter prompt template (use ${getPlaceholders().join(', ')} as placeholders)...`}
                         style={{...styles.textarea, minHeight: 120}}
                       />
@@ -305,8 +272,8 @@ export default function PresetEditor({
                       <div style={styles.inputGroup}>
                         <label style={styles.label}>Context (Optional)</label>
                         <textarea
-                          value={formData.content.context || ""}
-                          onChange={(e) => updateFormData('content.context', e.target.value)}
+                          value={formData.context || ""}
+                          onChange={(e) => updateFormData('context', e.target.value)}
                           placeholder="Enter additional context..."
                           style={{...styles.textarea, minHeight: 80}}
                         />
@@ -326,8 +293,8 @@ export default function PresetEditor({
                     min="0"
                     max="2"
                     step="0.1"
-                    value={formData.content.params?.temperature || 0.2}
-                    onChange={(e) => updateFormData('content.params.temperature', parseFloat(e.target.value))}
+                    value={formData.parameters?.temperature || 0.2}
+                    onChange={(e) => updateFormData('parameters.temperature', parseFloat(e.target.value))}
                     style={styles.input}
                   />
                   <div style={styles.helpText}>Controls randomness (0 = deterministic, 2 = very random)</div>
@@ -339,8 +306,8 @@ export default function PresetEditor({
                     type="number"
                     min="1"
                     max="4096"
-                    value={formData.content.params?.max_tokens || 1024}
-                    onChange={(e) => updateFormData('content.params.max_tokens', parseInt(e.target.value))}
+                    value={formData.parameters?.max_tokens || 1024}
+                    onChange={(e) => updateFormData('parameters.max_tokens', parseInt(e.target.value))}
                     style={styles.input}
                   />
                   <div style={styles.helpText}>Maximum number of tokens to generate</div>
@@ -353,8 +320,8 @@ export default function PresetEditor({
                     min="0"
                     max="1"
                     step="0.1"
-                    value={formData.content.params?.top_p || 1.0}
-                    onChange={(e) => updateFormData('content.params.top_p', parseFloat(e.target.value))}
+                    value={formData.parameters?.top_p || 1.0}
+                    onChange={(e) => updateFormData('parameters.top_p', parseFloat(e.target.value))}
                     style={styles.input}
                   />
                   <div style={styles.helpText}>Nucleus sampling parameter (0-1)</div>
@@ -366,8 +333,8 @@ export default function PresetEditor({
                     type="number"
                     min="1"
                     max="100"
-                    value={formData.content.params?.top_k || 40}
-                    onChange={(e) => updateFormData('content.params.top_k', parseInt(e.target.value))}
+                    value={formData.parameters?.top_k || 40}
+                    onChange={(e) => updateFormData('parameters.top_k', parseInt(e.target.value))}
                     style={styles.input}
                   />
                   <div style={styles.helpText}>Top-k sampling parameter</div>
@@ -380,12 +347,12 @@ export default function PresetEditor({
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>Evaluation Metrics</label>
                   <div style={styles.metricsGrid}>
-                    {Object.entries(formData.content.metrics || {}).map(([key, value]) => (
+                    {Object.entries(formData.metrics || {}).map(([key, value]) => (
                       <label key={key} style={styles.metricItem}>
                         <input
                           type="checkbox"
                           checked={value}
-                          onChange={(e) => updateFormData(`content.metrics.${key}`, e.target.checked)}
+                          onChange={(e) => updateFormData(`metrics.${key}`, e.target.checked)}
                           style={styles.checkbox}
                         />
                         <span style={styles.metricLabel}>

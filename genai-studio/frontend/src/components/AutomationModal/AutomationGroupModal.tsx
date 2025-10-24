@@ -9,6 +9,7 @@ interface AutomationGroupModalProps {
   onLoad: (automationSet: any) => void;
   onRun: (automationSet: any) => void;
   onRunDetails: (automation: SavedAutomation, runIndex: number) => void;
+  onRunSingle: (automation: SavedAutomation, runIndex: number) => void;
 }
 
 export default function AutomationGroupModal({ 
@@ -17,7 +18,8 @@ export default function AutomationGroupModal({
   onClose, 
   onLoad, 
   onRun, 
-  onRunDetails 
+  onRunDetails,
+  onRunSingle
 }: AutomationGroupModalProps) {
   if (!automations || automations.length === 0) return null;
 
@@ -172,7 +174,7 @@ export default function AutomationGroupModal({
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
             </svg>
-            Load Automation Group
+            Load
           </button>
           <button
             onClick={() => onRun(automations)}
@@ -202,7 +204,7 @@ export default function AutomationGroupModal({
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8,5.14V19.14L19,12.14L8,5.14Z"/>
             </svg>
-            Run Automation Group
+            Run
           </button>
         </div>
 
@@ -325,12 +327,123 @@ export default function AutomationGroupModal({
                               {run.runName}
                             </h5>
                             <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#94a3b8", marginBottom: 8 }}>
-                              <span>Model: {run.model?.id || automation.model?.id}</span>
+                              <span>Model: {run.modelId || run.model?.id || automation.model?.id}</span>
                               <span>Started: {new Date(run.startedAt).toLocaleString()}</span>
                               {run.finishedAt && (
                                 <span>Duration: {Math.round((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000)}s</span>
                               )}
                             </div>
+                            
+                            {/* Preset Information */}
+                            {run.prompt && (
+                              <div style={{ marginBottom: 8 }}>
+                                <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4, fontWeight: 500 }}>
+                                  PRESET PROMPT
+                                </div>
+                                <div style={{ 
+                                  fontSize: 11, 
+                                  color: "#e2e8f0", 
+                                  background: "#1e293b",
+                                  padding: "6px 8px",
+                                  borderRadius: 4,
+                                  border: "1px solid #334155",
+                                  maxHeight: 60,
+                                  overflow: "hidden",
+                                  fontFamily: "monospace",
+                                  lineHeight: 1.4
+                                }}>
+                                  {run.prompt.length > 100 ? `${run.prompt.substring(0, 100)}...` : run.prompt}
+                                </div>
+                              </div>
+                            )}
+                            
+                            {/* Parameters */}
+                            {run.parameters && Object.keys(run.parameters).length > 0 && (
+                              <div style={{ marginBottom: 8 }}>
+                                <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4, fontWeight: 500 }}>
+                                  PARAMETERS
+                                </div>
+                                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                  {Object.entries(run.parameters).slice(0, 3).map(([key, value]) => (
+                                    <span key={key} style={{
+                                      background: "#1e293b",
+                                      border: "1px solid #334155",
+                                      padding: "2px 6px",
+                                      borderRadius: 4,
+                                      fontSize: 9,
+                                      color: "#e2e8f0",
+                                      fontWeight: 500
+                                    }}>
+                                      {key}: {typeof value === "number" ? Math.round(value * 100) / 100 : String(value)}
+                                    </span>
+                                  ))}
+                                  {Object.keys(run.parameters).length > 3 && (
+                                    <span style={{
+                                      background: "#334155",
+                                      border: "1px solid #475569",
+                                      padding: "2px 6px",
+                                      borderRadius: 4,
+                                      fontSize: 9,
+                                      color: "#94a3b8"
+                                    }}>
+                                      +{Object.keys(run.parameters).length - 3} more
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            
+                            {/* Metrics */}
+                            {run.metrics && (Array.isArray(run.metrics) ? run.metrics.length > 0 : Object.keys(run.metrics).length > 0) && (
+                              <div style={{ marginBottom: 8 }}>
+                                <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4, fontWeight: 500 }}>
+                                  METRICS
+                                </div>
+                                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                  {Array.isArray(run.metrics) ? (
+                                    run.metrics.slice(0, 3).map((metric, index) => (
+                                      <span key={index} style={{
+                                        background: "#0f172a",
+                                        border: "1px solid #3b82f6",
+                                        padding: "2px 6px",
+                                        borderRadius: 4,
+                                        fontSize: 9,
+                                        color: "#3b82f6",
+                                        fontWeight: 500
+                                      }}>
+                                        {metric}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    Object.entries(run.metrics).slice(0, 3).map(([key, value]) => (
+                                      <span key={key} style={{
+                                        background: "#0f172a",
+                                        border: "1px solid #3b82f6",
+                                        padding: "2px 6px",
+                                        borderRadius: 4,
+                                        fontSize: 9,
+                                        color: "#3b82f6",
+                                        fontWeight: 500
+                                      }}>
+                                        {key}: {String(value)}
+                                      </span>
+                                    ))
+                                  )}
+                                  {((Array.isArray(run.metrics) ? run.metrics.length : Object.keys(run.metrics).length) > 3) && (
+                                    <span style={{
+                                      background: "#334155",
+                                      border: "1px solid #475569",
+                                      padding: "2px 6px",
+                                      borderRadius: 4,
+                                      fontSize: 9,
+                                      color: "#94a3b8"
+                                    }}>
+                                      +{(Array.isArray(run.metrics) ? run.metrics.length : Object.keys(run.metrics).length) - 3} more
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <div style={{ 
@@ -396,16 +509,56 @@ export default function AutomationGroupModal({
                         )}
                         
                         <div style={{ 
-                          fontSize: 10, 
-                          color: "#64748b", 
                           display: "flex",
+                          justifyContent: "space-between",
                           alignItems: "center",
-                          gap: 4
+                          marginTop: 8
                         }}>
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
-                          </svg>
-                          Click to view detailed run information
+                          <div style={{ 
+                            fontSize: 10, 
+                            color: "#64748b", 
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 4
+                          }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
+                            </svg>
+                            Click to view detailed run information
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRunSingle(automation, runIndex);
+                            }}
+                            style={{
+                              padding: "6px 12px",
+                              background: "linear-gradient(135deg, #10b981, #059669)",
+                              border: "none",
+                              color: "#ffffff",
+                              borderRadius: 6,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              transition: "all 0.2s ease",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.transform = "translateY(-1px)";
+                              e.currentTarget.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.15)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.transform = "translateY(0)";
+                              e.currentTarget.style.boxShadow = "none";
+                            }}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M8,5.14V19.14L19,12.14L8,5.14Z"/>
+                            </svg>
+                            Run
+                          </button>
                         </div>
                       </div>
                     ))}

@@ -1440,14 +1440,17 @@ export default function ModelsPage() {
     setIsLoading(true);
     try {
       const response = await api.get("/models/classified", {
-        params: { apply_visibility_filter: false }  // Get all models, apply filtering on frontend
+        params: { 
+          apply_visibility_filter: false,  // Get all models, apply filtering on frontend
+          include_ollama_cloud: true  // Include Ollama cloud models
+        }
       });
       const models = response.data.models || [];
       
       // Validate and normalize model data
       const validModels = models
         .filter(validateModelData)
-        .map((model: any) => normalizeModelData(model, "local"));
+        .map((model: any) => normalizeModelData(model, model.provider || "local"));
       
       setLocalModels(validModels);
     } catch (error: any) {
@@ -1459,7 +1462,7 @@ export default function ModelsPage() {
         // Validate and normalize model data
         const validModels = models
           .filter(validateModelData)
-          .map((model: any) => normalizeModelData(model, "local"));
+          .map((model: any) => normalizeModelData(model, model.provider || "local"));
         
         setLocalModels(validModels);
       } catch (fallbackError: any) {

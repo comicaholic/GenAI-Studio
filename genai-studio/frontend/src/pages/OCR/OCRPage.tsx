@@ -29,6 +29,7 @@ import AutomationProgressIndicator from "@/components/AutomationProgress/Automat
 import AutomationProgressModal from "@/components/AutomationProgress/AutomationProgressModal";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import LoadingButton from "@/components/ui/LoadingButton";
+import TextDisplay from "@/components/TextDisplay/TextDisplay";
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.2, max_tokens: 1024, top_p: 1.0, top_k: 40 };
 
@@ -53,6 +54,10 @@ export default function OCRPage() {
   const [sourceChoices, setSourceChoices] = useState<string[]>([]);
   const [referenceChoices, setReferenceChoices] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<"form" | "side-by-side" | "compare-two">("form");
+  const [compareSelection, setCompareSelection] = useState<{
+    first: "ocr" | "llm" | "reference";
+    second: "ocr" | "llm" | "reference";
+  }>({ first: "ocr", second: "reference" });
 
   // right panel state
   const [textareaContent, setTextareaContent] = useState(() => {
@@ -115,7 +120,7 @@ export default function OCRPage() {
   // Enhanced loading states
   const [isLoading, setIsLoading] = useState(false);
   const [loadingType, setLoadingType] = useState<'ocr' | 'llm' | 'metrics' | 'automation' | null>(null);
-  const { selected } = useModel();
+  const { selected, setSelected } = useModel();
   const [ocrText, setOcrText] = useState("");
   const [refText, setRefText] = useState("");
   const [llmOut, setLlmOut] = useState("");
@@ -123,6 +128,8 @@ export default function OCRPage() {
   
   // Automation state
   const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false);
+  const [loadedAutomationSet, setLoadedAutomationSet] = useState<any>(null);
+  const [loadedAutomationName, setLoadedAutomationName] = useState<string>("");
   const [isAutomationProgressModalOpen, setIsAutomationProgressModalOpen] = useState(false);
   const [automationResults, setAutomationResults] = useState<Record<string, any>>({});
   // Automation progress overlay state
@@ -138,27 +145,78 @@ export default function OCRPage() {
   // Allow loading an evaluation from navigation state (HomePage "Load")
   const location = useLocation();
   useEffect(() => {
+    console.log("OCR Page - useEffect triggered");
+    console.log("OCR Page - location.state:", location.state);
+    
     const loadEvaluationData = async () => {
       const state: any = location.state;
+      console.log("OCR Page - Processing state:", state);
+      
       const evalToLoad = state?.loadEvaluation;
       const automationToLoad = state?.loadAutomation;
       const autoLoadFiles = state?.autoLoadFiles;
       const autoLoadPreset = state?.autoLoadPreset;
       const autoRun = state?.autoRun;
+      const showFeedback = state?.showFeedback;
+      const openAutomationModal = state?.openAutomationModal;
+      
+      console.log("OCR Page - evalToLoad:", evalToLoad);
+      console.log("OCR Page - automationToLoad:", automationToLoad);
+      console.log("OCR Page - autoLoadFiles:", autoLoadFiles);
+      console.log("OCR Page - autoLoadPreset:", autoLoadPreset);
       
       if (evalToLoad?.type === "ocr") {
         try {
-          const used = evalToLoad.usedText || {};
-          setOcrText(used.ocrText ?? "");
-          setReference(used.referenceText ?? "");
-          setTextareaContent(used.promptText ?? textareaContent);
+          console.log("OCR Page - Loading evaluation:", evalToLoad);
+          console.log("OCR Page - evalToLoad.usedText:", evalToLoad.usedText);
+          console.log("OCR Page - evalToLoad.parameters:", evalToLoad.parameters);
+          console.log("OCR Page - evalToLoad.metrics:", evalToLoad.metrics);
+          console.log("OCR Page - evalToLoad.metricsState:", evalToLoad.metricsState);
           
-          // If the evaluation already had results, show them immediately
-          if (evalToLoad.results && typeof evalToLoad.results === "object") {
-            setScores(evalToLoad.results as any);
+          // IMMEDIATE DATA LOADING (fast, synchronous)
+          const used = evalToLoad.usedText || {};
+          console.log("OCR Page - used object:", used);
+          
+          // 0. Set model immediately
+          if (evalToLoad.model) {
+            setSelected({
+              id: evalToLoad.model.id,
+              label: evalToLoad.model.id, // Use id as label if no label provided
+              provider: evalToLoad.model.provider as any,
+            });
+            console.log("OCR Page - Set model:", evalToLoad.model);
+          } else {
+            console.log("OCR Page - No model found in evaluation");
           }
           
-          // Load parameters from evaluation
+          // 1. Set OCR text immediately
+          if (used.ocrText) {
+            setOcrText(used.ocrText);
+            setOcr({ text: used.ocrText } as OCRExtractResponse);
+            console.log("OCR Page - Set OCR text:", used.ocrText);
+          } else {
+            console.log("OCR Page - No OCR text found in usedText");
+          }
+          
+          // 2. Set reference text immediately
+          if (used.referenceText) {
+            setReference(used.referenceText);
+            setRefText(used.referenceText);
+            console.log("OCR Page - Set reference text:", used.referenceText);
+          } else {
+            console.log("OCR Page - No reference text found in usedText");
+          }
+          
+          // 3. Set prompt text immediately
+          if (used.promptText) {
+            setTextareaContent(used.promptText);
+            localStorage.setItem("ocr-prompt", used.promptText);
+            console.log("OCR Page - Set prompt text:", used.promptText);
+          } else {
+            console.log("OCR Page - No prompt text found in usedText");
+          }
+          
+          // 4. Set parameters immediately
           if (evalToLoad.parameters) {
             setParams(prev => ({
               ...prev,
@@ -167,39 +225,56 @@ export default function OCRPage() {
               top_p: evalToLoad.parameters?.top_p ?? prev.top_p,
               top_k: evalToLoad.parameters?.top_k ?? prev.top_k,
             }));
+            console.log("OCR Page - Set parameters:", evalToLoad.parameters);
+          } else {
+            console.log("OCR Page - No parameters found in evaluation");
           }
           
-        // Load metrics from evaluation
-        if ((evalToLoad as any).metricsState) {
-          // Use the saved metricsState if available
-          setMetricsState((evalToLoad as any).metricsState);
-        } else if (evalToLoad.metrics && Array.isArray(evalToLoad.metrics)) {
-          // Fallback to reconstructing from metrics array
-          const metricsConfig: MetricState = {
-            rouge: evalToLoad.metrics.includes('rouge'),
-            bleu: evalToLoad.metrics.includes('bleu'),
-            f1: evalToLoad.metrics.includes('f1'),
-            em: evalToLoad.metrics.includes('em'),
-            em_avg: evalToLoad.metrics.includes('em_avg'),
-            bertscore: evalToLoad.metrics.includes('bertscore'),
-            perplexity: evalToLoad.metrics.includes('perplexity'),
-            accuracy: evalToLoad.metrics.includes('accuracy'),
-            accuracy_avg: evalToLoad.metrics.includes('accuracy_avg'),
-            precision: evalToLoad.metrics.includes('precision'),
-            precision_avg: evalToLoad.metrics.includes('precision_avg'),
-            recall: evalToLoad.metrics.includes('recall'),
-            recall_avg: evalToLoad.metrics.includes('recall_avg'),
-          };
-          setMetricsState(metricsConfig);
-        }
+          // 5. Set metrics immediately
+          if ((evalToLoad as any).metricsState) {
+            setMetricsState((evalToLoad as any).metricsState);
+            console.log("OCR Page - Set metrics from state:", (evalToLoad as any).metricsState);
+          } else if (evalToLoad.metrics && Array.isArray(evalToLoad.metrics)) {
+            const metricsConfig: MetricState = {
+              rouge: evalToLoad.metrics.includes('rouge'),
+              bleu: evalToLoad.metrics.includes('bleu'),
+              f1: evalToLoad.metrics.includes('f1'),
+              em: evalToLoad.metrics.includes('em'),
+              em_avg: evalToLoad.metrics.includes('em_avg'),
+              bertscore: evalToLoad.metrics.includes('bertscore'),
+              perplexity: evalToLoad.metrics.includes('perplexity'),
+              accuracy: evalToLoad.metrics.includes('accuracy'),
+              accuracy_avg: evalToLoad.metrics.includes('accuracy_avg'),
+              precision: evalToLoad.metrics.includes('precision'),
+              precision_avg: evalToLoad.metrics.includes('precision_avg'),
+              recall: evalToLoad.metrics.includes('recall'),
+              recall_avg: evalToLoad.metrics.includes('recall_avg'),
+            };
+            setMetricsState(metricsConfig);
+            console.log("OCR Page - Set metrics from array:", metricsConfig);
+          } else {
+            console.log("OCR Page - No metrics found in evaluation");
+          }
           
-          // Load preset data if available
+          // 6. Set results if available
+          if (evalToLoad.results && typeof evalToLoad.results === "object") {
+            setScores(evalToLoad.results as any);
+            console.log("OCR Page - Set scores:", evalToLoad.results);
+          }
+          
+          // 7. Load preset data (override previous settings if preset exists)
           if (autoLoadPreset && evalToLoad.loadedPreset) {
             const preset = evalToLoad.loadedPreset;
-            setTextareaContent(preset.body || "");
-            localStorage.setItem("ocr-prompt", preset.body || "");
+            console.log("OCR Page - Loading preset:", preset);
             
-            // Apply parameters if they exist
+            // Override prompt with preset if preset has content
+            if (preset.body) {
+              setTextareaContent(preset.body);
+              localStorage.setItem("ocr-prompt", preset.body);
+              console.log("OCR Page - Override prompt with preset:", preset.body);
+            }
+            
+            // Override parameters with preset if preset has parameters
             if (preset.parameters) {
               setParams(prev => ({
                 ...prev,
@@ -208,62 +283,120 @@ export default function OCRPage() {
                 top_p: preset.parameters?.top_p ?? prev.top_p,
                 top_k: preset.parameters?.top_k ?? prev.top_k,
               }));
+              console.log("OCR Page - Override parameters with preset:", preset.parameters);
             }
             
-            // Apply metrics if they exist
+            // Override metrics with preset if preset has metrics
             if (preset.metrics) {
               setMetricsState(prev => ({
                 ...prev,
                 ...preset.metrics
               }));
+              console.log("OCR Page - Override metrics with preset:", preset.metrics);
             }
           }
           
-          // Load files if autoLoadFiles is enabled and files are available
-          if (autoLoadFiles && evalToLoad.loadedFiles) {
-            const files = evalToLoad.loadedFiles;
+          // FILE LOADING (synchronous, but after immediate data)
+          if (autoLoadFiles) {
+            console.log("OCR Page - Starting file loading...");
             
-            // Process source files
-            const sourceFiles = files.filter((f: any) => f.type === 'source');
-            if (sourceFiles.length > 0) {
-              const sourceFile = sourceFiles[0];
-              if (sourceFile.file) {
-                await onSourceUpload(sourceFile.file);
+            try {
+              if (evalToLoad.loadedFiles) {
+                console.log("OCR Page - Loading files from loadedFiles:", evalToLoad.loadedFiles);
+                const files = evalToLoad.loadedFiles;
+                
+                // Process source files
+                const sourceFiles = files.filter((f: any) => f.type === 'source');
+                if (sourceFiles.length > 0) {
+                  const sourceFile = sourceFiles[0];
+                  if (sourceFile.file) {
+                    setSrcFileName(sourceFile.fileName);
+                    setSourceChoices(prev => {
+                      if (!prev.includes(sourceFile.fileName)) {
+                        return [...prev, sourceFile.fileName];
+                      }
+                      return prev;
+                    });
+                    console.log("OCR Page - Set source file:", sourceFile.fileName);
+                  }
+                }
+                
+                // Process reference files
+                const referenceFiles = files.filter((f: any) => f.type === 'reference');
+                if (referenceFiles.length > 0) {
+                  const refFile = referenceFiles[0];
+                  if (refFile.data) {
+                    setRefFileName(refFile.fileName);
+                    setReference(refFile.data.text);
+                    setRefText(refFile.data.text ?? "");
+                    setReferenceChoices(prev => {
+                      if (!prev.includes(refFile.fileName)) {
+                        return [...prev, refFile.fileName];
+                      }
+                      return prev;
+                    });
+                    console.log("OCR Page - Set reference file:", refFile.fileName);
+                  }
+                }
+              } else {
+                // Fallback file loading
+                console.log("OCR Page - Fallback file loading...");
+                const srcName = evalToLoad.files?.sourceFileName;
+                const refName = evalToLoad.files?.referenceFileName;
+                
+                if (srcName) {
+                  setSrcFileName(srcName);
+                  setSourceChoices(prev => {
+                    if (!prev.includes(srcName)) {
+                      return [...prev, srcName];
+                    }
+                    return prev;
+                  });
+                  console.log("OCR Page - Set source file (fallback):", srcName);
+                }
+                
+                if (refName) {
+                  try {
+                    const data = await loadReferenceByName(refName);
+                    setRefFileName(data.filename);
+                    setReference(data.text);
+                    setRefText(data.text ?? "");
+                    setReferenceChoices(prev => {
+                      if (!prev.includes(data.filename)) {
+                        return [...prev, data.filename];
+                      }
+                      return prev;
+                    });
+                    console.log("OCR Page - Set reference file (fallback):", data.filename);
+                  } catch (error) {
+                    console.warn(`Failed to load reference file ${refName}:`, error);
+                  }
+                }
               }
+            } catch (error) {
+              console.error("Error loading files:", error);
+            }
+          }
+          
+          // Show user feedback for missing items
+          if (showFeedback) {
+            const feedbackMessages: string[] = [];
+            
+            // Check for missing model
+            if (evalToLoad.missingModel) {
+              feedbackMessages.push(`Model "${evalToLoad.missingModel.id}" is not available. Using fallback model.`);
             }
             
-            // Process reference files
-            const referenceFiles = files.filter((f: any) => f.type === 'reference');
-            if (referenceFiles.length > 0) {
-              const refFile = referenceFiles[0];
-              if (refFile.data) {
-                setRefFileName(refFile.fileName);
-                setReference(refFile.data.text);
-                setRefText(refFile.data.text ?? "");
-              }
+            // Check for missing files
+            if (evalToLoad.missingFiles && evalToLoad.missingFiles.length > 0) {
+              feedbackMessages.push(`Missing files: ${evalToLoad.missingFiles.join(', ')}`);
             }
-          } else {
-            // Fallback to original file loading logic
-            const srcName: string | undefined = evalToLoad.files?.sourceFileName;
-            const refName: string | undefined = evalToLoad.files?.referenceFileName;
-            if (srcName) {
-              try {
-                const res = await api.get(`/files/load`, { params: { kind: "source", name: srcName }, responseType: "blob" });
-                const file = new File([res.data], srcName);
-                await onSourceUpload(file);
-              } catch (error) {
-                console.warn(`Failed to load source file ${srcName}:`, error);
-              }
-            }
-            if (refName) {
-              try {
-                const data = await loadReferenceByName(refName);
-                setRefFileName(data.filename);
-                setReference(data.text);
-                setRefText(data.text ?? "");
-              } catch (error) {
-                console.warn(`Failed to load reference file ${refName}:`, error);
-              }
+            
+            // Show consolidated feedback
+            if (feedbackMessages.length > 0) {
+              showError("Evaluation Loaded with Issues", feedbackMessages.join('\n'));
+            } else {
+              showSuccess("Evaluation Loaded", "All files and settings have been restored successfully.");
             }
           }
           
@@ -281,12 +414,83 @@ export default function OCRPage() {
         }
       } else if (automationToLoad?.type === "ocr") {
         try {
-          // Load automation data
-          const firstRun = automationToLoad.runs?.[0];
+          console.log("OCR Page - Loading automation:", automationToLoad);
+          console.log("OCR Page - automationToLoad.automations:", automationToLoad.automations);
+          console.log("OCR Page - automationToLoad.name:", automationToLoad.name);
+          
+          // Handle both single automation and automation set
+          let automation = automationToLoad;
+          let firstRun = null;
+          
+          // If it's an automation set, get the first automation
+          if (automationToLoad.automations && Array.isArray(automationToLoad.automations)) {
+            automation = automationToLoad.automations[0];
+            firstRun = automation?.runs?.[0];
+            console.log("OCR Page - Using first automation from set:", automation);
+            console.log("OCR Page - First run:", firstRun);
+          } else if (automationToLoad.runs && Array.isArray(automationToLoad.runs)) {
+            // It's a single automation
+            firstRun = automationToLoad.runs[0];
+            console.log("OCR Page - Using single automation:", automation);
+            console.log("OCR Page - First run:", firstRun);
+          }
+          
           if (firstRun) {
+            // Set model from automation
+            if (automation.model) {
+              setSelected({
+                id: automation.model.id,
+                label: automation.model.id, // Use id as label if no label provided
+                provider: automation.model.provider as any,
+              });
+              console.log("OCR Page - Set model from automation:", automation.model);
+            }
+            
             setOcrText(firstRun.prompt || "");
             setReference("");
             setTextareaContent(firstRun.prompt || "");
+            
+            // Load automation parameters from the automation object
+            if (automation.parameters) {
+              setParams(prev => ({
+                ...prev,
+                temperature: automation.parameters.temperature ?? prev.temperature,
+                max_tokens: automation.parameters.max_tokens ?? prev.max_tokens,
+                top_p: automation.parameters.top_p ?? prev.top_p,
+                top_k: automation.parameters.top_k ?? prev.top_k,
+              }));
+            }
+            
+            // Load automation metrics from the first run
+            if (firstRun.metrics) {
+              if (Array.isArray(firstRun.metrics)) {
+                // If it's an array of metric names
+                const metricsState: MetricState = {
+                  rouge: false,
+                  bleu: false,
+                  f1: false,
+                  em: false,
+                  em_avg: false,
+                  bertscore: false,
+                  perplexity: false,
+                  accuracy: false,
+                  accuracy_avg: false,
+                  precision: false,
+                  precision_avg: false,
+                  recall: false,
+                  recall_avg: false,
+                };
+                firstRun.metrics.forEach((metric: string) => {
+                  if (metric in metricsState) {
+                    (metricsState as any)[metric] = true;
+                  }
+                });
+                setMetricsState(metricsState);
+              } else if (typeof firstRun.metrics === 'object') {
+                // If it's already a metrics state object
+                setMetricsState(firstRun.metrics as MetricState);
+              }
+            }
             
             // Load files from the first run
             if (firstRun.sourceFileName) {
@@ -309,14 +513,30 @@ export default function OCRPage() {
               }
             }
           }
-        } catch {}
+        } catch (error) {
+          console.error("Failed to load automation:", error);
+        }
+        
+        // Open automation modal if requested
+        // Store automation set data for the modal
+        if (openAutomationModal) {
+          console.log("OCR Page - Opening automation modal with data:", automationToLoad);
+          console.log("OCR Page - Setting loadedAutomationSet:", automationToLoad);
+          console.log("OCR Page - Setting loadedAutomationName:", automationToLoad.name || "Loaded Automation");
+          
+          setLoadedAutomationSet(automationToLoad);
+          setLoadedAutomationName(automationToLoad.name || "Loaded Automation");
+          setIsAutomationModalOpen(true);
+          
+          console.log("OCR Page - Automation modal should now be open");
+        }
       }
     };
     
     loadEvaluationData();
-    // run only once on mount
+    // run when location.state changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location.state]);
 
   const meta = useMemo(
     () => ({
@@ -581,6 +801,35 @@ export default function OCRPage() {
         endTime: Date.now(),
       });
       showError("Metric Computation Failed", "Metric computation failed: " + (e?.response?.data?.detail ?? e.message ?? e));
+      
+      // Save failed evaluation to history
+      try {
+        const evaluation = {
+          id: crypto.randomUUID(),
+          type: "ocr" as const,
+          title: `OCR Evaluation (Failed) - ${new Date().toLocaleDateString('en-GB')}`,
+          model: { id: selected.id, provider: selected.provider },
+          parameters: params,
+          metrics: selectedMetrics,
+          metricsState: metricsState,
+          usedText: {
+            ocrText: ocr?.text ?? "",
+            referenceText: reference,
+            promptText: renderPrompt(textareaContent, ocr?.text ?? "", reference || ""),
+          },
+          files: {
+            sourceFileName: srcFileName,
+            referenceFileName: refFileName,
+          },
+          results: {}, // Empty results for failed evaluations
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          error: e?.response?.data?.detail ?? e.message ?? String(e) // Store error message
+        };
+        await historyService.saveEvaluation(evaluation);
+      } catch (saveError) {
+        console.warn("Failed to save failed evaluation:", saveError);
+      }
     } finally {
       setLoadingType(null);
     }
@@ -683,12 +932,18 @@ export default function OCRPage() {
         // Update progress with animation
         automationStore.updateProgress(automationId, { currentRunIndex: i });
 
+        // Declare variables outside try block so they're accessible in catch block
+        let runOcrText = ocr?.text || "";
+        let runReference = reference || "";
+        let runSrcFileName = srcFileName;
+        let runRefFileName = refFileName;
+        let runModelId = run.modelId || selected?.id;
+        let runModelProvider = run.modelProvider || selected?.provider;
+        let runSelectedMetrics: string[] = [];
+        let injected = "";
+
         try {
           // Load per-run files if specified
-          let runOcrText = ocr?.text || "";
-          let runReference = reference || "";
-          let runSrcFileName = srcFileName;
-          let runRefFileName = refFileName;
 
           // Load source file for this run if specified
           if (run.sourceFileName && run.sourceFileName !== srcFileName) {
@@ -742,8 +997,8 @@ export default function OCRPage() {
           }
 
           // Use per-run model if specified, otherwise use current selected model
-          const runModelId = run.modelId || selected?.id;
-          const runModelProvider = run.modelProvider || selected?.provider;
+          runModelId = run.modelId || selected?.id;
+          runModelProvider = run.modelProvider || selected?.provider;
           
           if (!runModelId) {
             results[run.id] = {
@@ -755,7 +1010,7 @@ export default function OCRPage() {
 
 
           // Build LLM output for this run
-          const injected = renderPrompt(run.prompt, runOcrText, runReference);
+          injected = renderPrompt(run.prompt, runOcrText, runReference);
           const output = await chatComplete(
             runModelId,
             [
@@ -767,7 +1022,7 @@ export default function OCRPage() {
 
 
           // Compute metrics - only compute selected metrics
-          const runSelectedMetrics: string[] = [];
+          runSelectedMetrics = [];
           if (run.metrics.rouge) runSelectedMetrics.push("rouge");
           if (run.metrics.bleu) runSelectedMetrics.push("bleu");
           if (run.metrics.f1) runSelectedMetrics.push("f1");
@@ -810,7 +1065,7 @@ export default function OCRPage() {
               id: crypto.randomUUID(),
               type: "ocr" as const,
               title: `${config.name} - ${run.name}`,
-              model: { id: runModelId, provider: runModelProvider || "local" },
+              model: { id: runModelId || "unknown", provider: runModelProvider || "local" },
               parameters: run.parameters,
               metrics: runSelectedMetrics,
               usedText: {
@@ -839,6 +1094,36 @@ export default function OCRPage() {
             runName: run.name,
             error: error?.message ?? String(error),
           };
+
+          // Save failed evaluation to history
+          try {
+            const evaluation = {
+              id: crypto.randomUUID(),
+              type: "ocr" as const,
+              title: `${config.name} - ${run.name} (Failed)`,
+              model: { id: runModelId || "unknown", provider: runModelProvider || "local" },
+              parameters: run.parameters,
+              metrics: runSelectedMetrics,
+              usedText: {
+                ocrText: runOcrText,
+                referenceText: runReference,
+                promptText: injected,
+              },
+              files: {
+                sourceFileName: runSrcFileName,
+                referenceFileName: runRefFileName,
+              },
+              results: {}, // Empty results for failed evaluations
+              startedAt: new Date().toISOString(),
+              finishedAt: new Date().toISOString(),
+              automationId: config.id,
+              runId: run.id,
+              error: error?.message ?? String(error), // Store error message
+            };
+            await historyService.saveEvaluation(evaluation);
+          } catch (e) {
+            console.warn("Failed to save failed evaluation:", e);
+          }
         }
       }
 
@@ -858,6 +1143,7 @@ export default function OCRPage() {
       
       // Save automation aggregate to history
       try {
+        const automationSetId = `ocr_${config.name}_${Date.now()}`;
         const automationAggregate = {
           id: config.id,
           name: config.name,
@@ -866,7 +1152,8 @@ export default function OCRPage() {
           parameters: params,
           runs: config.runs.map(run => ({
             id: run.id,
-            name: run.name,
+            runId: run.id,
+            runName: run.name,
             prompt: run.prompt,
             parameters: run.parameters,
             metrics: run.metrics,
@@ -877,12 +1164,13 @@ export default function OCRPage() {
             results: results[run.id]?.scores || null,
             error: results[run.id]?.error || null,
             startedAt: new Date().toISOString(),
-            completedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
             status: results[run.id]?.error ? "error" : "completed",
           })),
           status: errorCount === 0 ? "completed" : successCount === 0 ? "error" : "completed",
           createdAt: new Date().toISOString(),
           completedAt: new Date(),
+          automationSetId: automationSetId,
         };
         await api.post("/history/automations", automationAggregate);
       } catch (e) {
@@ -1360,8 +1648,9 @@ export default function OCRPage() {
             </p>
           </div>
         </div>
-        <ExpandableTextarea 
+        <TextDisplay 
           value={ocr?.text ?? ""} 
+          title="OCR Extracted Text"
         />
       </section>
 
@@ -1400,11 +1689,11 @@ export default function OCRPage() {
           </div>
           
         </div>
-        <ExpandableTextarea 
+        <TextDisplay 
           editable 
           value={llmOutput} 
           onChange={setLlmOutput}
-          
+          title="LLM Output"
         />
         <div>
           <LoadingButton
@@ -1466,49 +1755,143 @@ export default function OCRPage() {
             </p>
           </div>
         </div>
-        <ExpandableTextarea 
+        <TextDisplay 
           editable 
           value={reference} 
           onChange={setReference}
+          title="Reference Text"
         />
       </section>
     </>
   );
 
   const renderSideBySideView = () => (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
       <section style={{ display: "grid", gap: 8 }}>
         <h3 style={{ margin: 0, color: "#e2e8f0" }}>OCR Extracted Text</h3>
-        <ExpandableTextarea value={ocr?.text ?? ""} />
+        <TextDisplay value={ocr?.text ?? ""} />
       </section>
 
       <section style={{ display: "grid", gap: 8 }}>
         <h3 style={{ margin: 0, color: "#e2e8f0" }}>LLM Output</h3>
-        <ExpandableTextarea editable value={llmOutput} onChange={setLlmOutput} />
+        <TextDisplay editable value={llmOutput} onChange={setLlmOutput} />
       </section>
 
       <section style={{ display: "grid", gap: 8 }}>
         <h3 style={{ margin: 0, color: "#e2e8f0" }}>Reference Text</h3>
-        <ExpandableTextarea editable value={reference} onChange={setReference} />
-      </section>
-
-      <div />
-    </div>
-  );
-
-  const renderCompareTwoView = () => (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-      <section style={{ display: "grid", gap: 8 }}>
-        <h3 style={{ margin: 0, color: "#e2e8f0" }}>OCR Extracted Text</h3>
-        <ExpandableTextarea value={ocr?.text ?? ""} />
-      </section>
-
-      <section style={{ display: "grid", gap: 8 }}>
-        <h3 style={{ margin: 0, color: "#e2e8f0" }}>Reference Text</h3>
-        <ExpandableTextarea editable value={reference} onChange={setReference} />
+        <TextDisplay editable value={reference} onChange={setReference} />
       </section>
     </div>
   );
+
+  const renderCompareTwoView = () => {
+    const getTextForType = (type: "ocr" | "llm" | "reference") => {
+      switch (type) {
+        case "ocr": return ocr?.text ?? "";
+        case "llm": return llmOutput;
+        case "reference": return reference;
+        default: return "";
+      }
+    };
+
+    const getTitleForType = (type: "ocr" | "llm" | "reference") => {
+      switch (type) {
+        case "ocr": return "OCR Extracted Text";
+        case "llm": return "LLM Output";
+        case "reference": return "Reference Text";
+        default: return "";
+      }
+    };
+
+    const isEditable = (type: "ocr" | "llm" | "reference") => {
+      return type === "llm" || type === "reference";
+    };
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Selection Controls */}
+        <div style={{ 
+          display: "flex", 
+          gap: 16, 
+          padding: 16, 
+          background: "#1e293b", 
+          borderRadius: 8, 
+          border: "1px solid #334155" 
+        }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>First Item</label>
+            <select
+              value={compareSelection.first}
+              onChange={(e) => setCompareSelection(prev => ({ ...prev, first: e.target.value as "ocr" | "llm" | "reference" }))}
+              style={{
+                padding: "8px 12px",
+                border: "1px solid #334155",
+                borderRadius: 6,
+                background: "#0f172a",
+                color: "#e2e8f0",
+                fontSize: 14,
+                outline: "none",
+                transition: "all 0.2s ease"
+              }}
+            >
+              <option value="ocr">OCR Extracted Text</option>
+              <option value="llm">LLM Output</option>
+              <option value="reference">Reference Text</option>
+            </select>
+          </div>
+          
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Second Item</label>
+            <select
+              value={compareSelection.second}
+              onChange={(e) => setCompareSelection(prev => ({ ...prev, second: e.target.value as "ocr" | "llm" | "reference" }))}
+              style={{
+                padding: "8px 12px",
+                border: "1px solid #334155",
+                borderRadius: 6,
+                background: "#0f172a",
+                color: "#e2e8f0",
+                fontSize: 14,
+                outline: "none",
+                transition: "all 0.2s ease"
+              }}
+            >
+              <option value="ocr">OCR Extracted Text</option>
+              <option value="llm">LLM Output</option>
+              <option value="reference">Reference Text</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Comparison View */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <section style={{ display: "grid", gap: 8 }}>
+            <h3 style={{ margin: 0, color: "#e2e8f0" }}>{getTitleForType(compareSelection.first)}</h3>
+            <TextDisplay 
+              editable={isEditable(compareSelection.first)}
+              value={getTextForType(compareSelection.first)} 
+              onChange={isEditable(compareSelection.first) ? 
+                (compareSelection.first === "llm" ? setLlmOutput : setReference) : 
+                undefined
+              }
+            />
+          </section>
+
+          <section style={{ display: "grid", gap: 8 }}>
+            <h3 style={{ margin: 0, color: "#e2e8f0" }}>{getTitleForType(compareSelection.second)}</h3>
+            <TextDisplay 
+              editable={isEditable(compareSelection.second)}
+              value={getTextForType(compareSelection.second)} 
+              onChange={isEditable(compareSelection.second) ? 
+                (compareSelection.second === "llm" ? setLlmOutput : setReference) : 
+                undefined
+              }
+            />
+          </section>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <LayoutShell title="OCR Evaluation" left={left} right={right} rightWidth={400}>
@@ -1880,11 +2263,17 @@ export default function OCRPage() {
       {/* Automation Modal */}
       <AutomationModal
         isOpen={isAutomationModalOpen}
-        onClose={() => setIsAutomationModalOpen(false)}
+        onClose={() => {
+          setIsAutomationModalOpen(false);
+          setLoadedAutomationSet(null);
+          setLoadedAutomationName("");
+        }}
         onStart={handleAutomationStart}
         presetStore={ocrPresetStore}
         defaultPrompt={textareaContent}
         kind="ocr"
+        loadedAutomationSet={loadedAutomationSet}
+        loadedAutomationName={loadedAutomationName}
       />
       
       {/* Automation Progress Modal */}
