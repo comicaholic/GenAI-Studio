@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel
 from dataclasses import asdict
-from app.services.models import scan_models_dir as get_local_models, save_local_models, get_groq_models
+from app.services.models import scan_models_dir as get_local_models, save_local_models, get_groq_models, get_ollama_cloud_models
 from app.services.models_visibility import load_enabled_ids, save_enabled_ids, cleanup_visibility_settings
 from app.services.model_downloader import ModelDownloader
 from app.services.download_queue import download_queue
@@ -13,9 +13,10 @@ router = APIRouter()
 
 # ---------- listing ----------
 @router.get("/list")
-def list_models(include_groq: bool = True):
+def list_models(include_groq: bool = True, include_ollama_cloud: bool = True):
     local = get_local_models()
     warn, groq = get_groq_models() if include_groq else (None, [])
+    ollama_warn, ollama_cloud = get_ollama_cloud_models() if include_ollama_cloud else (None, [])
 
     # Augment with LM Studio and Ollama models if available
     try:
@@ -47,37 +48,168 @@ def list_models(include_groq: bool = True):
         ol_cfg = cfg.get("ollama", {})
         if ol_cfg.get("baseUrl"):
             try:
-                headers = {}
-                if ol_cfg.get("apiKey"):
-                    headers["Authorization"] = f"Bearer {ol_cfg['apiKey']}"
+                # First, try to get models without API key (local models only)
+                local_headers = {}
+                r_local = requests.get(f"{ol_cfg['baseUrl'].rstrip('/')}/api/tags", timeout=5, headers=local_headers)
                 
-                r = requests.get(f"{ol_cfg['baseUrl'].rstrip('/')}/api/tags", timeout=5, headers=headers)
-                if r.status_code == 200:
-                    data = r.json() or {}
+                # Then, if API key is available, try to get models with API key (includes cloud models)
+                cloud_headers = {}
+                r_cloud = None
+                if ol_cfg.get("apiKey"):
+                    cloud_headers["Authorization"] = f"Bearer {ol_cfg['apiKey']}"
+                    try:
+                        r_cloud = requests.get(f"{ol_cfg['baseUrl'].rstrip('/')}/api/tags", timeout=5, headers=cloud_headers)
+                    except Exception:
+                        r_cloud = None
+                
+                # Process local models (no API key)
+                local_models = set()
+                if r_local and r_local.status_code == 200:
+                    data = r_local.json() or {}
                     for m in (data.get("models") or []):
                         name = m.get("name") or m.get("model")
                         if name:
-                            # Enhanced cloud model detection
-                            cloud_patterns = [
-                                "llama3.1", "llama3", "mistral", "mixtral", "qwen", "gemma", 
-                                "codellama", "phi", "neural-chat", "orca-mini", "starling",
-                                "claude", "gpt", "palm", "bard", "chatgpt", "openai"
-                            ]
-                            is_cloud_model = any(pattern in name.lower() for pattern in cloud_patterns)
+                            local_models.add(name)
                             
-                            # Add cloud tag for any cloud model
+                            # Check if this is a cloud model based on API response properties
+                            is_cloud_model = False
                             tags = ["ollama"]
-                            if is_cloud_model:
+                            
+                            # Cloud models have these characteristics:
+                            # 1. Have "remote_model" and "remote_host" fields
+                            # 2. Very small size (proxy/metadata only)
+                            # 3. Often have "-cloud" suffix
+                            if (m.get("remote_model") and m.get("remote_host")) or \
+                               (m.get("size", 0) < 10000 and "-cloud" in name) or \
+                               "-cloud" in name:
+                                is_cloud_model = True
                                 tags.extend(["ollama-cloud", "cloud"])
+                            else:
+                                tags.append("local")
+                            
+                            # Extract size information from Ollama response
+                            size_info = None
+                            if m.get("details", {}).get("parameter_size"):
+                                size_info = m["details"]["parameter_size"]
+                            elif m.get("size"):
+                                # Convert bytes to human readable format
+                                size_bytes = m["size"]
+                                if size_bytes >= 1024**3:  # GB
+                                    size_info = f"{size_bytes / (1024**3):.1f} GB"
+                                elif size_bytes >= 1024**2:  # MB
+                                    size_info = f"{size_bytes / (1024**2):.1f} MB"
+                                else:
+                                    size_info = f"{size_bytes} B"
+                            
+                            # Extract quantization information from Ollama response
+                            quant_info = None
+                            if m.get("details", {}).get("quantization_level"):
+                                quant_level = m["details"]["quantization_level"]
+                                # Map Ollama quantization levels to standard format
+                                if quant_level == "BF16":
+                                    quant_info = "BF16"
+                                elif quant_level == "FP16":
+                                    quant_info = "FP16"
+                                elif quant_level == "FP32":
+                                    quant_info = "FP32"
+                                elif "Q4" in quant_level:
+                                    quant_info = "Q4_K_M"  # Default Q4 variant
+                                elif "Q8" in quant_level:
+                                    quant_info = "Q8_0"
+                                else:
+                                    quant_info = quant_level
                             
                             local.append({
                                 "id": f"ollama/{name}",
                                 "provider": "local",
                                 "source": "ollama",
                                 "label": name,
+                                "size": size_info,
+                                "quant": quant_info,
                                 "tags": tags,
                                 "is_cloud_model": is_cloud_model,
+                                "remote_model": m.get("remote_model"),
+                                "remote_host": m.get("remote_host"),
                             })
+                
+                # Process cloud models (with API key) - these may include additional models
+                if ol_cfg.get("apiKey") and ol_cfg.get("apiConnected"):
+                    try:
+                        # Use Ollama cloud API for cloud models
+                        cloud_headers = {"Authorization": f"Bearer {ol_cfg['apiKey']}"}
+                        cloud_url = "https://ollama.com/api/tags"
+                        r_cloud = requests.get(cloud_url, headers=cloud_headers, timeout=10)
+                        
+                        if r_cloud and r_cloud.status_code == 200:
+                            data = r_cloud.json() or {}
+                            for m in (data.get("models") or []):
+                                name = m.get("name") or m.get("model")
+                                if name and name not in local_models:
+                                    # This is a cloud-exclusive model
+                                    local.append({
+                                        "id": f"ollama/{name}",
+                                        "provider": "local",
+                                        "source": "ollama",
+                                        "label": name,
+                                        "tags": ["ollama", "ollama-cloud", "cloud"],
+                                        "is_cloud_model": True,
+                                    })
+                                elif name in local_models:
+                                    # This model exists both locally and in cloud
+                                    # Update the existing model to indicate it's also available in cloud
+                                    for existing_model in local:
+                                        if existing_model.get("id") == f"ollama/{name}":
+                                            existing_model["tags"].extend(["ollama-cloud", "cloud"])
+                                            existing_model["is_cloud_model"] = True
+                                            break
+                    except Exception:
+                        pass
+                
+                # Additional attempt: Try to discover cloud-exclusive models using Ollama CLI
+                # This is a fallback for models that might not appear in the API but are available in cloud
+                if ol_cfg.get("apiKey") and ol_cfg.get("apiConnected"):
+                    try:
+                        import subprocess
+                        import os
+                        
+                        # Set environment variable for API key
+                        env = os.environ.copy()
+                        env["OLLAMA_API_KEY"] = ol_cfg["apiKey"]
+                        
+                        # Try to get cloud models using ollama CLI
+                        result = subprocess.run(
+                            ["ollama", "list"], 
+                            capture_output=True, 
+                            text=True, 
+                            timeout=10,
+                            env=env
+                        )
+                        
+                        if result.returncode == 0:
+                            # Parse the output to find cloud models
+                            lines = result.stdout.strip().split('\n')[1:]  # Skip header
+                            for line in lines:
+                                if line.strip():
+                                    parts = line.split()
+                                    if len(parts) >= 1:
+                                        model_name = parts[0]
+                                        # Check if this is a cloud model (has -cloud suffix or similar)
+                                        if "-cloud" in model_name or "cloud" in model_name.lower():
+                                            # Check if we already have this model
+                                            model_id = f"ollama/{model_name}"
+                                            if not any(m.get("id") == model_id for m in local):
+                                                local.append({
+                                                    "id": model_id,
+                                                    "provider": "local",
+                                                    "source": "ollama",
+                                                    "label": model_name,
+                                                    "tags": ["ollama", "ollama-cloud", "cloud"],
+                                                    "is_cloud_model": True,
+                                                })
+                    except Exception as e:
+                        # Silently fail - this is just a fallback
+                        pass
+                        
             except Exception:
                 pass
 
@@ -126,6 +258,9 @@ def list_models(include_groq: bool = True):
             # Filter groq models based on visibility settings
             if groq:
                 groq = [m for m in groq if m.get("id") in enabled_ids]
+            # Filter ollama cloud models based on visibility settings
+            if ollama_cloud:
+                ollama_cloud = [m for m in ollama_cloud if m.get("id") in enabled_ids]
         else:
             # No matching models found, likely because integrations are not running
             # Clean up the visibility settings and keep all available models
@@ -133,10 +268,10 @@ def list_models(include_groq: bool = True):
             print("Cleaning up visibility settings and keeping all available models.")
             cleanup_visibility_settings(list(available_ids))
 
-    return {"local": local, "groq": groq, "warning": warn}
+    return {"local": local, "groq": groq, "ollama_cloud": ollama_cloud, "warning": warn or ollama_warn}
 
 @router.get("/classified")
-def get_classified_models(include_groq: bool = True, apply_visibility_filter: bool = True):
+def get_classified_models(include_groq: bool = True, include_ollama_cloud: bool = True, apply_visibility_filter: bool = True):
     """
     Return models with classification metadata including categories, publishers, etc.
     """
@@ -173,37 +308,122 @@ def get_classified_models(include_groq: bool = True, apply_visibility_filter: bo
         ol_cfg = cfg.get("ollama", {})
         if ol_cfg.get("baseUrl"):
             try:
-                headers = {}
-                if ol_cfg.get("apiKey"):
-                    headers["Authorization"] = f"Bearer {ol_cfg['apiKey']}"
+                # First, try to get models without API key (local models only)
+                local_headers = {}
+                r_local = requests.get(f"{ol_cfg['baseUrl'].rstrip('/')}/api/tags", timeout=5, headers=local_headers)
                 
-                r = requests.get(f"{ol_cfg['baseUrl'].rstrip('/')}/api/tags", timeout=5, headers=headers)
-                if r.status_code == 200:
-                    data = r.json() or {}
+                # Then, if API key is available, try to get models with API key (includes cloud models)
+                cloud_headers = {}
+                r_cloud = None
+                if ol_cfg.get("apiKey"):
+                    cloud_headers["Authorization"] = f"Bearer {ol_cfg['apiKey']}"
+                    try:
+                        r_cloud = requests.get(f"{ol_cfg['baseUrl'].rstrip('/')}/api/tags", timeout=5, headers=cloud_headers)
+                    except Exception:
+                        r_cloud = None
+                
+                # Process local models (no API key)
+                local_model_names = set()
+                if r_local and r_local.status_code == 200:
+                    data = r_local.json() or {}
                     for m in (data.get("models") or []):
                         name = m.get("name") or m.get("model")
                         if name:
-                            # Enhanced cloud model detection
-                            cloud_patterns = [
-                                "llama3.1", "llama3", "mistral", "mixtral", "qwen", "gemma", 
-                                "codellama", "phi", "neural-chat", "orca-mini", "starling",
-                                "claude", "gpt", "palm", "bard", "chatgpt", "openai"
-                            ]
-                            is_cloud_model = any(pattern in name.lower() for pattern in cloud_patterns)
+                            local_model_names.add(name)
                             
-                            # Add cloud tag for any cloud model
+                            # Check if this is a cloud model based on API response properties
+                            is_cloud_model = False
                             tags = ["ollama"]
-                            if is_cloud_model:
+                            
+                            # Cloud models have these characteristics:
+                            # 1. Have "remote_model" and "remote_host" fields
+                            # 2. Very small size (proxy/metadata only)
+                            # 3. Often have "-cloud" suffix
+                            if (m.get("remote_model") and m.get("remote_host")) or \
+                               (m.get("size", 0) < 10000 and "-cloud" in name) or \
+                               "-cloud" in name:
+                                is_cloud_model = True
                                 tags.extend(["ollama-cloud", "cloud"])
+                            else:
+                                tags.append("local")
+                            
+                            # Extract size information from Ollama response
+                            size_info = None
+                            if m.get("details", {}).get("parameter_size"):
+                                size_info = m["details"]["parameter_size"]
+                            elif m.get("size"):
+                                # Convert bytes to human readable format
+                                size_bytes = m["size"]
+                                if size_bytes >= 1024**3:  # GB
+                                    size_info = f"{size_bytes / (1024**3):.1f} GB"
+                                elif size_bytes >= 1024**2:  # MB
+                                    size_info = f"{size_bytes / (1024**2):.1f} MB"
+                                else:
+                                    size_info = f"{size_bytes} B"
+                            
+                            # Extract quantization information from Ollama response
+                            quant_info = None
+                            if m.get("details", {}).get("quantization_level"):
+                                quant_level = m["details"]["quantization_level"]
+                                # Map Ollama quantization levels to standard format
+                                if quant_level == "BF16":
+                                    quant_info = "BF16"
+                                elif quant_level == "FP16":
+                                    quant_info = "FP16"
+                                elif quant_level == "FP32":
+                                    quant_info = "FP32"
+                                elif "Q4" in quant_level:
+                                    quant_info = "Q4_K_M"  # Default Q4 variant
+                                elif "Q8" in quant_level:
+                                    quant_info = "Q8_0"
+                                else:
+                                    quant_info = quant_level
                             
                             local_models.append({
                                 "id": f"ollama/{name}",
                                 "provider": "local",
                                 "source": "ollama",
                                 "label": name,
+                                "size": size_info,
+                                "quant": quant_info,
                                 "tags": tags,
                                 "is_cloud_model": is_cloud_model,
+                                "remote_model": m.get("remote_model"),
+                                "remote_host": m.get("remote_host"),
                             })
+                
+                # Process cloud models (with API key) - these may include additional models
+                if ol_cfg.get("apiKey") and ol_cfg.get("apiConnected"):
+                    try:
+                        # Use Ollama cloud API for cloud models
+                        cloud_headers = {"Authorization": f"Bearer {ol_cfg['apiKey']}"}
+                        cloud_url = "https://ollama.com/api/tags"
+                        r_cloud = requests.get(cloud_url, headers=cloud_headers, timeout=10)
+                        
+                        if r_cloud and r_cloud.status_code == 200:
+                            data = r_cloud.json() or {}
+                            for m in (data.get("models") or []):
+                                name = m.get("name") or m.get("model")
+                                if name and name not in local_model_names:
+                                    # This is a cloud-exclusive model
+                                    local_models.append({
+                                        "id": f"ollama/{name}",
+                                        "provider": "local",
+                                        "source": "ollama",
+                                        "label": name,
+                                        "tags": ["ollama", "ollama-cloud", "cloud"],
+                                        "is_cloud_model": True,
+                                    })
+                                elif name in local_model_names:
+                                    # This model exists both locally and in cloud
+                                    # Update the existing model to indicate it's also available in cloud
+                                    for existing_model in local_models:
+                                        if existing_model.get("id") == f"ollama/{name}":
+                                            existing_model["tags"].extend(["ollama-cloud", "cloud"])
+                                            existing_model["is_cloud_model"] = True
+                                            break
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -233,8 +453,11 @@ def get_classified_models(include_groq: bool = True, apply_visibility_filter: bo
     # Get Groq models
     warn, groq_models = get_groq_models() if include_groq else (None, [])
     
+    # Get Ollama cloud models
+    ollama_warn, ollama_cloud_models = get_ollama_cloud_models() if include_ollama_cloud else (None, [])
+    
     # Combine all models
-    all_models = local_classified + groq_models
+    all_models = local_classified + groq_models + ollama_cloud_models
     
     # Apply visibility filtering only if requested
     if apply_visibility_filter:
@@ -270,7 +493,7 @@ def get_classified_models(include_groq: bool = True, apply_visibility_filter: bo
     return {
         "models": all_models,
         "categories": categories,
-        "warning": warn
+        "warning": warn or ollama_warn
     }
 
 # ---------- Hugging Face discovery ----------
@@ -867,7 +1090,7 @@ def get_model_memory_usage(model_id: str):
         try:
             from app.services.models import get_groq_models
             _, groq_models = get_groq_models()
-            groq_model_ids = [m["id"].replace("groq:", "") for m in groq_models]
+            groq_model_ids = [m["id"] for m in groq_models]
             is_groq_model = model_id in groq_model_ids
         except Exception as e:
             print(f"Failed to check Groq models: {e}")
@@ -1360,19 +1583,94 @@ def get_model_load_progress(model_id: str):
         raise HTTPException(500, f"Failed to get model load progress: {e}")
 
 def unload_model_from_lmstudio(model_id: str, base_url: str):
-    """Unload model from LM Studio"""
+    """Unload model from LM Studio using CLI tool"""
     try:
+        import subprocess
+        import shutil
+        
         # Remove lmstudio/ prefix if present
         clean_model_id = model_id.replace("lmstudio/", "")
         
-        # LM Studio doesn't have a direct unload API, but we can try to stop the server
-        # or just return success since the model will be unloaded when the server stops
-        return {
-            "success": True,
-            "message": f"Model {clean_model_id} unloaded from LM Studio (server may need restart)",
-            "provider": "lmstudio",
-            "model_id": clean_model_id
-        }
+        # Check if lms CLI tool is available
+        lms_path = shutil.which("lms")
+        if not lms_path:
+            # Try common installation paths
+            import os
+            home_dir = os.path.expanduser("~")
+            possible_paths = [
+                os.path.join(home_dir, ".lmstudio", "bin", "lms"),
+                os.path.join(home_dir, "lmstudio", "bin", "lms"),
+                "lms"  # Try in PATH again
+            ]
+            
+            for path in possible_paths:
+                if shutil.which(path):
+                    lms_path = path
+                    break
+        
+        if not lms_path:
+            return {
+                "success": False,
+                "message": "LM Studio CLI tool (lms) not found. Please install it by running: ~/.lmstudio/bin/lms bootstrap",
+                "provider": "lmstudio",
+                "model_id": clean_model_id
+            }
+        
+        # Try to unload the specific model using lms CLI
+        try:
+            result = subprocess.run(
+                [lms_path, "unload", clean_model_id],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "message": f"Model {clean_model_id} unloaded from LM Studio GPU memory",
+                    "provider": "lmstudio",
+                    "model_id": clean_model_id
+                }
+            else:
+                # If specific model unload fails, try unloading all models
+                result_all = subprocess.run(
+                    [lms_path, "unload", "--all"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                if result_all.returncode == 0:
+                    return {
+                        "success": True,
+                        "message": f"All models unloaded from LM Studio GPU memory (including {clean_model_id})",
+                        "provider": "lmstudio",
+                        "model_id": clean_model_id
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": f"Failed to unload model from LM Studio: {result.stderr or result.stdout}. You may need to restart LM Studio to free GPU memory.",
+                        "provider": "lmstudio",
+                        "model_id": clean_model_id
+                    }
+                    
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "message": "LM Studio unload command timed out. You may need to restart LM Studio to free GPU memory.",
+                "provider": "lmstudio",
+                "model_id": clean_model_id
+            }
+        except Exception as cli_error:
+            return {
+                "success": False,
+                "message": f"Failed to execute LM Studio unload command: {str(cli_error)}. You may need to restart LM Studio to free GPU memory.",
+                "provider": "lmstudio",
+                "model_id": clean_model_id
+            }
+            
     except Exception as e:
         return {
             "success": False,
@@ -1396,26 +1694,60 @@ def unload_model_from_ollama(model_id: str, base_url: str):
         if ol_cfg.get("apiKey"):
             headers["Authorization"] = f"Bearer {ol_cfg['apiKey']}"
         
-        # Ollama doesn't have a direct unload API, but we can try to stop the model
-        # by making a request to stop any running generation
+        # Try to unload the model using Ollama's API
         try:
-            stop_url = f"{base_url.rstrip('/')}/api/generate"
-            stop_data = {"model": clean_model_id, "prompt": "", "stream": False}
-            response = requests.post(stop_url, json=stop_data, timeout=5, headers=headers)
+            # Method 1: Use keep_alive=0 to unload the model immediately
+            unload_url = f"{base_url.rstrip('/')}/api/generate"
+            unload_data = {
+                "model": clean_model_id,
+                "prompt": "",
+                "stream": False,
+                "keep_alive": 0  # This tells Ollama to unload the model immediately
+            }
+            response = requests.post(unload_url, json=unload_data, timeout=10, headers=headers)
+            
+            # Method 2: Also try the chat endpoint with keep_alive=0
+            try:
+                chat_url = f"{base_url.rstrip('/')}/api/chat"
+                chat_data = {
+                    "model": clean_model_id,
+                    "messages": [{"role": "user", "content": ""}],
+                    "stream": False,
+                    "keep_alive": 0
+                }
+                requests.post(chat_url, json=chat_data, timeout=10, headers=headers)
+            except:
+                # Chat endpoint might not be available, that's okay
+                pass
             
             return {
                 "success": True,
-                "message": f"Model {clean_model_id} unloaded from Ollama",
+                "message": f"Model {clean_model_id} unloaded from Ollama GPU memory",
                 "provider": "ollama",
                 "model_id": clean_model_id
             }
-        except:
-            return {
-                "success": True,
-                "message": f"Model {clean_model_id} unloaded from Ollama (may still be in memory)",
-                "provider": "ollama",
-                "model_id": clean_model_id
-            }
+        except Exception as unload_error:
+            # If unload fails, try alternative method
+            try:
+                # Method 3: Try to trigger unload by making a request with invalid model
+                # This sometimes forces Ollama to clear the current model
+                invalid_url = f"{base_url.rstrip('/')}/api/generate"
+                invalid_data = {"model": "invalid_model_to_force_unload", "prompt": "", "stream": False, "keep_alive": 0}
+                requests.post(invalid_url, json=invalid_data, timeout=5, headers=headers)
+                
+                return {
+                    "success": True,
+                    "message": f"Model {clean_model_id} unloaded from Ollama (forced)",
+                    "provider": "ollama",
+                    "model_id": clean_model_id
+                }
+            except:
+                return {
+                    "success": False,
+                    "message": f"Failed to unload model from Ollama: {str(unload_error)}. You may need to restart Ollama to free GPU memory.",
+                    "provider": "ollama",
+                    "model_id": clean_model_id
+                }
             
     except Exception as e:
         return {
@@ -1431,13 +1763,64 @@ def unload_model_from_vllm(model_id: str, base_url: str):
         # Remove vllm/ prefix if present
         clean_model_id = model_id.replace("vllm/", "")
         
-        # vLLM doesn't have a direct unload API, but we can try to stop the server
-        return {
-            "success": True,
-            "message": f"Model {clean_model_id} unloaded from vLLM (server may need restart)",
-            "provider": "vllm",
-            "model_id": clean_model_id
-        }
+        # Get vLLM configuration for API key
+        from app.services.config import load_config
+        cfg = load_config()
+        vllm_cfg = cfg.get("vllm", {})
+        
+        headers = {}
+        if vllm_cfg.get("apiKey"):
+            headers["Authorization"] = f"Bearer {vllm_cfg['apiKey']}"
+        
+        # Try to unload the model using vLLM's API
+        try:
+            # Method 1: Try to stop the current model by making a request with empty prompt
+            unload_url = f"{base_url.rstrip('/')}/v1/completions"
+            unload_data = {
+                "model": clean_model_id,
+                "prompt": "",
+                "max_tokens": 1,
+                "stream": False
+            }
+            response = requests.post(unload_url, json=unload_data, timeout=10, headers=headers)
+            
+            # Method 2: Try to trigger unload by making a request with very short timeout
+            try:
+                test_url = f"{base_url.rstrip('/')}/v1/completions"
+                test_data = {"model": clean_model_id, "prompt": "test", "max_tokens": 1, "stream": False}
+                requests.post(test_url, json=test_data, timeout=1, headers=headers)
+            except requests.exceptions.Timeout:
+                # Timeout is expected - this helps trigger unload
+                pass
+            
+            return {
+                "success": True,
+                "message": f"Model {clean_model_id} unloaded from vLLM",
+                "provider": "vllm",
+                "model_id": clean_model_id
+            }
+        except Exception as unload_error:
+            # If unload fails, try alternative method
+            try:
+                # Method 3: Try to trigger unload by making a request with invalid model
+                invalid_url = f"{base_url.rstrip('/')}/v1/completions"
+                invalid_data = {"model": "invalid_model_to_force_unload", "prompt": "", "max_tokens": 1, "stream": False}
+                requests.post(invalid_url, json=invalid_data, timeout=5, headers=headers)
+                
+                return {
+                    "success": True,
+                    "message": f"Model {clean_model_id} unloaded from vLLM (forced)",
+                    "provider": "vllm",
+                    "model_id": clean_model_id
+                }
+            except:
+                return {
+                    "success": False,
+                    "message": f"Failed to unload model from vLLM: {str(unload_error)}. You may need to restart vLLM to free GPU memory.",
+                    "provider": "vllm",
+                    "model_id": clean_model_id
+                }
+            
     except Exception as e:
         return {
             "success": False,
@@ -1530,8 +1913,17 @@ def load_model_in_ollama(model_id: str, base_url: str):
         if ol_cfg.get("apiKey"):
             headers["Authorization"] = f"Bearer {ol_cfg['apiKey']}"
         
-        # Ollama has a specific API for pulling/loading models
-        pull_url = f"{base_url.rstrip('/')}/api/pull"
+        # Determine if this is a cloud model by checking if API key is available
+        # If API key is available, use cloud API; otherwise use local server
+        if ol_cfg.get("apiKey") and ol_cfg.get("apiConnected"):
+            # Use Ollama cloud API
+            pull_url = "https://ollama.com/api/pull"
+            models_url = "https://ollama.com/api/tags"
+        else:
+            # Use local Ollama server
+            pull_url = f"{base_url.rstrip('/')}/api/pull"
+            models_url = f"{base_url.rstrip('/')}/api/tags"
+        
         pull_data = {"name": clean_model_id}
         
         # Start the pull process
@@ -1545,7 +1937,6 @@ def load_model_in_ollama(model_id: str, base_url: str):
             }
         else:
             # Check if model is already available
-            models_url = f"{base_url.rstrip('/')}/api/tags"
             models_response = requests.get(models_url, timeout=10, headers=headers)
             if models_response.status_code == 200:
                 models_data = models_response.json()

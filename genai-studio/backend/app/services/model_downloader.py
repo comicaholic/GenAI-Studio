@@ -8,6 +8,7 @@ from huggingface_hub import hf_hub_download, HfApi, snapshot_download
 from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
 import requests
 import psutil
+from .models import register_local_model, _load, _save
 import torch
 import threading
 import time
@@ -329,14 +330,6 @@ class ModelDownloader:
     def _register_local_model(self, model_id: str, model_path: str, model_info: Dict):
         """Register downloaded model in the local models registry"""
         try:
-            # Load existing registry
-            registry_path = Path("data/models_registry.json")
-            if registry_path.exists():
-                with open(registry_path, 'r') as f:
-                    registry = json.load(f)
-            else:
-                registry = {"local": []}
-            
             # Create model entry
             model_entry = {
                 "id": model_id,
@@ -351,21 +344,8 @@ class ModelDownloader:
                 "source": "huggingface"
             }
             
-            # Check if model already exists
-            existing_index = None
-            for i, model in enumerate(registry["local"]):
-                if model.get("id") == model_id:
-                    existing_index = i
-                    break
-            
-            if existing_index is not None:
-                registry["local"][existing_index] = model_entry
-            else:
-                registry["local"].append(model_entry)
-            
-            # Save registry
-            with open(registry_path, 'w') as f:
-                json.dump(registry, f, indent=2)
+            # Use the robust registry functions from models.py
+            register_local_model(model_entry)
             
             # Trigger model refresh event
             import threading
@@ -396,16 +376,10 @@ class ModelDownloader:
             if model_dir.exists():
                 shutil.rmtree(model_dir)
             
-            # Remove from registry
-            registry_path = Path("data/models_registry.json")
-            if registry_path.exists():
-                with open(registry_path, 'r') as f:
-                    registry = json.load(f)
-                
-                registry["local"] = [m for m in registry["local"] if m.get("id") != model_id]
-                
-                with open(registry_path, 'w') as f:
-                    json.dump(registry, f, indent=2)
+            # Remove from registry using robust functions
+            registry = _load()
+            registry["local"] = [m for m in registry["local"] if m.get("id") != model_id]
+            _save(registry)
             
             return True
         except Exception as e:

@@ -15,6 +15,19 @@ type Settings = {
     theme: "light" | "dark";
     defaultLandingPage: string;
     backgroundStateManagement: boolean;
+    textSplitting: {
+      enabled: boolean;
+      characterLimit: number;
+      collapseBehavior: "all-collapsed" | "first-expanded" | "all-expanded";
+    };
+    showApiConnections: {
+      groq: boolean;
+      ollama: boolean;
+      huggingface: boolean;
+      lmstudio: boolean;
+      ollamaLocal: boolean;
+      vllm: boolean;
+    };
   };
   paths: {
     ocrSource: string;
@@ -44,6 +57,7 @@ type Settings = {
     baseUrl: string;
     connected: boolean;
     apiKey?: string;
+    apiConnected?: boolean;
   };
   vllm?: {
     baseUrl: string;
@@ -88,7 +102,24 @@ type PresetData = {
 };
 
 const defaultSettings: Settings = {
-  ui: { theme: "dark", defaultLandingPage: "/", backgroundStateManagement: true },
+  ui: { 
+    theme: "dark", 
+    defaultLandingPage: "/", 
+    backgroundStateManagement: true,
+    textSplitting: {
+      enabled: false,
+      characterLimit: 1000,
+      collapseBehavior: "first-expanded"
+    },
+    showApiConnections: {
+      groq: true,
+      ollama: true,
+      huggingface: false,
+      lmstudio: false,
+      ollamaLocal: false,
+      vllm: false,
+    }
+  },
   paths: {
     ocrSource: "./data/source",
     ocrReference: "./data/reference",
@@ -108,20 +139,29 @@ const defaultSettings: Settings = {
 /** ------------------------------
  *  Component
  *  ------------------------------ */
-export default function SettingsPage() {
+function SettingsPage() {
   const { showSuccess, showError, showInfo } = useNotifications();
   const { setBackgroundStateEnabled, backgroundStateEnabled } = usePageState();
 
   // state
   const [settings, setSettings] = useState<Settings>(defaultSettings);
-  const [activeTab, setActiveTab] = useState<"ui" | "paths" | "presets" | "groq" | "huggingface" | "localModels">("ui");
+  const [activeTab, setActiveTab] = useState<"ui" | "paths" | "presets" | "apis" | "local">("ui");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Test connection loading states
+  const [isTestingGroq, setIsTestingGroq] = useState(false);
+  const [isTestingHuggingFace, setIsTestingHuggingFace] = useState(false);
+  const [isTestingOllamaApi, setIsTestingOllamaApi] = useState(false);
+  const [isTestingLmStudio, setIsTestingLmStudio] = useState(false);
+  const [isTestingOllama, setIsTestingOllama] = useState(false);
+  const [isTestingVllm, setIsTestingVllm] = useState(false);
 
   // preset editor state
   const [showPresetEditor, setShowPresetEditor] = useState(false);
   const [editingPreset, setEditingPreset] = useState<PresetData | null>(null);
   const [presetDetails, setPresetDetails] = useState<Record<string, PresetData>>({});
+  const [showGuide, setShowGuide] = useState<string | null>(null);
   
   // Load presets from localStorage stores
   const [localPresets, setLocalPresets] = useState<{
@@ -146,6 +186,14 @@ export default function SettingsPage() {
         const res = await api.get("/settings/settings");
         // merge so we never render undefined sub-objects
         const loadedSettings = { ...defaultSettings, ...(res.data || {}) };
+        // Deep merge UI settings to ensure new properties are preserved
+        if (res.data?.ui) {
+          loadedSettings.ui = { ...defaultSettings.ui, ...res.data.ui };
+        }
+        // Deep merge ollama settings to ensure API key is preserved
+        if (res.data?.ollama) {
+          loadedSettings.ollama = { ...defaultSettings.ollama, ...res.data.ollama };
+        }
         setSettings(loadedSettings);
         
         // Sync background state management setting with page state store
@@ -183,6 +231,7 @@ export default function SettingsPage() {
 
   /** helpers */
   const updateSetting = (path: string, value: any) => {
+    console.log(`Updating setting ${path} to:`, value); // Debug log
     setSettings((prev) => {
       const next: any = { ...prev };
       const keys = path.split(".");
@@ -209,6 +258,25 @@ export default function SettingsPage() {
         validateGpuSelection(value);
       }
       
+      // Handle API key clearing - automatically set connection status to false when API key is cleared
+      if (path === "ollama.apiKey" && (!value || value.trim() === "")) {
+        console.log("Clearing Ollama API key, setting apiConnected to false"); // Debug log
+        if (next.ollama) {
+          next.ollama.apiConnected = false;
+        }
+      }
+      if (path === "groq.apiKey" && (!value || value.trim() === "")) {
+        if (next.groq) {
+          next.groq.connected = false;
+        }
+      }
+      if (path === "huggingface.token" && (!value || value.trim() === "")) {
+        if (next.huggingface) {
+          next.huggingface.connected = false;
+        }
+      }
+      
+      console.log("Updated settings:", next); // Debug log
       return next as Settings;
     });
   };
@@ -216,6 +284,7 @@ export default function SettingsPage() {
   const saveSettings = async () => {
     try {
       setIsSaving(true);
+      console.log("Saving settings:", settings); // Debug log
       await api.post("/settings/settings", settings); // backend persists & writes .env as needed
       showSuccess("Settings Saved", "Your settings have been saved successfully.");
       
@@ -260,6 +329,7 @@ export default function SettingsPage() {
       return;
     }
     try {
+      setIsTestingGroq(true);
       // send key explicitly in body; backend expects { apiKey }
       const res = await api.post("/settings/groq/test", { apiKey: settings.groq.apiKey });
       setSettings((prev) => ({ ...prev, groq: { ...prev.groq, connected: !!res.data?.connected } }));
@@ -273,6 +343,8 @@ export default function SettingsPage() {
       }
     } catch (e: any) {
       showError("Groq Failed", e?.message || "Connection failed.");
+    } finally {
+      setIsTestingGroq(false);
     }
   };
 
@@ -289,6 +361,7 @@ export default function SettingsPage() {
     }
     
     try {
+      setIsTestingHuggingFace(true);
       console.log("Testing HF connection with token:", settings.huggingface.token.substring(0, 10) + "...");
       console.log("Token length:", settings.huggingface.token.length);
       
@@ -307,11 +380,14 @@ export default function SettingsPage() {
     } catch (e: any) {
       console.error("HF test error:", e);
       showError("HF Failed", e?.message || "Connection failed.");
+    } finally {
+      setIsTestingHuggingFace(false);
     }
   };
 
   const testLmStudio = async () => {
     try {
+      setIsTestingLmStudio(true);
       const baseUrl = settings?.lmstudio?.baseUrl || "http://localhost:1234";
       const res = await api.post("/settings/lmstudio/test", { baseUrl });
       const ok = !!res.data?.connected;
@@ -320,24 +396,39 @@ export default function SettingsPage() {
       if (ok) window.dispatchEvent(new Event("models:changed"));
     } catch (e: any) {
       showError("LM Studio", e?.message || "Connection failed");
+    } finally {
+      setIsTestingLmStudio(false);
     }
   };
 
   const testOllama = async () => {
     try {
+      setIsTestingOllama(true);
       const baseUrl = settings?.ollama?.baseUrl || "http://localhost:11434";
       const res = await api.post("/settings/ollama/test", { baseUrl });
       const ok = !!res.data?.connected;
-      setSettings((s) => s ? { ...s, ollama: { baseUrl, connected: ok } } : s);
+      setSettings((s) => s ? { 
+        ...s, 
+        ollama: { 
+          ...s.ollama,
+          baseUrl, 
+          connected: ok,
+          apiKey: s.ollama?.apiKey || "", // Preserve API key
+          apiConnected: s.ollama?.apiConnected || false // Preserve API connection status
+        } 
+      } : s);
       ok ? showSuccess("Ollama", "Connected") : showError("Ollama", res.data?.error || "Connection failed");
       if (ok) window.dispatchEvent(new Event("models:changed"));
     } catch (e: any) {
       showError("Ollama", e?.message || "Connection failed");
+    } finally {
+      setIsTestingOllama(false);
     }
   };
 
   const testVllm = async () => {
     try {
+      setIsTestingVllm(true);
       const baseUrl = settings?.vllm?.baseUrl || "http://localhost:8000";
       const res = await api.post("/settings/vllm/test", { baseUrl });
       const ok = !!res.data?.connected;
@@ -346,6 +437,8 @@ export default function SettingsPage() {
       if (ok) window.dispatchEvent(new Event("models:changed"));
     } catch (e: any) {
       showError("vLLM", e?.message || "Connection failed");
+    } finally {
+      setIsTestingVllm(false);
     }
   };
 
@@ -392,6 +485,42 @@ export default function SettingsPage() {
       }
     } catch (e: any) {
       showError("vLLM Setup", e?.message || "Setup test failed");
+    }
+  };
+
+  const testOllamaApiConnection = async () => {
+    if (!settings.ollama?.apiKey?.trim()) {
+      showError("Missing API Key", "Enter an Ollama API key first.");
+      return;
+    }
+    try {
+      setIsTestingOllamaApi(true);
+      const res = await api.post("/settings/ollama/api/test", { 
+        apiKey: settings.ollama.apiKey,
+        baseUrl: settings.ollama.baseUrl 
+      });
+      setSettings((prev) => ({ 
+        ...prev, 
+        ollama: { 
+          ...prev.ollama,
+          baseUrl: prev.ollama?.baseUrl || "",
+          connected: prev.ollama?.connected || false, // Keep local server status separate
+          apiKey: prev.ollama?.apiKey || "",
+          apiConnected: !!res.data?.connected 
+        } 
+      }));
+      res.data?.connected
+        ? showSuccess("Ollama API Connected", `OK${res.data?.models_count ? ` — ${res.data.models_count} models` : ""}.`)
+        : showError("Ollama API Failed", res.data?.error || "Connection failed.");
+      
+      // Trigger a refresh of models if connection is successful
+      if (res.data?.connected) {
+        window.dispatchEvent(new Event("models:changed"));
+      }
+    } catch (e: any) {
+      showError("Ollama API Test", e?.response?.data?.error || e?.message || "Test failed");
+    } finally {
+      setIsTestingOllamaApi(false);
     }
   };
 
@@ -647,6 +776,53 @@ export default function SettingsPage() {
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#0b1220" }}>
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes pulse {
+          0%, 100% { 
+            transform: scale(1);
+            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+          }
+          50% { 
+            transform: scale(1.05);
+            box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+          }
+        }
+        
+        @keyframes successPulse {
+          0% { 
+            transform: scale(1);
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+          }
+          50% { 
+            transform: scale(1.1);
+            box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+          }
+          100% { 
+            transform: scale(1);
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+          }
+        }
+        
+        @keyframes errorShake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-4px); }
+          75% { transform: translateX(4px); }
+        }
+        
+        @keyframes glow {
+          0%, 100% { 
+            box-shadow: 0 0 5px rgba(59, 130, 246, 0.3);
+          }
+          50% { 
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.6), 0 0 30px rgba(59, 130, 246, 0.3);
+          }
+        }
+      `}</style>
       <LeftRail />
       <div style={{ 
         marginLeft: 80, 
@@ -718,8 +894,8 @@ export default function SettingsPage() {
                 )
               },
               { 
-                id: "groq", 
-                label: "Groq API", 
+                id: "apis", 
+                label: "API Connections", 
                 icon: (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
@@ -727,20 +903,11 @@ export default function SettingsPage() {
                 )
               },
               { 
-                id: "huggingface", 
-                label: "Hugging Face", 
+                id: "local", 
+                label: "Local Configuration", 
                 icon: (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12,2C6.48,2 2,6.48 2,12C2,17.52 6.48,22 12,22C17.52,22 22,17.52 22,12C22,6.48 17.52,2 12,2M12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
-                  </svg>
-                )
-              },
-              { 
-                id: "localModels", 
-                label: "Local Models", 
-                icon: (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                    <path d="M4,6H20V16H4M20,18A2,2 0 0,0 22,16V6C22,4.89 21.1,4 20,4H4C2.89,4 2,4.89 2,6V16A2,2 0 0,0 4,18H0V20H24V18H20M6,8H8V10H6V8M10,8H12V10H10V8M14,8H16V10H14V8M6,12H8V14H6V12M10,12H12V14H10V12M14,12H16V14H14V12Z"/>
                   </svg>
                 )
               },
@@ -1042,6 +1209,225 @@ export default function SettingsPage() {
                       <div style={{ color: "#94a3b8", fontSize: 13 }}>Keep pages running when navigating between sections</div>
                     </div>
                   </div>
+
+                  {/* Text Splitting */}
+                  <div style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <div style={{ 
+                        width: 24, 
+                        height: 24, 
+                        background: "linear-gradient(135deg, #8b5cf6, #7c3aed)", 
+                        borderRadius: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                          <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                        </svg>
+                      </div>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>Text Splitting</h3>
+                    </div>
+                    
+                    <div style={{ display: "grid", gap: 16 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.ui.textSplitting.enabled}
+                          onChange={(e) => updateSetting("ui.textSplitting.enabled", e.target.checked)}
+                          style={{
+                            width: 16,
+                            height: 16,
+                            accentColor: "#3b82f6"
+                          }}
+                        />
+                        <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>
+                          Enable text splitting in OCR and Prompt Evaluation pages
+                        </label>
+                      </div>
+                      
+                      {settings.ui.textSplitting.enabled && (
+                        <>
+                          <div>
+                            <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Character Limit</label>
+                            <input
+                              type="number"
+                              value={settings.ui.textSplitting.characterLimit}
+                              onChange={(e) => updateSetting("ui.textSplitting.characterLimit", parseInt(e.target.value))}
+                              min="100"
+                              max="10000"
+                              style={{
+                                width: "100%",
+                                padding: "12px 16px",
+                                border: "1px solid #334155",
+                                borderRadius: 10,
+                                background: "#0f172a",
+                                color: "#e2e8f0",
+                                fontSize: 14,
+                                outline: "none",
+                                transition: "all 0.2s ease"
+                              }}
+                              onFocus={(e) => {
+                                e.currentTarget.style.borderColor = "#3b82f6";
+                                e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                              }}
+                              onBlur={(e) => {
+                                e.currentTarget.style.borderColor = "#334155";
+                                e.currentTarget.style.boxShadow = "none";
+                              }}
+                            />
+                          </div>
+                          
+                          <div>
+                            <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Default Collapse Behavior</label>
+                            <select
+                              value={settings.ui.textSplitting.collapseBehavior}
+                              onChange={(e) => updateSetting("ui.textSplitting.collapseBehavior", e.target.value as "all-collapsed" | "first-expanded" | "all-expanded")}
+                              style={{
+                                width: "100%",
+                                padding: "12px 16px",
+                                border: "1px solid #334155",
+                                borderRadius: 10,
+                                background: "#0f172a",
+                                color: "#e2e8f0",
+                                fontSize: 14,
+                                outline: "none",
+                                transition: "all 0.2s ease"
+                              }}
+                              onFocus={(e) => {
+                                e.currentTarget.style.borderColor = "#3b82f6";
+                                e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                              }}
+                              onBlur={(e) => {
+                                e.currentTarget.style.borderColor = "#334155";
+                                e.currentTarget.style.boxShadow = "none";
+                              }}
+                            >
+                              <option value="all-collapsed">All collapsed</option>
+                              <option value="first-expanded">First expanded, rest collapsed</option>
+                              <option value="all-expanded">All expanded</option>
+                            </select>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* API Connection Visibility */}
+                  <div style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <div style={{ 
+                        width: 24, 
+                        height: 24, 
+                        background: "linear-gradient(135deg, #10b981, #059669)", 
+                        borderRadius: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                          <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                        </svg>
+                      </div>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>API Connection Visibility</h3>
+                    </div>
+                    
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.ui.showApiConnections.groq}
+                          onChange={(e) => updateSetting("ui.showApiConnections.groq", e.target.checked)}
+                          style={{
+                            width: 16,
+                            height: 16,
+                            accentColor: "#3b82f6"
+                          }}
+                        />
+                        <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Groq API</label>
+                      </div>
+                      
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.ui.showApiConnections.ollama}
+                          onChange={(e) => updateSetting("ui.showApiConnections.ollama", e.target.checked)}
+                          style={{
+                            width: 16,
+                            height: 16,
+                            accentColor: "#3b82f6"
+                          }}
+                        />
+                        <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Ollama API</label>
+                      </div>
+                      
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.ui.showApiConnections.huggingface}
+                          onChange={(e) => updateSetting("ui.showApiConnections.huggingface", e.target.checked)}
+                          style={{
+                            width: 16,
+                            height: 16,
+                            accentColor: "#3b82f6"
+                          }}
+                        />
+                        <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Hugging Face</label>
+                      </div>
+                      
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.ui.showApiConnections.lmstudio}
+                          onChange={(e) => updateSetting("ui.showApiConnections.lmstudio", e.target.checked)}
+                          style={{
+                            width: 16,
+                            height: 16,
+                            accentColor: "#3b82f6"
+                          }}
+                        />
+                        <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>LM Studio</label>
+                      </div>
+                      
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.ui.showApiConnections.ollamaLocal}
+                          onChange={(e) => updateSetting("ui.showApiConnections.ollamaLocal", e.target.checked)}
+                          style={{
+                            width: 16,
+                            height: 16,
+                            accentColor: "#3b82f6"
+                          }}
+                        />
+                        <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>Ollama Local</label>
+                      </div>
+                      
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.ui.showApiConnections.vllm}
+                          onChange={(e) => updateSetting("ui.showApiConnections.vllm", e.target.checked)}
+                          style={{
+                            width: 16,
+                            height: 16,
+                            accentColor: "#3b82f6"
+                          }}
+                        />
+                        <label style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 500 }}>vLLM</label>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -1250,34 +1636,732 @@ export default function SettingsPage() {
               </section>
             )}
 
-            {/* Groq */}
-            {activeTab === "groq" && (
-              <section style={card}>
-                <h2 style={h2}>Groq API</h2>
-                <div style={group}>
-                  <label style={label}>API Key</label>
-                  <input
-                    type="password"
-                    value={settings.groq.apiKey}
-                    onChange={(e) => updateSetting("groq.apiKey", e.target.value)}
-                    style={input}
-                    placeholder="groq_xxx…"
-                  />
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button style={btnBlue} onClick={testGroqConnection}>Test Connection</button>
-                    <span style={{ alignSelf: "center", fontSize: 13, color: "#94a3b8" }}>
-                      Status:{" "}
-                      <b style={{ color: settings.groq.connected ? "#10b981" : "#ef4444" }}>
-                        {settings.groq.connected ? "Connected" : "Not connected"}
-                      </b>
-                    </span>
+            {/* API Connections */}
+            {activeTab === "apis" && (
+              <div style={{
+                background: "#0f172a",
+                border: "1px solid #334155",
+                borderRadius: 16,
+                padding: 24,
+                boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+                  <div style={{ 
+                    width: 32, 
+                    height: 32, 
+                    background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
+                    borderRadius: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                  }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                      <path d="M12,2A2,2 0 0,1 14,4C14,4.74 13.6,5.39 13,5.73V7H14A7,7 0 0,1 21,14H22A1,1 0 0,1 23,15V18A1,1 0 0,1 22,19H21V20A2,2 0 0,1 19,22H5A2,2 0 0,1 3,20V19H2A1,1 0 0,1 1,18V15A1,1 0 0,1 2,14H3A7,7 0 0,1 10,7H11V5.73C10.4,5.39 10,4.74 10,4A2,2 0 0,1 12,2M7.5,13A2.5,2.5 0 0,0 5,15.5A2.5,2.5 0 0,0 7.5,18A2.5,2.5 0 0,0 10,15.5A2.5,2.5 0 0,0 7.5,13M16.5,13A2.5,2.5 0 0,0 14,15.5A2.5,2.5 0 0,0 16.5,18A2.5,2.5 0 0,0 19,15.5A2.5,2.5 0 0,0 16.5,13Z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>API Connections</h2>
+                    <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Configure external API connections and local model servers</p>
                   </div>
                 </div>
-              </section>
+
+                <div style={{ display: "grid", gap: 20 }}>
+                  {/* Groq API */}
+                  <div style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ 
+                          width: 24, 
+                          height: 24, 
+                          background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
+                          borderRadius: 6,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center"
+                        }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                            <path d="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M12,7C13.4,7 14.8,8.6 14.8,10V11H16V13H14.8V15H12.8V13H11V11H12.8V10C12.8,9.2 12.4,8.5 11.8,8.2C12.2,7.9 12.6,7.5 12,7M12,6.1C11.2,6.1 10.5,6.7 10.5,7.5C10.5,8.3 11.1,8.9 11.9,8.9C12.7,8.9 13.3,8.3 13.3,7.5C13.3,6.7 12.7,6.1 12,6.1Z"/>
+                          </svg>
+                        </div>
+                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>Groq API</h3>
+                      </div>
+                      <button
+                        onClick={() => setShowGuide(showGuide === "groq" ? null : "groq")}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          background: showGuide === "groq" ? "#1e293b" : "transparent",
+                          border: "1px solid #334155",
+                          color: "#94a3b8",
+                          cursor: "pointer",
+                          fontSize: 12,
+                          fontWeight: 500,
+                          transition: "all 0.2s ease",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = "#475569";
+                          e.currentTarget.style.color = "#e2e8f0";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = "#334155";
+                          e.currentTarget.style.color = "#94a3b8";
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                        </svg>
+                        {showGuide === "groq" ? "Hide Guide" : "Show Guide"}
+                      </button>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 16 }}>
+                      <div>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Groq API Key</label>
+                        <input
+                          type="password"
+                          value={settings.groq.apiKey}
+                          onChange={(e) => updateSetting("groq.apiKey", e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "12px 16px",
+                            border: "1px solid #334155",
+                            borderRadius: 10,
+                            background: "#0f172a",
+                            color: "#e2e8f0",
+                            fontSize: 14,
+                            outline: "none",
+                            transition: "all 0.2s ease"
+                          }}
+                          placeholder="gsk_xxx…"
+                          onFocus={(e) => {
+                            e.currentTarget.style.borderColor = "#3b82f6";
+                            e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                          }}
+                          onBlur={(e) => {
+                            e.currentTarget.style.borderColor = "#334155";
+                            e.currentTarget.style.boxShadow = "none";
+                          }}
+                        />
+                      </div>
+                      
+                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        <button 
+                          onClick={testGroqConnection}
+                          disabled={isTestingGroq}
+                          style={{
+                            padding: "12px 16px",
+                            borderRadius: 10,
+                            background: isTestingGroq ? "#6b7280" : "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                            border: "none",
+                            color: "#ffffff",
+                            cursor: isTestingGroq ? "not-allowed" : "pointer",
+                            fontSize: 14,
+                            fontWeight: 500,
+                            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            opacity: isTestingGroq ? 0.8 : 1,
+                            animation: isTestingGroq ? "pulse 2s ease-in-out infinite" : "none",
+                            transform: "translateY(0)",
+                            boxShadow: "none"
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isTestingGroq) {
+                              e.currentTarget.style.transform = "translateY(-2px) scale(1.02)";
+                              e.currentTarget.style.boxShadow = "0 8px 25px rgba(59, 130, 246, 0.4), 0 0 0 1px rgba(59, 130, 246, 0.1)";
+                              e.currentTarget.style.animation = "glow 1.5s ease-in-out infinite";
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isTestingGroq) {
+                              e.currentTarget.style.transform = "translateY(0) scale(1)";
+                              e.currentTarget.style.boxShadow = "none";
+                              e.currentTarget.style.animation = "none";
+                            }
+                          }}
+                        >
+                          {isTestingGroq ? (
+                            <>
+                              <div style={{
+                                width: 14,
+                                height: 14,
+                                border: "2px solid #ffffff",
+                                borderTop: "2px solid transparent",
+                                borderRadius: "50%",
+                                animation: "spin 1s linear infinite"
+                              }} />
+                              Testing...
+                            </>
+                          ) : (
+                            <>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                              </svg>
+                              Test Connection
+                            </>
+                          )}
+                        </button>
+                        
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: settings.groq.connected ? "#10b981" : "#ef4444"
+                          }}></div>
+                          <span style={{ fontSize: 13, color: "#94a3b8" }}>
+                            Status:{" "}
+                            <span style={{ 
+                              color: settings.groq.connected ? "#10b981" : "#ef4444",
+                              fontWeight: 500
+                            }}>
+                              {settings.groq.connected ? "Connected" : "Not connected"}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Setup Guide */}
+                    {showGuide === "groq" && (
+                      <div style={{
+                        marginTop: 20,
+                        padding: 16,
+                        background: "#0f172a",
+                        border: "1px solid #334155",
+                        borderRadius: 8,
+                        fontSize: 13,
+                        color: "#cbd5e1",
+                        lineHeight: "1.6"
+                      }}>
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 1:</strong> Visit{" "}
+                          <a 
+                            href="https://console.groq.com/keys" 
+                            target="_blank" 
+                            rel="noreferrer"
+                            style={{ 
+                              color: "#60a5fa", 
+                              textDecoration: "underline",
+                              fontWeight: 500
+                            }}
+                          >
+                            console.groq.com/keys
+                          </a>
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 2:</strong> Sign in to your Groq account (create one if needed)
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 3:</strong> Click "Create API Key" and copy the generated key
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 4:</strong> Paste the key above and click "Test Connection"
+                        </div>
+                        
+                        <div style={{
+                          marginTop: 12,
+                          padding: 12,
+                          background: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: 6,
+                          fontSize: 12,
+                          color: "#94a3b8"
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
+                            </svg>
+                            <strong style={{ color: "#e2e8f0" }}>Note:</strong>
+                          </div>
+                          <div style={{ paddingLeft: 18 }}>
+                            Groq provides fast inference for open-source models. Free tier includes generous usage limits.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Hugging Face */}
+                  <div style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ 
+                          width: 24, 
+                          height: 24, 
+                          background: "linear-gradient(135deg, #ff6b35, #f7931e)", 
+                          borderRadius: 6,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center"
+                        }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                            <path d="M12,2C6.48,2 2,6.48 2,12C2,17.52 6.48,22 12,22C17.52,22 22,17.52 22,12C22,6.48 17.52,2 12,2M12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+                          </svg>
+                        </div>
+                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>Hugging Face</h3>
+                      </div>
+                      <button
+                        onClick={() => setShowGuide(showGuide === "huggingface" ? null : "huggingface")}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          background: showGuide === "huggingface" ? "#1e293b" : "transparent",
+                          border: "1px solid #334155",
+                          color: "#94a3b8",
+                          cursor: "pointer",
+                          fontSize: 12,
+                          fontWeight: 500,
+                          transition: "all 0.2s ease",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = "#475569";
+                          e.currentTarget.style.color = "#e2e8f0";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = "#334155";
+                          e.currentTarget.style.color = "#94a3b8";
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                        </svg>
+                        {showGuide === "huggingface" ? "Hide Guide" : "Show Guide"}
+                      </button>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 16 }}>
+                      <div>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Hugging Face Token</label>
+                        <input
+                          type="password"
+                          value={settings.huggingface.token}
+                          onChange={(e) => updateSetting("huggingface.token", e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "12px 16px",
+                            border: "1px solid #334155",
+                            borderRadius: 10,
+                            background: "#0f172a",
+                            color: "#e2e8f0",
+                            fontSize: 14,
+                            outline: "none",
+                            transition: "all 0.2s ease"
+                          }}
+                          placeholder="hf_xxx…"
+                          onFocus={(e) => {
+                            e.currentTarget.style.borderColor = "#3b82f6";
+                            e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                          }}
+                          onBlur={(e) => {
+                            e.currentTarget.style.borderColor = "#334155";
+                            e.currentTarget.style.boxShadow = "none";
+                          }}
+                        />
+                      </div>
+                      
+                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        <button 
+                          onClick={testHuggingFaceConnection}
+                          disabled={isTestingHuggingFace}
+                          style={{
+                            padding: "12px 16px",
+                            borderRadius: 10,
+                            background: isTestingHuggingFace ? "#6b7280" : "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                            border: "none",
+                            color: "#ffffff",
+                            cursor: isTestingHuggingFace ? "not-allowed" : "pointer",
+                            fontSize: 14,
+                            fontWeight: 500,
+                            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            opacity: isTestingHuggingFace ? 0.8 : 1,
+                            animation: isTestingHuggingFace ? "pulse 2s ease-in-out infinite" : "none",
+                            transform: "translateY(0)",
+                            boxShadow: "none"
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isTestingHuggingFace) {
+                              e.currentTarget.style.transform = "translateY(-2px) scale(1.02)";
+                              e.currentTarget.style.boxShadow = "0 8px 25px rgba(59, 130, 246, 0.4), 0 0 0 1px rgba(59, 130, 246, 0.1)";
+                              e.currentTarget.style.animation = "glow 1.5s ease-in-out infinite";
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isTestingHuggingFace) {
+                              e.currentTarget.style.transform = "translateY(0) scale(1)";
+                              e.currentTarget.style.boxShadow = "none";
+                              e.currentTarget.style.animation = "none";
+                            }
+                          }}
+                        >
+                          {isTestingHuggingFace ? (
+                            <>
+                              <div style={{
+                                width: 14,
+                                height: 14,
+                                border: "2px solid #ffffff",
+                                borderTop: "2px solid transparent",
+                                borderRadius: "50%",
+                                animation: "spin 1s linear infinite"
+                              }} />
+                              Testing...
+                            </>
+                          ) : (
+                            <>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                              </svg>
+                              Test Connection
+                            </>
+                          )}
+                        </button>
+                        
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: settings.huggingface.connected ? "#10b981" : "#ef4444"
+                          }}></div>
+                          <span style={{ fontSize: 13, color: "#94a3b8" }}>
+                            Status:{" "}
+                            <span style={{ 
+                              color: settings.huggingface.connected ? "#10b981" : "#ef4444",
+                              fontWeight: 500
+                            }}>
+                              {settings.huggingface.connected ? "Connected" : "Not connected"}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Setup Guide */}
+                    {showGuide === "huggingface" && (
+                      <div style={{
+                        marginTop: 20,
+                        padding: 16,
+                        background: "#0f172a",
+                        border: "1px solid #334155",
+                        borderRadius: 8,
+                        fontSize: 13,
+                        color: "#cbd5e1",
+                        lineHeight: "1.6"
+                      }}>
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 1:</strong> Visit{" "}
+                          <a 
+                            href="https://huggingface.co/settings/tokens" 
+                            target="_blank" 
+                            rel="noreferrer"
+                            style={{ 
+                              color: "#60a5fa", 
+                              textDecoration: "underline",
+                              fontWeight: 500
+                            }}
+                          >
+                            huggingface.co/settings/tokens
+                          </a>
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 2:</strong> Sign in to your Hugging Face account (create one if needed)
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 3:</strong> Click "New token" and select "Read" permissions
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 4:</strong> Copy the generated token (starts with "hf_")
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 5:</strong> Paste the token above and click "Test Connection"
+                        </div>
+                        
+                        <div style={{
+                          marginTop: 12,
+                          padding: 12,
+                          background: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: 6,
+                          fontSize: 12,
+                          color: "#94a3b8"
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
+                            </svg>
+                            <strong style={{ color: "#e2e8f0" }}>Minimum Requirements:</strong>
+                          </div>
+                          <div style={{ paddingLeft: 18 }}>
+                            • Token must have "Read" access to browse public models<br/>
+                            • Token must be valid and not expired<br/>
+                            • Account must be verified (email confirmation)
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Ollama API */}
+                  <div style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ 
+                          width: 24, 
+                          height: 24, 
+                          background: "linear-gradient(135deg, #10b981, #059669)", 
+                          borderRadius: 6,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center"
+                        }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
+                            <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                          </svg>
+                        </div>
+                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>Ollama API</h3>
+                      </div>
+                      <button
+                        onClick={() => setShowGuide(showGuide === "ollamaApi" ? null : "ollamaApi")}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          background: showGuide === "ollamaApi" ? "#1e293b" : "transparent",
+                          border: "1px solid #334155",
+                          color: "#94a3b8",
+                          cursor: "pointer",
+                          fontSize: 12,
+                          fontWeight: 500,
+                          transition: "all 0.2s ease",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = "#475569";
+                          e.currentTarget.style.color = "#e2e8f0";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = "#334155";
+                          e.currentTarget.style.color = "#94a3b8";
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                        </svg>
+                        {showGuide === "ollamaApi" ? "Hide Guide" : "Show Guide"}
+                      </button>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 16 }}>
+                      <div>
+                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Ollama API Key</label>
+                        <input
+                          type="password"
+                          value={settings.ollama?.apiKey || ""}
+                          onChange={(e) => updateSetting("ollama.apiKey", e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "12px 16px",
+                            border: "1px solid #334155",
+                            borderRadius: 10,
+                            background: "#0f172a",
+                            color: "#e2e8f0",
+                            fontSize: 14,
+                            outline: "none",
+                            transition: "all 0.2s ease"
+                          }}
+                          placeholder="ollama_xxx…"
+                          onFocus={(e) => {
+                            e.currentTarget.style.borderColor = "#3b82f6";
+                            e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                          }}
+                          onBlur={(e) => {
+                            e.currentTarget.style.borderColor = "#334155";
+                            e.currentTarget.style.boxShadow = "none";
+                          }}
+                        />
+                      </div>
+                      
+                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        <button 
+                          onClick={testOllamaApiConnection}
+                          disabled={isTestingOllamaApi}
+                          style={{
+                            padding: "12px 16px",
+                            borderRadius: 10,
+                            background: isTestingOllamaApi ? "#6b7280" : "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                            border: "none",
+                            color: "#ffffff",
+                            cursor: isTestingOllamaApi ? "not-allowed" : "pointer",
+                            fontSize: 14,
+                            fontWeight: 500,
+                            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            opacity: isTestingOllamaApi ? 0.8 : 1,
+                            animation: isTestingOllamaApi ? "pulse 2s ease-in-out infinite" : "none",
+                            transform: "translateY(0)",
+                            boxShadow: "none"
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isTestingOllamaApi) {
+                              e.currentTarget.style.transform = "translateY(-2px) scale(1.02)";
+                              e.currentTarget.style.boxShadow = "0 8px 25px rgba(59, 130, 246, 0.4), 0 0 0 1px rgba(59, 130, 246, 0.1)";
+                              e.currentTarget.style.animation = "glow 1.5s ease-in-out infinite";
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isTestingOllamaApi) {
+                              e.currentTarget.style.transform = "translateY(0) scale(1)";
+                              e.currentTarget.style.boxShadow = "none";
+                              e.currentTarget.style.animation = "none";
+                            }
+                          }}
+                        >
+                          {isTestingOllamaApi ? (
+                            <>
+                              <div style={{
+                                width: 14,
+                                height: 14,
+                                border: "2px solid #ffffff",
+                                borderTop: "2px solid transparent",
+                                borderRadius: "50%",
+                                animation: "spin 1s linear infinite"
+                              }} />
+                              Testing...
+                            </>
+                          ) : (
+                            <>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
+                              </svg>
+                              Test Connection
+                            </>
+                          )}
+                        </button>
+                        
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: settings.ollama?.apiConnected ? "#10b981" : "#ef4444"
+                          }}></div>
+                          <span style={{ fontSize: 13, color: "#94a3b8" }}>
+                            API Status:{" "}
+                            <span style={{ 
+                              color: settings.ollama?.apiConnected ? "#10b981" : "#ef4444",
+                              fontWeight: 500
+                            }}>
+                              {settings.ollama?.apiConnected ? "Connected" : "Not connected"}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Setup Guide */}
+                    {showGuide === "ollamaApi" && (
+                      <div style={{
+                        marginTop: 20,
+                        padding: 16,
+                        background: "#0f172a",
+                        border: "1px solid #334155",
+                        borderRadius: 8,
+                        fontSize: 13,
+                        color: "#cbd5e1",
+                        lineHeight: "1.6"
+                      }}>
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 1:</strong> Visit{" "}
+                          <a 
+                            href="https://ollama.com/api" 
+                            target="_blank" 
+                            rel="noreferrer"
+                            style={{ 
+                              color: "#60a5fa", 
+                              textDecoration: "underline",
+                              fontWeight: 500
+                            }}
+                          >
+                            ollama.com/api
+                          </a>
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 2:</strong> Sign in to your Ollama account (create one if needed)
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 3:</strong> Generate an API key for cloud model access
+                        </div>
+                        
+                        <div style={{ marginBottom: 12 }}>
+                          <strong style={{ color: "#e2e8f0" }}>Step 4:</strong> Paste the key above and click "Test Connection"
+                        </div>
+                        
+                        <div style={{
+                          marginTop: 12,
+                          padding: 12,
+                          background: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: 6,
+                          fontSize: 12,
+                          color: "#94a3b8"
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
+                            </svg>
+                            <strong style={{ color: "#e2e8f0" }}>Note:</strong>
+                          </div>
+                          <div style={{ paddingLeft: 18 }}>
+                            This is for Ollama's cloud API service, separate from local Ollama installations.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </div>
             )}
 
-            {/* Local Models */}
-            {activeTab === "localModels" && (
+            {/* Local Configuration */}
+            {activeTab === "local" && (
               <div style={{
                 background: "#0f172a",
                 border: "1px solid #334155",
@@ -1300,8 +2384,8 @@ export default function SettingsPage() {
                     </svg>
                   </div>
                   <div>
-                    <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>Local Models</h2>
-                    <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Configure GPU settings for local model inference</p>
+                    <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>Local Configuration</h2>
+                    <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Configure GPU settings and local model servers</p>
                   </div>
                 </div>
 
@@ -1328,7 +2412,51 @@ export default function SettingsPage() {
                             placeholder="http://localhost:1234"
                             style={input}
                           />
-                          <button style={btnBlue} onClick={testLmStudio}>Test</button>
+                          <button 
+                            style={{
+                              ...btnBlue,
+                              background: isTestingLmStudio ? "#6b7280" : btnBlue.background,
+                              cursor: isTestingLmStudio ? "not-allowed" : "pointer",
+                              opacity: isTestingLmStudio ? 0.8 : 1,
+                              animation: isTestingLmStudio ? "pulse 2s ease-in-out infinite" : "none",
+                              transform: "translateY(0)",
+                              boxShadow: "none",
+                              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
+                            }}
+                            onClick={testLmStudio}
+                            disabled={isTestingLmStudio}
+                            onMouseEnter={(e) => {
+                              if (!isTestingLmStudio) {
+                                e.currentTarget.style.transform = "translateY(-2px) scale(1.02)";
+                                e.currentTarget.style.boxShadow = "0 8px 25px rgba(59, 130, 246, 0.4), 0 0 0 1px rgba(59, 130, 246, 0.1)";
+                                e.currentTarget.style.animation = "glow 1.5s ease-in-out infinite";
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isTestingLmStudio) {
+                                e.currentTarget.style.transform = "translateY(0) scale(1)";
+                                e.currentTarget.style.boxShadow = "none";
+                                e.currentTarget.style.animation = "none";
+                              }
+                            }}
+                          >
+                            {isTestingLmStudio ? (
+                              <>
+                                <div style={{
+                                  width: 12,
+                                  height: 12,
+                                  border: "2px solid #ffffff",
+                                  borderTop: "2px solid transparent",
+                                  borderRadius: "50%",
+                                  animation: "spin 1s linear infinite",
+                                  marginRight: 6
+                                }} />
+                                Testing...
+                              </>
+                            ) : (
+                              "Test"
+                            )}
+                          </button>
                         </div>
                         <div style={{ fontSize: 12, color: "#94a3b8" }}>
                           Status: <b style={{ color: settings.lmstudio?.connected ? "#10b981" : "#ef4444" }}>{settings.lmstudio?.connected ? "Connected" : "Not connected"}</b>
@@ -1343,27 +2471,54 @@ export default function SettingsPage() {
                             placeholder="http://localhost:11434"
                             style={input}
                           />
-                          <button style={btnBlue} onClick={testOllama}>Test</button>
+                          <button 
+                            style={{
+                              ...btnBlue,
+                              background: isTestingOllama ? "#6b7280" : btnBlue.background,
+                              cursor: isTestingOllama ? "not-allowed" : "pointer",
+                              opacity: isTestingOllama ? 0.8 : 1,
+                              animation: isTestingOllama ? "pulse 2s ease-in-out infinite" : "none",
+                              transform: "translateY(0)",
+                              boxShadow: "none",
+                              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
+                            }}
+                            onClick={testOllama}
+                            disabled={isTestingOllama}
+                            onMouseEnter={(e) => {
+                              if (!isTestingOllama) {
+                                e.currentTarget.style.transform = "translateY(-2px) scale(1.02)";
+                                e.currentTarget.style.boxShadow = "0 8px 25px rgba(59, 130, 246, 0.4), 0 0 0 1px rgba(59, 130, 246, 0.1)";
+                                e.currentTarget.style.animation = "glow 1.5s ease-in-out infinite";
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isTestingOllama) {
+                                e.currentTarget.style.transform = "translateY(0) scale(1)";
+                                e.currentTarget.style.boxShadow = "none";
+                                e.currentTarget.style.animation = "none";
+                              }
+                            }}
+                          >
+                            {isTestingOllama ? (
+                              <>
+                                <div style={{
+                                  width: 12,
+                                  height: 12,
+                                  border: "2px solid #ffffff",
+                                  borderTop: "2px solid transparent",
+                                  borderRadius: "50%",
+                                  animation: "spin 1s linear infinite",
+                                  marginRight: 6
+                                }} />
+                                Testing...
+                              </>
+                            ) : (
+                              "Test"
+                            )}
+                          </button>
                         </div>
                         <div style={{ fontSize: 12, color: "#94a3b8" }}>
                           Status: <b style={{ color: settings.ollama?.connected ? "#10b981" : "#ef4444" }}>{settings.ollama?.connected ? "Connected" : "Not connected"}</b>
-                        </div>
-                        
-                        <div style={{ display: "grid", gap: 8 }}>
-                          <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500 }}>Ollama API Key (for cloud models)</label>
-                          <input
-                            type="password"
-                            value={settings.ollama?.apiKey || ""}
-                            onChange={(e) => updateSetting("ollama.apiKey", e.target.value)}
-                            placeholder="Optional - for Ollama cloud models"
-                            style={{
-                              ...input,
-                              background: "#0f172a"
-                            }}
-                          />
-                          <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                            Required for accessing Ollama cloud models (Claude, GPT, etc.)
-                          </div>
                         </div>
                       </div>
                       <div style={{ display: "grid", gap: 8 }}>
@@ -1375,7 +2530,51 @@ export default function SettingsPage() {
                             placeholder="http://localhost:8000"
                             style={input}
                           />
-                          <button style={btnBlue} onClick={testVllm}>Test</button>
+                          <button 
+                            style={{
+                              ...btnBlue,
+                              background: isTestingVllm ? "#6b7280" : btnBlue.background,
+                              cursor: isTestingVllm ? "not-allowed" : "pointer",
+                              opacity: isTestingVllm ? 0.8 : 1,
+                              animation: isTestingVllm ? "pulse 2s ease-in-out infinite" : "none",
+                              transform: "translateY(0)",
+                              boxShadow: "none",
+                              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
+                            }}
+                            onClick={testVllm}
+                            disabled={isTestingVllm}
+                            onMouseEnter={(e) => {
+                              if (!isTestingVllm) {
+                                e.currentTarget.style.transform = "translateY(-2px) scale(1.02)";
+                                e.currentTarget.style.boxShadow = "0 8px 25px rgba(59, 130, 246, 0.4), 0 0 0 1px rgba(59, 130, 246, 0.1)";
+                                e.currentTarget.style.animation = "glow 1.5s ease-in-out infinite";
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isTestingVllm) {
+                                e.currentTarget.style.transform = "translateY(0) scale(1)";
+                                e.currentTarget.style.boxShadow = "none";
+                                e.currentTarget.style.animation = "none";
+                              }
+                            }}
+                          >
+                            {isTestingVllm ? (
+                              <>
+                                <div style={{
+                                  width: 12,
+                                  height: 12,
+                                  border: "2px solid #ffffff",
+                                  borderTop: "2px solid transparent",
+                                  borderRadius: "50%",
+                                  animation: "spin 1s linear infinite",
+                                  marginRight: 6
+                                }} />
+                                Testing...
+                              </>
+                            ) : (
+                              "Test"
+                            )}
+                          </button>
                         </div>
                         <div style={{ fontSize: 12, color: "#94a3b8" }}>
                           Status: <b style={{ color: settings.vllm?.connected ? "#10b981" : "#ef4444" }}>{settings.vllm?.connected ? "Connected" : "Not connected"}</b>
@@ -1667,266 +2866,6 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {/* Hugging Face */}
-            {activeTab === "huggingface" && (
-              <div style={{
-                background: "#0f172a",
-                border: "1px solid #334155",
-                borderRadius: 16,
-                padding: 24,
-                boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-                  <div style={{ 
-                    width: 32, 
-                    height: 32, 
-                    background: "linear-gradient(135deg, #ff6b35, #f7931e)", 
-                    borderRadius: 8,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center"
-                  }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
-                      <path d="M12,2C6.48,2 2,6.48 2,12C2,17.52 6.48,22 12,22C17.52,22 22,17.52 22,12C22,6.48 17.52,2 12,2M12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
-                    </svg>
-                  </div>
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#e2e8f0" }}>Hugging Face Integration</h2>
-                    <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Connect to Hugging Face Hub for model discovery and downloads</p>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gap: 20 }}>
-                  {/* Token Configuration */}
-                  <div style={{
-                    background: "#1e293b",
-                    border: "1px solid #334155",
-                    borderRadius: 12,
-                    padding: 20
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                      <div style={{ 
-                        width: 24, 
-                        height: 24, 
-                        background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", 
-                        borderRadius: 6,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center"
-                      }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
-                          <path d="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M12,7C13.4,7 14.8,8.6 14.8,10V11H16V13H14.8V15H12.8V13H11V11H12.8V10C12.8,9.2 12.4,8.5 11.8,8.2C12.2,7.9 12.6,7.5 12,7M12,6.1C11.2,6.1 10.5,6.7 10.5,7.5C10.5,8.3 11.1,8.9 11.9,8.9C12.7,8.9 13.3,8.3 13.3,7.5C13.3,6.7 12.7,6.1 12,6.1Z"/>
-                        </svg>
-                      </div>
-                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>Access Token</h3>
-                    </div>
-                    
-                    <div style={{ display: "grid", gap: 16 }}>
-                      <div>
-                        <label style={{ color: "#94a3b8", fontSize: 13, fontWeight: 500, marginBottom: 8, display: "block" }}>Hugging Face Token</label>
-                        <input
-                          type="password"
-                          value={settings.huggingface.token}
-                          onChange={(e) => updateSetting("huggingface.token", e.target.value)}
-                          style={{
-                            width: "100%",
-                            padding: "12px 16px",
-                            border: "1px solid #334155",
-                            borderRadius: 10,
-                            background: "#0f172a",
-                            color: "#e2e8f0",
-                            fontSize: 14,
-                            outline: "none",
-                            transition: "all 0.2s ease"
-                          }}
-                          placeholder="hf_xxx…"
-                          onFocus={(e) => {
-                            e.currentTarget.style.borderColor = "#3b82f6";
-                            e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
-                          }}
-                          onBlur={(e) => {
-                            e.currentTarget.style.borderColor = "#334155";
-                            e.currentTarget.style.boxShadow = "none";
-                          }}
-                        />
-                      </div>
-                      
-                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                        <button 
-                          onClick={testHuggingFaceConnection}
-                          style={{
-                            padding: "12px 16px",
-                            borderRadius: 10,
-                            background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
-                            border: "none",
-                            color: "#ffffff",
-                            cursor: "pointer",
-                            fontSize: 14,
-                            fontWeight: 500,
-                            transition: "all 0.2s ease",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.transform = "translateY(-1px)";
-                            e.currentTarget.style.boxShadow = "0 4px 8px rgba(59, 130, 246, 0.3)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.transform = "translateY(0)";
-                            e.currentTarget.style.boxShadow = "none";
-                          }}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
-                          </svg>
-                          Test Connection
-                        </button>
-                        
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            background: settings.huggingface.connected ? "#10b981" : "#ef4444"
-                          }}></div>
-                          <span style={{ fontSize: 13, color: "#94a3b8" }}>
-                            Status:{" "}
-                            <span style={{ 
-                              color: settings.huggingface.connected ? "#10b981" : "#ef4444",
-                              fontWeight: 500
-                            }}>
-                              {settings.huggingface.connected ? "Connected" : "Not connected"}
-                            </span>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Setup Instructions */}
-                  <div style={{
-                    background: "#1e293b",
-                    border: "1px solid #334155",
-                    borderRadius: 12,
-                    padding: 20
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                      <div style={{ 
-                        width: 24, 
-                        height: 24, 
-                        background: "linear-gradient(135deg, #10b981, #059669)", 
-                        borderRadius: 6,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center"
-                      }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
-                          <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
-                        </svg>
-                      </div>
-                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>How to Get Your Token</h3>
-                    </div>
-                    
-                    <div style={{ fontSize: 13, color: "#cbd5e1", lineHeight: "1.6" }}>
-                      <div style={{ marginBottom: "12px" }}>
-                        <strong style={{ color: "#e2e8f0" }}>Step 1:</strong> Visit{" "}
-                        <a 
-                          href="https://huggingface.co/settings/tokens" 
-                          target="_blank" 
-                          rel="noreferrer"
-                          style={{ 
-                            color: "#60a5fa", 
-                            textDecoration: "underline",
-                            fontWeight: 500
-                          }}
-                        >
-                          huggingface.co/settings/tokens
-                        </a>
-                      </div>
-                      
-                      <div style={{ marginBottom: "12px" }}>
-                        <strong style={{ color: "#e2e8f0" }}>Step 2:</strong> Sign in to your Hugging Face account (create one if needed)
-                      </div>
-                      
-                      <div style={{ marginBottom: "12px" }}>
-                        <strong style={{ color: "#e2e8f0" }}>Step 3:</strong> Click "New token" and select "Read" permissions
-                      </div>
-                      
-                      <div style={{ marginBottom: "12px" }}>
-                        <strong style={{ color: "#e2e8f0" }}>Step 4:</strong> Copy the generated token (starts with "hf_")
-                      </div>
-                      
-                      <div style={{ marginBottom: "12px" }}>
-                        <strong style={{ color: "#e2e8f0" }}>Step 5:</strong> Paste the token above and click "Test Connection"
-                      </div>
-                    </div>
-                    
-                    <div style={{
-                      marginTop: "16px",
-                      padding: "12px",
-                      background: "#0f172a",
-                      border: "1px solid #334155",
-                      borderRadius: "8px",
-                      fontSize: "12px",
-                      color: "#94a3b8"
-                    }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
-                        </svg>
-                        <strong style={{ color: "#e2e8f0" }}>Minimum Requirements:</strong>
-                      </div>
-                      <div style={{ paddingLeft: "18px" }}>
-                        • Token must have "Read" access to browse public models<br/>
-                        • Token must be valid and not expired<br/>
-                        • Account must be verified (email confirmation)
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Features */}
-                  <div style={{
-                    background: "#1e293b",
-                    border: "1px solid #334155",
-                    borderRadius: 12,
-                    padding: 20
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                      <div style={{ 
-                        width: 24, 
-                        height: 24, 
-                        background: "linear-gradient(135deg, #8b5cf6, #7c3aed)", 
-                        borderRadius: 6,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center"
-                      }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
-                          <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/>
-                        </svg>
-                      </div>
-                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>What You Can Do</h3>
-                    </div>
-                    
-                    <div style={{ fontSize: 13, color: "#cbd5e1", lineHeight: "1.6" }}>
-                      <div style={{ marginBottom: "8px" }}>
-                        • <strong style={{ color: "#e2e8f0" }}>Discover Models:</strong> Browse and search thousands of models from Hugging Face Hub
-                      </div>
-                      <div style={{ marginBottom: "8px" }}>
-                        • <strong style={{ color: "#e2e8f0" }}>Add Models:</strong> Easily add models to your local collection with one click
-                      </div>
-                      <div style={{ marginBottom: "8px" }}>
-                        • <strong style={{ color: "#e2e8f0" }}>Access Gated Models:</strong> Download models that require authentication
-                      </div>
-                      <div style={{ marginBottom: "8px" }}>
-                        • <strong style={{ color: "#e2e8f0" }}>Stay Updated:</strong> Get the latest model information and metadata
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
         </main>
       </div>
 
@@ -1972,115 +2911,89 @@ function RowPath({
   return (
     <div style={{ display: "flex", gap: 12 }}>
       <input 
-        value={value} 
-        onChange={(e) => onChange(e.target.value)} 
-        style={{ 
-          flex: 1,
-          padding: "12px 16px",
-          border: "1px solid #334155",
-          borderRadius: 10,
-          background: "#0f172a",
-          color: "#e2e8f0",
-          fontSize: 14,
-          outline: "none",
-          transition: "all 0.2s ease"
-        }}
-        onFocus={(e) => {
-          e.currentTarget.style.borderColor = "#3b82f6";
-          e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.borderColor = "#334155";
-          e.currentTarget.style.boxShadow = "none";
-        }}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={input}
+        placeholder="Path to folder"
       />
-      <button 
-        onClick={onBrowse}
-        style={{
-          padding: "12px 16px",
-          border: "1px solid #334155",
-          background: "#1e293b",
-          color: "#e2e8f0",
-          borderRadius: 10,
-          cursor: "pointer",
-          fontSize: 14,
-          fontWeight: 500,
-          transition: "all 0.2s ease",
-          display: "flex",
-          alignItems: "center",
-          gap: 8
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "#334155";
-          e.currentTarget.style.borderColor = "#475569";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "#1e293b";
-          e.currentTarget.style.borderColor = "#334155";
-        }}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/>
-        </svg>
-        Browse
-      </button>
+      <button style={btnBlue} onClick={onBrowse}>Browse</button>
     </div>
   );
 }
 
+// Styles
 const card: React.CSSProperties = {
-  background: "#1e293b",
+  background: "#0f172a",
   border: "1px solid #334155",
-  borderRadius: 12,
-  padding: 16,
+  borderRadius: 16,
+  padding: 24,
+  boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
 };
 
-const h2: React.CSSProperties = { margin: "0 0 12px 0", color: "#e2e8f0", fontSize: 18, fontWeight: 600 };
-const h3: React.CSSProperties = { margin: "12px 0 8px 0", color: "#e2e8f0", fontSize: 15, fontWeight: 500 };
+const h2: React.CSSProperties = {
+  margin: 0,
+  fontSize: 18,
+  fontWeight: 600,
+  color: "#e2e8f0"
+};
 
-const group: React.CSSProperties = { display: "grid", gap: 8, marginTop: 8 };
-const label: React.CSSProperties = { color: "#e2e8f0", fontSize: 14, fontWeight: 500 };
-const sublabel: React.CSSProperties = { color: "#cbd5e1", fontSize: 12 };
+const h3: React.CSSProperties = {
+  margin: 0,
+  fontSize: 16,
+  fontWeight: 600,
+  color: "#e2e8f0"
+};
+
+const group: React.CSSProperties = {
+  display: "grid",
+  gap: 16
+};
+
+const label: React.CSSProperties = {
+  color: "#94a3b8",
+  fontSize: 13,
+  fontWeight: 500
+};
 
 const input: React.CSSProperties = {
-  width: "100%",
-  padding: "8px 10px",
+  padding: "12px 16px",
   border: "1px solid #334155",
-  borderRadius: 8,
+  borderRadius: 10,
   background: "#0f172a",
   color: "#e2e8f0",
   fontSize: 14,
   outline: "none",
+  transition: "all 0.2s ease"
 };
-
-const select: React.CSSProperties = { ...input };
 
 const btnBlue: React.CSSProperties = {
-  padding: "8px 12px",
-  border: "1px solid #1d4ed8",
-  background: "#1d4ed8",
-  color: "#fff",
-  borderRadius: 8,
+  padding: "12px 16px",
+  borderRadius: 10,
+  background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+  border: "none",
+  color: "#ffffff",
   cursor: "pointer",
   fontSize: 14,
+  fontWeight: 500,
+  transition: "all 0.2s ease"
 };
+
 const btnGreen: React.CSSProperties = {
-  padding: "8px 12px",
-  border: "1px solid #059669",
-  background: "#059669",
-  color: "#fff",
-  borderRadius: 8,
+  padding: "12px 16px",
+  borderRadius: 10,
+  background: "linear-gradient(135deg, #10b981, #059669)",
+  border: "none",
+  color: "#ffffff",
   cursor: "pointer",
   fontSize: 14,
+  fontWeight: 500,
+  transition: "all 0.2s ease"
 };
+
 const btnRow: React.CSSProperties = {
-  padding: "6px 10px",
-  border: "1px solid #334155",
-  background: "#0f172a",
-  color: "#e2e8f0",
-  borderRadius: 8,
-  cursor: "pointer",
-  fontSize: 13,
+  display: "flex",
+  gap: 12,
+  alignItems: "center"
 };
 
 const presetRow: React.CSSProperties = {
@@ -2102,3 +3015,5 @@ const noteBox: React.CSSProperties = {
   color: "#94a3b8",
   fontSize: 13,
 };
+
+export default SettingsPage;

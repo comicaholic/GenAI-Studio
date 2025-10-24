@@ -66,7 +66,7 @@ export function normalizeModelData(raw: any, provider: "local" | "groq"): ModelI
   }
   
   const sizeRaw = raw?.size || originalData?.size || originalData?.details?.size || null;
-  const size = sizeRaw === "hosted" ? null : sizeRaw;
+  const size = sizeRaw; // Keep "hosted" as is, don't convert to null
   const quant = raw?.quant || originalData?.quant || originalData?.details?.quantization || null;
   const tags = Array.isArray(raw?.tags) ? raw.tags : (Array.isArray(originalData?.tags) ? originalData.tags : undefined);
   const context = originalData?.context || originalData?.details?.context || null;

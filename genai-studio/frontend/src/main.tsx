@@ -7,6 +7,10 @@ import { ModelProvider } from "@/context/ModelContext";
 import { NotificationContainer, useNotifications } from "@/components/Notification/Notification";
 import { router } from "@/app/router";
 import { waitForBackend } from "@/services/api";
+import { migrateLocalStoragePresets } from "@/utils/presetMigration";
+
+// Run preset migration on app startup
+migrateLocalStoragePresets();
 
 function BackendReady({ children }: { children: React.ReactNode }) {
   const [isReady, setIsReady] = React.useState(false);

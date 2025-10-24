@@ -47,6 +47,9 @@ interface AutomationModalProps {
   presetStore: any;
   defaultPrompt?: string;
   kind?: 'ocr' | 'prompt' | 'chat';
+  // Props for loading automation sets
+  loadedAutomationSet?: any;
+  loadedAutomationName?: string;
 }
 
 const DEFAULT_PARAMS: ModelParams = { temperature: 0.7, max_tokens: 1024, top_p: 1.0, top_k: 40 };
@@ -72,7 +75,9 @@ export default function AutomationModal({
   onStart, 
   presetStore, 
   defaultPrompt = "",
-  kind = 'prompt'
+  kind = 'prompt',
+  loadedAutomationSet,
+  loadedAutomationName
 }: AutomationModalProps) {
   const [numRuns, setNumRuns] = useState(2);
   const [automationName, setAutomationName] = useState("");
@@ -84,9 +89,96 @@ export default function AutomationModal({
   const { showError } = useNotifications();
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
+  // Load automation set data when provided
+  React.useEffect(() => {
+    console.log("AutomationModal - useEffect triggered");
+    console.log("AutomationModal - loadedAutomationSet:", loadedAutomationSet);
+    console.log("AutomationModal - loadedAutomationName:", loadedAutomationName);
+    console.log("AutomationModal - isOpen:", isOpen);
+    
+    if (loadedAutomationSet && isOpen) {
+      console.log("AutomationModal - Loading automation set:", loadedAutomationSet);
+      console.log("AutomationModal - automationSet.automations:", loadedAutomationSet.automations);
+      console.log("AutomationModal - automationSet.name:", loadedAutomationSet.name);
+      
+      // Set automation name
+      if (loadedAutomationName) {
+        setAutomationName(loadedAutomationName);
+        console.log("AutomationModal - Set automation name from prop:", loadedAutomationName);
+      } else if (loadedAutomationSet.name) {
+        setAutomationName(loadedAutomationSet.name);
+        console.log("AutomationModal - Set automation name from set:", loadedAutomationSet.name);
+      }
+      
+      // Convert automation set runs to AutomationRun format
+      if (loadedAutomationSet.automations && Array.isArray(loadedAutomationSet.automations)) {
+        const automationRuns: AutomationRun[] = [];
+        
+        loadedAutomationSet.automations.forEach((automation: any) => {
+          console.log("AutomationModal - Processing automation:", automation);
+          console.log("AutomationModal - automation.runs:", automation.runs);
+          
+          if (automation.runs && Array.isArray(automation.runs)) {
+            automation.runs.forEach((run: any) => {
+              console.log("AutomationModal - Processing run:", run);
+              console.log("AutomationModal - run.metrics:", run.metrics);
+              console.log("AutomationModal - run.parameters:", run.parameters);
+              console.log("AutomationModal - run.modelId:", run.modelId);
+              
+              // Convert metrics from array to object if needed
+              let metricsState = DEFAULT_METRICS;
+              if (run.metrics) {
+                if (Array.isArray(run.metrics)) {
+                  // Convert array of metric names to boolean object
+                  metricsState = { ...DEFAULT_METRICS };
+                  run.metrics.forEach((metric: string) => {
+                    if (metric in metricsState) {
+                      (metricsState as any)[metric] = true;
+                    }
+                  });
+                  console.log("AutomationModal - Converted metrics from array:", metricsState);
+                } else if (typeof run.metrics === 'object') {
+                  metricsState = { ...DEFAULT_METRICS, ...run.metrics };
+                  console.log("AutomationModal - Used metrics object:", metricsState);
+                }
+              }
+              
+              const automationRun: AutomationRun = {
+                id: run.id || run.runId || crypto.randomUUID(),
+                name: run.name || run.runName || `Run ${automationRuns.length + 1}`,
+                prompt: run.prompt || defaultPrompt,
+                parameters: run.parameters || DEFAULT_PARAMS,
+                metrics: metricsState,
+                modelId: run.modelId || automation.model?.id,
+                modelProvider: run.modelProvider || automation.model?.provider,
+                sourceFileName: run.sourceFileName,
+                promptFileName: run.promptFileName,
+                referenceFileName: run.referenceFileName,
+                presetTitle: run.presetTitle,
+                status: 'pending',
+                results: run.results,
+                error: run.error,
+              };
+              
+              console.log("AutomationModal - Created automation run:", automationRun);
+              automationRuns.push(automationRun);
+            });
+          }
+        });
+        
+        if (automationRuns.length > 0) {
+          setRuns(automationRuns);
+          setNumRuns(automationRuns.length);
+          setActiveRunIndex(0);
+          console.log("AutomationModal - Loaded runs:", automationRuns);
+        }
+      }
+    }
+  }, [loadedAutomationSet, loadedAutomationName, isOpen, defaultPrompt]);
+
   // Initialize runs on first load with default preset
   React.useEffect(() => {
-    if (runs.length === 0 && numRuns > 0) {
+    if (runs.length === 0 && numRuns > 0 && !loadedAutomationSet) {
       const defaultPreset = presetStore.getPresets()[0];
       const defaultPresetParams = defaultPreset?.parameters || DEFAULT_PARAMS;
       const defaultPresetMetrics = defaultPreset?.metrics || DEFAULT_METRICS;
@@ -104,7 +196,7 @@ export default function AutomationModal({
       }));
       setRuns(initialRuns);
     }
-  }, [numRuns, defaultPrompt, selected?.id, selected?.provider, presetStore, runs.length]);
+  }, [numRuns, defaultPrompt, selected?.id, selected?.provider, presetStore, runs.length, loadedAutomationSet]);
 
   // Initialize runs when numRuns changes (preserve existing selections)
   React.useEffect(() => {

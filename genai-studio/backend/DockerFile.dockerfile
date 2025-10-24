@@ -12,7 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     lshw \
     pciutils \
+    wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Install LM Studio CLI
+RUN mkdir -p /root/.lmstudio/bin && \
+    wget -O /root/.lmstudio/bin/lms https://github.com/lmstudio-ai/lmstudio-cli/releases/latest/download/lms-linux-x64 && \
+    chmod +x /root/.lmstudio/bin/lms && \
+    ln -s /root/.lmstudio/bin/lms /usr/local/bin/lms
 
 # Install GPU monitoring libraries
 RUN pip install --upgrade pip setuptools wheel \

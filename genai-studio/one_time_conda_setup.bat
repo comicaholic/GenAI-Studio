@@ -16,6 +16,21 @@ echo Installing backend dependencies...
 rem ---- backend deps (includes uvicorn) ----
 pip install -r "%ROOT%backend\requirements.txt"
 
+rem ---- LM Studio CLI setup ----
+echo Setting up LM Studio CLI...
+if not exist "%UserProfile%\.lmstudio\bin\lms.exe" (
+    echo Installing LM Studio CLI...
+    powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/lmstudio-ai/lmstudio-cli/releases/latest/download/lms-windows-x64.exe' -OutFile '%UserProfile%\.lmstudio\bin\lms.exe'}" 2>nul
+    if exist "%UserProfile%\.lmstudio\bin\lms.exe" (
+        echo LM Studio CLI installed successfully.
+    ) else (
+        echo Warning: Failed to install LM Studio CLI automatically. You may need to install it manually.
+        echo To install manually, run: ~/.lmstudio/bin/lms bootstrap
+    )
+) else (
+    echo LM Studio CLI already installed.
+)
+
 rem ---- frontend deps ----
 echo Installing frontend dependencies...
 pushd "%ROOT%frontend"

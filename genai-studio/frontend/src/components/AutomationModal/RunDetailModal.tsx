@@ -8,6 +8,7 @@ interface RunDetailModalProps {
   onClose: () => void;
   onBack: () => void;
   onLoadRun: (automation: SavedAutomation, runIndex: number) => void;
+  onRunSingle: (automation: SavedAutomation, runIndex: number) => void;
 }
 
 export default function RunDetailModal({ 
@@ -15,7 +16,8 @@ export default function RunDetailModal({
   runIndex, 
   onClose, 
   onBack, 
-  onLoadRun 
+  onLoadRun,
+  onRunSingle
 }: RunDetailModalProps) {
   const run = automation.runs[runIndex];
   if (!run) return null;
@@ -223,6 +225,36 @@ export default function RunDetailModal({
             </svg>
             Load This Run
           </button>
+          <button
+            onClick={() => onRunSingle(automation, runIndex)}
+            style={{
+              padding: "12px 24px",
+              background: "linear-gradient(135deg, #10b981, #059669)",
+              border: "none",
+              color: "#ffffff",
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.15)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.boxShadow = "none";
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8,5.14V19.14L19,12.14L8,5.14Z"/>
+            </svg>
+            Run This Run
+          </button>
         </div>
 
         {/* Content */}
@@ -275,6 +307,36 @@ export default function RunDetailModal({
             </div>
           )}
 
+          {/* Preset Information */}
+          {run.prompt && (
+            <div style={{ marginBottom: 24 }}>
+              <h3 style={{ margin: "0 0 16px 0", fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>
+                Preset Prompt
+              </h3>
+              <div style={{ 
+                padding: 20,
+                background: "#0f172a",
+                borderRadius: 12,
+                border: "1px solid #334155",
+                boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+              }}>
+                <div style={{ 
+                  padding: 16,
+                  background: "#1e293b",
+                  borderRadius: 8,
+                  border: "1px solid #334155",
+                  fontSize: 13,
+                  color: "#e2e8f0",
+                  fontFamily: "monospace",
+                  lineHeight: 1.5,
+                  whiteSpace: "pre-wrap"
+                }}>
+                  {run.prompt}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Parameters */}
           <div style={{ marginBottom: 24 }}>
             <h3 style={{ margin: "0 0 16px 0", fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>
@@ -306,6 +368,54 @@ export default function RunDetailModal({
               </div>
             </div>
           </div>
+
+          {/* Metrics Configuration */}
+          {run.metrics && (Array.isArray(run.metrics) ? run.metrics.length > 0 : Object.keys(run.metrics).length > 0) && (
+            <div style={{ marginBottom: 24 }}>
+              <h3 style={{ margin: "0 0 16px 0", fontSize: 16, fontWeight: 600, color: "#e2e8f0" }}>
+                Metrics Configuration
+              </h3>
+              <div style={{ 
+                padding: 20,
+                background: "#0f172a",
+                borderRadius: 12,
+                border: "1px solid #334155",
+                boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+              }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {Array.isArray(run.metrics) ? (
+                    run.metrics.map((metric, index) => (
+                      <span key={index} style={{
+                        background: "#0f172a",
+                        border: "1px solid #3b82f6",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        fontSize: 12,
+                        color: "#3b82f6",
+                        fontWeight: 600
+                      }}>
+                        {metric}
+                      </span>
+                    ))
+                  ) : (
+                    Object.entries(run.metrics).map(([key, value]) => (
+                      <span key={key} style={{
+                        background: "#0f172a",
+                        border: "1px solid #3b82f6",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        fontSize: 12,
+                        color: "#3b82f6",
+                        fontWeight: 600
+                      }}>
+                        {key}: {String(value)}
+                      </span>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Used Text */}
           {run.usedText && (

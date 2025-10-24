@@ -688,7 +688,7 @@ export default function AnalyticsPage() {
       }
     };
 
-    const uptimeInterval = setInterval(loadUptime, 5_000);
+    const uptimeInterval = setInterval(loadUptime, 1_000);
     const dataInterval = setInterval(() => {
       // Only poll if tab is active or user was recently active
       if (isTabActive || (Date.now() - lastUserActivity < 300000)) { // 5 minutes grace period
